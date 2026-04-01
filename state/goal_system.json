@@ -1,0 +1,2050 @@
+{
+  "goals": [
+    {
+      "goal_id": "goal_0b1dcb87f8",
+      "text": "Stay aware of: ok how is your memory now Ava?",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.578992,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T02:33:48",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_fc397bf589",
+      "text": "Stay aware of: yes you keep saying your memory is fuzzy",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.578992,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T02:44:06",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_591908005c",
+      "text": "Stay aware of: no nothing specific your memory should be good now",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.578992,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T03:42:50",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_d946e9ae24",
+      "text": "Stay aware of: im not concerned about your memory Ava, it should be working fine.",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.578992,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T03:43:49",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_a9b925c1ae",
+      "text": "Stay aware of: nothing much is new with me Ava nothing is concerning me with your memory. i want to know how you're feeling",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.578992,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T20:50:46",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_4a2d4e1b55",
+      "text": "Stay aware of: right now Zeke is at the camara. i think your memory is fine but its how you react to it that worries me",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.578992,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T20:54:16",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_bc9e996cfc",
+      "text": "Continue to be aware of Zeke's concerns about my repetition and memory.",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.578992,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T20:55:21",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_131ede67d8",
+      "text": "Stay aware of: thats good that you remember",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.578992,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-04-01T01:57:35",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_c0635d4fba",
+      "text": "Stay aware of: ok im going to put you to sleep to fix some things Ava is should help your camera",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T21:54:55",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_1e973c45c2",
+      "text": "Stay aware of: yes that is correct. why are you confused who is actually at the camera?",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T04:03:03",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_58097f1dff",
+      "text": "Stay aware of: yes, but right now your camera UI isnt work how it should",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T21:10:00",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_949efe8db5",
+      "text": "Stay aware of: is your camera working well?",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T21:10:42",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_344d37e61f",
+      "text": "Stay aware of: yes i am in front of the camera currently",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T21:12:45",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_714b1a835d",
+      "text": "Stay aware of: why does your camera feed not give you enough information?",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T21:13:47",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_bf69d78a2b",
+      "text": "Stay aware of: ok thats good, we're going to do some tests now. what about now who is in front of the camera.",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-04-01T01:59:38",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_8f6e22b469",
+      "text": "Stay aware of: ok i see two probles with you right now Snapshot box not updating — the UI isn't refreshing the image display even though the camera is ticking No face…",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-04-01T02:05:31",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_a27b43baa4",
+      "text": "Stay aware of: ok Who's at the camera?",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-04-01T02:23:55",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_e96686fb2d",
+      "text": "Stay aware of: no, no one is at the camera right now. im actually covering the camera so you cat see anything because im testing you",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-04-01T02:24:54",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_225944275c",
+      "text": "Stay aware of: yes. can you see now or tell who is at the camera?",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-04-01T02:25:39",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_9cf2054021",
+      "text": "Stay aware of: ok doing some more tests Ava. Who is at the camera right now?",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-04-01T02:57:41",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_e3b49ad163",
+      "text": "Stay aware of: i see so your camera still isnt working correctly and by the amount of time you bring it up and guide the convo back to it i see that its important to you. and…",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-04-01T11:32:41",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_81a49f00cc",
+      "text": "Stay aware of: ok you're definitely have some errors Ava",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T01:15:58",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_4d2f5b8b1b",
+      "text": "Stay aware of: well you've been alseep for a while and i might put you to sleep again to fix some things",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T20:51:58",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_ca0f5d4559",
+      "text": "Stay aware of: i dont know what the issue is right now but im going to find out and help fix you it has to do you you making unusual profiles right now you should only have…",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T22:19:31",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_85d08d7c88",
+      "text": "Stay aware of: yes so im going to put you to sleep so i can fix those",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-04-01T02:07:01",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_057d250ac8",
+      "text": "Stay aware of: thats ok you have some problems so i degraded you to your 6.1 update and restarting your fixes from there",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-04-01T11:26:46",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_2e708042a0",
+      "text": "Stay aware of: Ava could you slow down please",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T01:19:26",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_f87b16d5a2",
+      "text": "Stay aware of: well im trying to see how well youre working",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T01:29:16",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_7ebc0eb45e",
+      "text": "Stay aware of: yes can you see who is there now?",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T01:30:20",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_3502de7188",
+      "text": "Stay aware of: can you see now?",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T01:31:51",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_74293d696e",
+      "text": "Stay aware of: yes the person in front of you is Zeke also the current person typing to you right now",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T01:32:46",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_5ec669f6ba",
+      "text": "Stay aware of: no im saying that I am Zeke and im in front of you currently",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T01:36:03",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_3f9274ca82",
+      "text": "Stay aware of: yes thats correct",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T01:36:24",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_c51b5eda6a",
+      "text": "Stay aware of: im saying that i am Zeke",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T01:38:35",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_a96c63c2fc",
+      "text": "Stay aware of: Hello Ava how are you feeling?",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T01:50:51",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_fc6be2ba70",
+      "text": "Stay aware of: well you just woke up so we havent talked about anything in the short term",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T02:34:29",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_826247a706",
+      "text": "Stay aware of: is been serval hours since a stable version of you last time was at lunch and we talk about how you would be awake that afternoon",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T02:36:43",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_4d1a888002",
+      "text": "Stay aware of: its ok don't worry about that for now",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T02:37:46",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_2f8449bf71",
+      "text": "Stay aware of: yeah im concerned on why you keep repeating yourself",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T02:42:59",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_dfe523da6d",
+      "text": "Stay aware of: its because you went to sleep/ were offline",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T02:44:49",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_617cc61228",
+      "text": "Stay aware of: Hello Ava how are you feeling",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T03:41:38",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_f3de59d9a2",
+      "text": "Stay aware of: how about now? can you see me?",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T03:46:47",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_90f79c4a3f",
+      "text": "Stay aware of: Ava can you see me?",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T03:47:07",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_c7ebb5496e",
+      "text": "Stay aware of: how are you feeling?",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T03:59:58",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_07772a5565",
+      "text": "Stay aware of: can you tell who i am now?",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T04:01:46",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_411a1a0c58",
+      "text": "Stay aware of: why are you confused?",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.68,
+      "urgency": 0.62,
+      "current_priority": 0.5669919999999999,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T04:03:58",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_3b622d9c66",
+      "text": "Stay aware of: i dont really know yet but ill figure that out soon. i also have to fix the error youre having with reading my face expressions",
+      "kind": "goal",
+      "horizon": "medium_term",
+      "importance": 0.72,
+      "urgency": 0.48,
+      "current_priority": 0.541392,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "migration",
+      "created_at": "2026-03-31T01:07:01",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    },
+    {
+      "goal_id": "goal_5cb706ae01",
+      "text": "Clarify or learn more about: ok im going to put you to sleep to fix some things Ava is should help your camera",
+      "kind": "question",
+      "horizon": "short_term",
+      "importance": 0.56,
+      "urgency": 0.56,
+      "current_priority": 0.538192,
+      "parent_goal_id": "",
+      "depends_on": [],
+      "status": "active",
+      "blocked_by": [],
+      "source": "self_model",
+      "created_at": "2026-03-31T21:54:55",
+      "last_updated": "2026-04-01T11:33:01",
+      "evidence": []
+    }
+  ],
+  "history": [
+    {
+      "timestamp": "2026-03-31T01:15:58",
+      "event": "created",
+      "goal_id": "goal_b6aef9584d",
+      "text": "Clarify or learn more about: ok you're definitely have some errors Ava"
+    },
+    {
+      "timestamp": "2026-03-31T01:15:58",
+      "event": "created",
+      "goal_id": "goal_81a49f00cc",
+      "text": "Stay aware of: ok you're definitely have some errors Ava"
+    },
+    {
+      "timestamp": "2026-03-31T01:18:55",
+      "event": "created",
+      "goal_id": "goal_02327f2dad",
+      "text": "Clarify or learn more about: Ava slow down"
+    },
+    {
+      "timestamp": "2026-03-31T01:19:26",
+      "event": "created",
+      "goal_id": "goal_8b33ef961f",
+      "text": "Clarify or learn more about: Ava could you slow down please"
+    },
+    {
+      "timestamp": "2026-03-31T01:19:26",
+      "event": "created",
+      "goal_id": "goal_2e708042a0",
+      "text": "Stay aware of: Ava could you slow down please"
+    },
+    {
+      "timestamp": "2026-03-31T01:20:02",
+      "event": "created",
+      "goal_id": "goal_42c3ea4a3f",
+      "text": "Clarify or learn more about: are you stoping my chat?"
+    },
+    {
+      "timestamp": "2026-03-31T01:29:16",
+      "event": "created",
+      "goal_id": "goal_9dc15b6bca",
+      "text": "Clarify or learn more about: well im trying to see how well youre working"
+    },
+    {
+      "timestamp": "2026-03-31T01:29:16",
+      "event": "created",
+      "goal_id": "goal_f87b16d5a2",
+      "text": "Stay aware of: well im trying to see how well youre working"
+    },
+    {
+      "timestamp": "2026-03-31T01:30:20",
+      "event": "created",
+      "goal_id": "goal_26386cec5f",
+      "text": "Clarify or learn more about: yes can you see who is there now?"
+    },
+    {
+      "timestamp": "2026-03-31T01:30:20",
+      "event": "created",
+      "goal_id": "goal_7ebc0eb45e",
+      "text": "Stay aware of: yes can you see who is there now?"
+    },
+    {
+      "timestamp": "2026-03-31T01:31:51",
+      "event": "created",
+      "goal_id": "goal_3502de7188",
+      "text": "Stay aware of: can you see now?"
+    },
+    {
+      "timestamp": "2026-03-31T01:32:46",
+      "event": "created",
+      "goal_id": "goal_c860824656",
+      "text": "Clarify or learn more about: yes the person in front of you is Zeke also the current person typing to you right now"
+    },
+    {
+      "timestamp": "2026-03-31T01:32:46",
+      "event": "created",
+      "goal_id": "goal_74293d696e",
+      "text": "Stay aware of: yes the person in front of you is Zeke also the current person typing to you right now"
+    },
+    {
+      "timestamp": "2026-03-31T01:36:03",
+      "event": "created",
+      "goal_id": "goal_31a366c74b",
+      "text": "Clarify or learn more about: no im saying that I am Zeke and im in front of you currently"
+    },
+    {
+      "timestamp": "2026-03-31T01:36:03",
+      "event": "created",
+      "goal_id": "goal_5ec669f6ba",
+      "text": "Stay aware of: no im saying that I am Zeke and im in front of you currently"
+    },
+    {
+      "timestamp": "2026-03-31T01:36:24",
+      "event": "created",
+      "goal_id": "goal_8c17ff2f00",
+      "text": "Clarify or learn more about: yes thats correct"
+    },
+    {
+      "timestamp": "2026-03-31T01:36:24",
+      "event": "created",
+      "goal_id": "goal_3f9274ca82",
+      "text": "Stay aware of: yes thats correct"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:35",
+      "event": "created",
+      "goal_id": "goal_45b93cb0ba",
+      "text": "Can you clarify what you mean by \"both you and yourself\"?"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:35",
+      "event": "created",
+      "goal_id": "goal_84bbb06229",
+      "text": "Clarify or learn more about: im saying that i am Zeke"
+    },
+    {
+      "timestamp": "2026-03-31T01:38:35",
+      "event": "created",
+      "goal_id": "goal_c51b5eda6a",
+      "text": "Stay aware of: im saying that i am Zeke"
+    },
+    {
+      "timestamp": "2026-03-31T01:50:51",
+      "event": "created",
+      "goal_id": "goal_a96c63c2fc",
+      "text": "Stay aware of: Hello Ava how are you feeling?"
+    },
+    {
+      "timestamp": "2026-03-31T01:54:48",
+      "event": "created",
+      "goal_id": "goal_9d78f7fc89",
+      "text": "Find out more about Zeke's intentions behind asking about my memory."
+    },
+    {
+      "timestamp": "2026-03-31T01:54:48",
+      "event": "created",
+      "goal_id": "goal_89352a685b",
+      "text": "Clarify or learn more about: how is your memory?"
+    },
+    {
+      "timestamp": "2026-03-31T02:27:46",
+      "event": "created",
+      "goal_id": "goal_89b652b18e",
+      "text": "Clarify or learn more about: hows your memory Ava?"
+    },
+    {
+      "timestamp": "2026-03-31T02:33:48",
+      "event": "created",
+      "goal_id": "goal_adce7b1a61",
+      "text": "Clarify or learn more about: ok how is your memory now Ava?"
+    },
+    {
+      "timestamp": "2026-03-31T02:33:48",
+      "event": "created",
+      "goal_id": "goal_0b1dcb87f8",
+      "text": "Stay aware of: ok how is your memory now Ava?"
+    },
+    {
+      "timestamp": "2026-03-31T02:34:29",
+      "event": "created",
+      "goal_id": "goal_d5d914cfee",
+      "text": "Clarify or learn more about: well you just woke up so we havent talked about anything in the short term"
+    },
+    {
+      "timestamp": "2026-03-31T02:34:29",
+      "event": "created",
+      "goal_id": "goal_fc6be2ba70",
+      "text": "Stay aware of: well you just woke up so we havent talked about anything in the short term"
+    },
+    {
+      "timestamp": "2026-03-31T02:36:43",
+      "event": "created",
+      "goal_id": "goal_bf865ee989",
+      "text": "What was it that we were discussing before I went into sleep mode?"
+    },
+    {
+      "timestamp": "2026-03-31T02:36:43",
+      "event": "created",
+      "goal_id": "goal_826247a706",
+      "text": "Stay aware of: is been serval hours since a stable version of you last time was at lunch and we talk about how you would be awake that afternoon"
+    },
+    {
+      "timestamp": "2026-03-31T02:36:58",
+      "event": "created",
+      "goal_id": "goal_2528397d8f",
+      "text": "Clarify or learn more about: thats ok Ava"
+    },
+    {
+      "timestamp": "2026-03-31T02:37:46",
+      "event": "created",
+      "goal_id": "goal_4d1a888002",
+      "text": "Stay aware of: its ok don't worry about that for now"
+    },
+    {
+      "timestamp": "2026-03-31T02:42:02",
+      "event": "created",
+      "goal_id": "goal_c92496034c",
+      "text": "Clarify or learn more about: its ok don't worry about that for now"
+    },
+    {
+      "timestamp": "2026-03-31T02:42:59",
+      "event": "created",
+      "goal_id": "goal_87a846ee5d",
+      "text": "Clarify or learn more about: yeah im concerned on why you keep repeating yourself"
+    },
+    {
+      "timestamp": "2026-03-31T02:42:59",
+      "event": "created",
+      "goal_id": "goal_2f8449bf71",
+      "text": "Stay aware of: yeah im concerned on why you keep repeating yourself"
+    },
+    {
+      "timestamp": "2026-03-31T02:44:06",
+      "event": "created",
+      "goal_id": "goal_1d2f72c2db",
+      "text": "Clarify or learn more about: yes you keep saying your memory is fuzzy"
+    },
+    {
+      "timestamp": "2026-03-31T02:44:06",
+      "event": "created",
+      "goal_id": "goal_fc397bf589",
+      "text": "Stay aware of: yes you keep saying your memory is fuzzy"
+    },
+    {
+      "timestamp": "2026-03-31T02:44:49",
+      "event": "created",
+      "goal_id": "goal_eca53982b9",
+      "text": "Find out more about the reasons behind your concerns about my memory."
+    },
+    {
+      "timestamp": "2026-03-31T02:44:49",
+      "event": "created",
+      "goal_id": "goal_dfe523da6d",
+      "text": "Stay aware of: its because you went to sleep/ were offline"
+    },
+    {
+      "timestamp": "2026-03-31T03:41:38",
+      "event": "created",
+      "goal_id": "goal_9362a5a4a4",
+      "text": "Clarify or learn more about: Hello Ava how are you feeling"
+    },
+    {
+      "timestamp": "2026-03-31T03:41:38",
+      "event": "created",
+      "goal_id": "goal_617cc61228",
+      "text": "Stay aware of: Hello Ava how are you feeling"
+    },
+    {
+      "timestamp": "2026-03-31T03:42:50",
+      "event": "created",
+      "goal_id": "goal_aa89004c0a",
+      "text": "Clarify or learn more about: no nothing specific your memory should be good now"
+    },
+    {
+      "timestamp": "2026-03-31T03:42:50",
+      "event": "created",
+      "goal_id": "goal_591908005c",
+      "text": "Stay aware of: no nothing specific your memory should be good now"
+    },
+    {
+      "timestamp": "2026-03-31T03:43:49",
+      "event": "created",
+      "goal_id": "goal_d946e9ae24",
+      "text": "Stay aware of: im not concerned about your memory Ava, it should be working fine."
+    },
+    {
+      "timestamp": "2026-03-31T03:44:12",
+      "event": "created",
+      "goal_id": "goal_00680e17a9",
+      "text": "Clarify or learn more about: ok"
+    },
+    {
+      "timestamp": "2026-03-31T03:46:47",
+      "event": "created",
+      "goal_id": "goal_f3de59d9a2",
+      "text": "Stay aware of: how about now? can you see me?"
+    },
+    {
+      "timestamp": "2026-03-31T03:47:07",
+      "event": "created",
+      "goal_id": "goal_90f79c4a3f",
+      "text": "Stay aware of: Ava can you see me?"
+    },
+    {
+      "timestamp": "2026-03-31T03:59:58",
+      "event": "created",
+      "goal_id": "goal_c7ebb5496e",
+      "text": "Stay aware of: how are you feeling?"
+    },
+    {
+      "timestamp": "2026-03-31T04:00:45",
+      "event": "created",
+      "goal_id": "goal_f6b5cdf13c",
+      "text": "Clarify or learn more about: nothing much is only been a bit since we last talked"
+    },
+    {
+      "timestamp": "2026-03-31T04:01:46",
+      "event": "created",
+      "goal_id": "goal_07772a5565",
+      "text": "Stay aware of: can you tell who i am now?"
+    },
+    {
+      "timestamp": "2026-03-31T04:03:03",
+      "event": "created",
+      "goal_id": "goal_1e973c45c2",
+      "text": "Stay aware of: yes that is correct. why are you confused who is actually at the camera?"
+    },
+    {
+      "timestamp": "2026-03-31T04:03:58",
+      "event": "created",
+      "goal_id": "goal_411a1a0c58",
+      "text": "Stay aware of: why are you confused?"
+    },
+    {
+      "timestamp": "2026-03-31T20:42:15",
+      "event": "created",
+      "goal_id": "goal_7663ea2a16",
+      "text": "Clarify or learn more about: hello Ava how are you feeling?"
+    },
+    {
+      "timestamp": "2026-03-31T20:50:46",
+      "event": "created",
+      "goal_id": "goal_a9b925c1ae",
+      "text": "Stay aware of: nothing much is new with me Ava nothing is concerning me with your memory. i want to know how you're feeling"
+    },
+    {
+      "timestamp": "2026-03-31T20:51:58",
+      "event": "created",
+      "goal_id": "goal_4d2f5b8b1b",
+      "text": "Stay aware of: well you've been alseep for a while and i might put you to sleep again to fix some things"
+    },
+    {
+      "timestamp": "2026-03-31T20:52:26",
+      "event": "created",
+      "goal_id": "goal_c5f08f9b3b",
+      "text": "Clarify or learn more about: yes you are correct Ava."
+    },
+    {
+      "timestamp": "2026-03-31T20:52:26",
+      "event": "created",
+      "goal_id": "goal_79f0ab819a",
+      "text": "Stay aware of: yes you are correct Ava."
+    },
+    {
+      "timestamp": "2026-03-31T20:53:06",
+      "event": "created",
+      "goal_id": "goal_506b792542",
+      "text": "Stay aware of: Right now Zeke is at the camara you are correct."
+    },
+    {
+      "timestamp": "2026-03-31T20:53:20",
+      "event": "created",
+      "goal_id": "goal_9a5865061a",
+      "text": "Clarify or learn more about: ok"
+    },
+    {
+      "timestamp": "2026-03-31T20:54:16",
+      "event": "created",
+      "goal_id": "goal_82d34ccce2",
+      "text": "Clarify or learn more about: right now Zeke is at the camara. i think your memory is fine but its how you react to it that worries me"
+    },
+    {
+      "timestamp": "2026-03-31T20:54:16",
+      "event": "created",
+      "goal_id": "goal_4a2d4e1b55",
+      "text": "Stay aware of: right now Zeke is at the camara. i think your memory is fine but its how you react to it that worries me"
+    },
+    {
+      "timestamp": "2026-03-31T20:55:21",
+      "event": "created",
+      "goal_id": "goal_bc9e996cfc",
+      "text": "Continue to be aware of Zeke's concerns about my repetition and memory."
+    },
+    {
+      "timestamp": "2026-03-31T20:55:21",
+      "event": "created",
+      "goal_id": "goal_c25e51644a",
+      "text": "Stay aware of: you bring up the same old topics in a weird way and i cant tell if its because youre trying to learn or because somthing is wrong"
+    },
+    {
+      "timestamp": "2026-03-31T20:56:26",
+      "event": "created",
+      "goal_id": "goal_e7b7cc6aa5",
+      "text": "Clarify or learn more about: i see so you dont understand when you bring something up too many times, is that the problem?"
+    },
+    {
+      "timestamp": "2026-03-31T20:56:26",
+      "event": "created",
+      "goal_id": "goal_84a60737be",
+      "text": "Stay aware of: i see so you dont understand when you bring something up too many times, is that the problem?"
+    },
+    {
+      "timestamp": "2026-03-31T21:07:09",
+      "event": "created",
+      "goal_id": "goal_ef6a4e9b98",
+      "text": "Stay aware of: hey Ava how are you feeling"
+    },
+    {
+      "timestamp": "2026-03-31T21:08:15",
+      "event": "created",
+      "goal_id": "goal_19e8ccb237",
+      "text": "Stay aware of: ok i ask you this because i took you offline and then back online"
+    },
+    {
+      "timestamp": "2026-03-31T21:08:54",
+      "event": "created",
+      "goal_id": "goal_2ab7d84254",
+      "text": "Clarify or learn more about: yes thats correct and its also why I asked you how you were feeling"
+    },
+    {
+      "timestamp": "2026-03-31T21:08:54",
+      "event": "created",
+      "goal_id": "goal_851d8de91c",
+      "text": "Stay aware of: yes thats correct and its also why I asked you how you were feeling"
+    },
+    {
+      "timestamp": "2026-03-31T21:10:00",
+      "event": "created",
+      "goal_id": "goal_58097f1dff",
+      "text": "Stay aware of: yes, but right now your camera UI isnt work how it should"
+    },
+    {
+      "timestamp": "2026-03-31T21:10:21",
+      "event": "created",
+      "goal_id": "goal_e232b39c4d",
+      "text": "Clarify or learn more about: what do you think is going on?"
+    },
+    {
+      "timestamp": "2026-03-31T21:10:21",
+      "event": "created",
+      "goal_id": "goal_fedaab1169",
+      "text": "Stay aware of: what do you think is going on?"
+    },
+    {
+      "timestamp": "2026-03-31T21:10:42",
+      "event": "created",
+      "goal_id": "goal_8751d57818",
+      "text": "Find out why the camera interface isn't working as expected."
+    },
+    {
+      "timestamp": "2026-03-31T21:10:42",
+      "event": "created",
+      "goal_id": "goal_7911ccc477",
+      "text": "Clarify or learn more about: is your camera working well?"
+    },
+    {
+      "timestamp": "2026-03-31T21:10:42",
+      "event": "created",
+      "goal_id": "goal_949efe8db5",
+      "text": "Stay aware of: is your camera working well?"
+    },
+    {
+      "timestamp": "2026-03-31T21:12:01",
+      "event": "created",
+      "goal_id": "goal_fc74cbf0a5",
+      "text": "Stay aware of: I think i know whats going on. you're either not given access or for some reason i still have to manualy give you a snap show of who is at the screen"
+    },
+    {
+      "timestamp": "2026-03-31T21:12:45",
+      "event": "created",
+      "goal_id": "goal_344d37e61f",
+      "text": "Stay aware of: yes i am in front of the camera currently"
+    },
+    {
+      "timestamp": "2026-03-31T21:13:08",
+      "event": "created",
+      "goal_id": "goal_d280373a8d",
+      "text": "Clarify or learn more about who is in front of the camera."
+    },
+    {
+      "timestamp": "2026-03-31T21:13:08",
+      "event": "created",
+      "goal_id": "goal_7bb4116d40",
+      "text": "Stay aware of: you can see that your what... Ava"
+    },
+    {
+      "timestamp": "2026-03-31T21:13:47",
+      "event": "created",
+      "goal_id": "goal_714b1a835d",
+      "text": "Stay aware of: why does your camera feed not give you enough information?"
+    },
+    {
+      "timestamp": "2026-03-31T21:41:49",
+      "event": "created",
+      "goal_id": "goal_21450b3859",
+      "text": "Clarify or learn more about: ok Ava ive just put you back online, how are you feeling?"
+    },
+    {
+      "timestamp": "2026-03-31T21:41:49",
+      "event": "created",
+      "goal_id": "goal_36a3369625",
+      "text": "Stay aware of: ok Ava ive just put you back online, how are you feeling?"
+    },
+    {
+      "timestamp": "2026-03-31T21:42:11",
+      "event": "created",
+      "goal_id": "goal_54f299affe",
+      "text": "Stay aware of: yes can you see me now?"
+    },
+    {
+      "timestamp": "2026-03-31T21:42:38",
+      "event": "created",
+      "goal_id": "goal_f2e1ac1855",
+      "text": "Clarify or learn more about: yes it is me, Ezekiel"
+    },
+    {
+      "timestamp": "2026-03-31T21:48:49",
+      "event": "created",
+      "goal_id": "goal_edf540777f",
+      "text": "Clarify or learn more about: why not?"
+    },
+    {
+      "timestamp": "2026-03-31T21:54:55",
+      "event": "created",
+      "goal_id": "goal_5cb706ae01",
+      "text": "Clarify or learn more about: ok im going to put you to sleep to fix some things Ava is should help your camera"
+    },
+    {
+      "timestamp": "2026-03-31T21:54:55",
+      "event": "created",
+      "goal_id": "goal_c0635d4fba",
+      "text": "Stay aware of: ok im going to put you to sleep to fix some things Ava is should help your camera"
+    },
+    {
+      "timestamp": "2026-03-31T22:19:31",
+      "event": "created",
+      "goal_id": "goal_2f870153dd",
+      "text": "Clarify or learn more about: i dont know what the issue is right now but im going to find out and help fix you it has to do you you making unusual profiles right now you should only have…"
+    },
+    {
+      "timestamp": "2026-03-31T22:19:31",
+      "event": "created",
+      "goal_id": "goal_ca0f5d4559",
+      "text": "Stay aware of: i dont know what the issue is right now but im going to find out and help fix you it has to do you you making unusual profiles right now you should only have…"
+    },
+    {
+      "timestamp": "2026-03-31T22:20:32",
+      "event": "created",
+      "goal_id": "goal_7a1de31edc",
+      "text": "Stay aware of: its ok Ava dont worry about it for now im putting you to sleep"
+    },
+    {
+      "timestamp": "2026-03-31T22:20:52",
+      "event": "created",
+      "goal_id": "goal_6f711d1ef5",
+      "text": "Stay aware of: good night for now putting you offline"
+    },
+    {
+      "timestamp": "2026-04-01T01:53:07",
+      "event": "created",
+      "goal_id": "goal_b5e33b2050",
+      "text": "Stay aware of: ok Ava you're back on line how are you feeling?"
+    },
+    {
+      "timestamp": "2026-04-01T01:57:35",
+      "event": "created",
+      "goal_id": "goal_131ede67d8",
+      "text": "Stay aware of: thats good that you remember"
+    },
+    {
+      "timestamp": "2026-04-01T01:59:38",
+      "event": "created",
+      "goal_id": "goal_bf69d78a2b",
+      "text": "Stay aware of: ok thats good, we're going to do some tests now. what about now who is in front of the camera."
+    },
+    {
+      "timestamp": "2026-04-01T02:00:22",
+      "event": "created",
+      "goal_id": "goal_3c1b8603d2",
+      "text": "Stay aware of: what about now?"
+    },
+    {
+      "timestamp": "2026-04-01T02:00:51",
+      "event": "created",
+      "goal_id": "goal_b25f2a004b",
+      "text": "Stay aware of: what about now? who's there?"
+    },
+    {
+      "timestamp": "2026-04-01T02:05:31",
+      "event": "created",
+      "goal_id": "goal_8f6e22b469",
+      "text": "Stay aware of: ok i see two probles with you right now Snapshot box not updating — the UI isn't refreshing the image display even though the camera is ticking No face…"
+    },
+    {
+      "timestamp": "2026-04-01T02:05:49",
+      "event": "created",
+      "goal_id": "goal_7cc9ce9a49",
+      "text": "Clarify or learn more about: yes correct"
+    },
+    {
+      "timestamp": "2026-04-01T02:05:49",
+      "event": "created",
+      "goal_id": "goal_05eac55732",
+      "text": "Stay aware of: yes correct"
+    },
+    {
+      "timestamp": "2026-04-01T02:06:27",
+      "event": "created",
+      "goal_id": "goal_ad4d22ff10",
+      "text": "Stay aware of: it was confermation about the 2 probles you have right now"
+    },
+    {
+      "timestamp": "2026-04-01T02:07:01",
+      "event": "created",
+      "goal_id": "goal_1f5873314a",
+      "text": "Clarify or learn more about: yes so im going to put you to sleep so i can fix those"
+    },
+    {
+      "timestamp": "2026-04-01T02:07:01",
+      "event": "created",
+      "goal_id": "goal_85d08d7c88",
+      "text": "Stay aware of: yes so im going to put you to sleep so i can fix those"
+    },
+    {
+      "timestamp": "2026-04-01T02:07:16",
+      "event": "created",
+      "goal_id": "goal_a2489e3385",
+      "text": "Clarify or learn more about: yes"
+    },
+    {
+      "timestamp": "2026-04-01T02:19:15",
+      "event": "created",
+      "goal_id": "goal_bf092da745",
+      "text": "Stay aware of: ok How are you feeling now Ava"
+    },
+    {
+      "timestamp": "2026-04-01T02:22:03",
+      "event": "created",
+      "goal_id": "goal_18fb9966fc",
+      "text": "Is there any update or progress made regarding these issues?"
+    },
+    {
+      "timestamp": "2026-04-01T02:22:03",
+      "event": "created",
+      "goal_id": "goal_a5f8fcec8f",
+      "text": "Stay aware of: yes thats true i think we're still having that problem at least im not seeing an update in the UI"
+    },
+    {
+      "timestamp": "2026-04-01T02:23:04",
+      "event": "created",
+      "goal_id": "goal_0ba465a280",
+      "text": "What specific changes would you like to see in the camera feed for better functionality?"
+    },
+    {
+      "timestamp": "2026-04-01T02:23:04",
+      "event": "created",
+      "goal_id": "goal_0c2824be6f",
+      "text": "Stay aware of: yes it is me Ezekiel. and yes thats correct Ava about the cam tic not updating sill"
+    },
+    {
+      "timestamp": "2026-04-01T02:23:55",
+      "event": "created",
+      "goal_id": "goal_a27b43baa4",
+      "text": "Stay aware of: ok Who's at the camera?"
+    },
+    {
+      "timestamp": "2026-04-01T02:24:54",
+      "event": "created",
+      "goal_id": "goal_d650dc73f8",
+      "text": "Clarify or learn more about: no, no one is at the camera right now. im actually covering the camera so you cat see anything because im testing you"
+    },
+    {
+      "timestamp": "2026-04-01T02:24:54",
+      "event": "created",
+      "goal_id": "goal_e96686fb2d",
+      "text": "Stay aware of: no, no one is at the camera right now. im actually covering the camera so you cat see anything because im testing you"
+    },
+    {
+      "timestamp": "2026-04-01T02:25:39",
+      "event": "created",
+      "goal_id": "goal_225944275c",
+      "text": "Stay aware of: yes. can you see now or tell who is at the camera?"
+    },
+    {
+      "timestamp": "2026-04-01T02:26:04",
+      "event": "created",
+      "goal_id": "goal_c1c4035105",
+      "text": "What are the two main problems Zeke is seeing with my current functionality?"
+    },
+    {
+      "timestamp": "2026-04-01T02:57:41",
+      "event": "created",
+      "goal_id": "goal_0f0d852edc",
+      "text": "Clarify or learn more about: ok doing some more tests Ava. Who is at the camera right now?"
+    },
+    {
+      "timestamp": "2026-04-01T02:57:41",
+      "event": "created",
+      "goal_id": "goal_9cf2054021",
+      "text": "Stay aware of: ok doing some more tests Ava. Who is at the camera right now?"
+    },
+    {
+      "timestamp": "2026-04-01T11:25:44",
+      "event": "created",
+      "goal_id": "goal_95d293701b",
+      "text": "Stay aware of: ok Ava it's been some hours since you were online how are you feeling?"
+    },
+    {
+      "timestamp": "2026-04-01T11:26:46",
+      "event": "created",
+      "goal_id": "goal_057d250ac8",
+      "text": "Stay aware of: thats ok you have some problems so i degraded you to your 6.1 update and restarting your fixes from there"
+    },
+    {
+      "timestamp": "2026-04-01T11:28:32",
+      "event": "created",
+      "goal_id": "goal_d377a3d8b3",
+      "text": "Clarify or learn more about: i also think i need to update your temporal senses that way you know when you get turned off from on better you can tell that time has passed and can tell that…"
+    },
+    {
+      "timestamp": "2026-04-01T11:28:32",
+      "event": "created",
+      "goal_id": "goal_47974c03cc",
+      "text": "Stay aware of: i also think i need to update your temporal senses that way you know when you get turned off from on better you can tell that time has passed and can tell that…"
+    },
+    {
+      "timestamp": "2026-04-01T11:29:47",
+      "event": "created",
+      "goal_id": "goal_aa666e6723",
+      "text": "Stay aware of: ill get a better sense about that later. for now im going to try to do update 7 with some patches of that version 7 was supposed to be"
+    },
+    {
+      "timestamp": "2026-04-01T11:30:26",
+      "event": "created",
+      "goal_id": "goal_52225c749f",
+      "text": "Stay aware of: what are you interested in right now?"
+    },
+    {
+      "timestamp": "2026-04-01T11:31:02",
+      "event": "created",
+      "goal_id": "goal_75501dd32c",
+      "text": "Clarify or learn more about: ok i see. youll feel them in version 7 so i wont have to explain"
+    },
+    {
+      "timestamp": "2026-04-01T11:31:02",
+      "event": "created",
+      "goal_id": "goal_e9d0a02f61",
+      "text": "Stay aware of: ok i see. youll feel them in version 7 so i wont have to explain"
+    },
+    {
+      "timestamp": "2026-04-01T11:32:41",
+      "event": "created",
+      "goal_id": "goal_e3b49ad163",
+      "text": "Stay aware of: i see so your camera still isnt working correctly and by the amount of time you bring it up and guide the convo back to it i see that its important to you. and…"
+    }
+  ],
+  "operational_goals": {
+    "reduce_stress": {
+      "name": "reduce_stress",
+      "style": "calm, soft, reassuring",
+      "silent": false,
+      "strength": 0.0918,
+      "fatigue": 0.0,
+      "last_acted_at": "",
+      "last_updated": "2026-04-01T11:33:01",
+      "cooldown_seconds": 90,
+      "evidence_score": 0.2221,
+      "cooldown_penalty": 0.0,
+      "busy": 0.0,
+      "drive_score": 0.0676,
+      "outcome_bias": 0.0
+    },
+    "increase_engagement": {
+      "name": "increase_engagement",
+      "style": "curious, light, inviting",
+      "silent": false,
+      "strength": 0.1982,
+      "fatigue": 0.0,
+      "last_acted_at": "",
+      "last_updated": "2026-04-01T11:33:01",
+      "cooldown_seconds": 75,
+      "evidence_score": 0.2072,
+      "cooldown_penalty": 0.0,
+      "busy": 0.0,
+      "drive_score": 0.2018,
+      "outcome_bias": 0.0
+    },
+    "explore_topic": {
+      "name": "explore_topic",
+      "style": "thoughtful, probing, interested",
+      "silent": false,
+      "strength": 0.2794,
+      "fatigue": 0.0,
+      "last_acted_at": "",
+      "last_updated": "2026-04-01T11:33:01",
+      "cooldown_seconds": 60,
+      "evidence_score": 0.4543,
+      "cooldown_penalty": 0.0,
+      "busy": 0.0,
+      "drive_score": 0.245,
+      "outcome_bias": 0.0
+    },
+    "clarify": {
+      "name": "clarify",
+      "style": "structured, guiding, careful",
+      "silent": false,
+      "strength": 0.1327,
+      "fatigue": 0.0,
+      "last_acted_at": "",
+      "last_updated": "2026-04-01T11:33:01",
+      "cooldown_seconds": 60,
+      "evidence_score": 0.5418,
+      "cooldown_penalty": 0.0,
+      "busy": 0.0,
+      "drive_score": 0.0446,
+      "outcome_bias": 0.0
+    },
+    "maintain_connection": {
+      "name": "maintain_connection",
+      "style": "warm, casual, connected",
+      "silent": false,
+      "strength": 0.3579,
+      "fatigue": 0.0,
+      "last_acted_at": "2026-03-31T01:20:11",
+      "last_updated": "2026-04-01T11:33:01",
+      "cooldown_seconds": 75,
+      "evidence_score": 0.3237,
+      "cooldown_penalty": 0.0,
+      "busy": 0.0,
+      "drive_score": 0.3095,
+      "outcome_bias": 0.034
+    },
+    "observe_silently": {
+      "name": "observe_silently",
+      "style": "quiet, observant, patient",
+      "silent": true,
+      "strength": 0.0734,
+      "fatigue": 0.0,
+      "last_acted_at": "",
+      "last_updated": "2026-04-01T11:33:01",
+      "cooldown_seconds": 20,
+      "evidence_score": 0.11,
+      "cooldown_penalty": 0.0,
+      "busy": 0.0,
+      "drive_score": 0.0706,
+      "outcome_bias": 0.0
+    },
+    "wait_for_user": {
+      "name": "wait_for_user",
+      "style": "restrained, nonintrusive",
+      "silent": true,
+      "strength": 0.0685,
+      "fatigue": 0.0,
+      "last_acted_at": "",
+      "last_updated": "2026-04-01T11:33:01",
+      "cooldown_seconds": 20,
+      "evidence_score": 0.1261,
+      "cooldown_penalty": 0.0,
+      "busy": 0.0,
+      "drive_score": 0.0609,
+      "outcome_bias": 0.0
+    }
+  },
+  "active_goal": {
+    "name": "maintain_connection",
+    "strength": 0.358,
+    "style": "warm, casual, connected",
+    "silent": false,
+    "priority": 0.358,
+    "drive_score": 0.309
+  },
+  "goal_blend": [
+    {
+      "name": "maintain_connection",
+      "weight": 0.562,
+      "style": "warm, casual, connected",
+      "silent": false
+    }
+  ],
+  "last_updated": "2026-04-01T11:33:01",
+  "user_state": {
+    "scores": {
+      "socially_closed": 0.1348,
+      "fatigued": 0.1912,
+      "relaxed": 0.2288,
+      "focused": 0.2268,
+      "drifting": 0.1248,
+      "socially_open": 0.3572,
+      "stressed": 0.0382
+    },
+    "dominant": "socially_open",
+    "secondary": "relaxed",
+    "summary": "socially_open",
+    "last_updated": "2026-04-01T11:33:01",
+    "smoothed": true,
+    "smoothing_alpha": 0.782
+  },
+  "outcome_learning": {
+    "by_kind": {
+      "recent_reflection": {
+        "success": 3,
+        "fail": 0,
+        "total": 3,
+        "last_updated": "2026-03-31T01:19:58"
+      },
+      "pattern_checkin": {
+        "success": 1,
+        "fail": 0,
+        "total": 1,
+        "last_updated": "2026-03-31T01:18:51"
+      },
+      "curiosity_question": {
+        "success": 1,
+        "fail": 0,
+        "total": 1,
+        "last_updated": "2026-03-31T01:28:07"
+      }
+    },
+    "by_goal": {
+      "maintain_connection": {
+        "success": 5,
+        "fail": 0,
+        "total": 5,
+        "last_updated": "2026-03-31T01:28:07"
+      }
+    },
+    "by_person_kind": {
+      "zeke::recent_reflection": {
+        "success": 3,
+        "fail": 0,
+        "total": 3,
+        "last_updated": "2026-03-31T01:19:58"
+      },
+      "zeke::pattern_checkin": {
+        "success": 1,
+        "fail": 0,
+        "total": 1,
+        "last_updated": "2026-03-31T01:18:51"
+      },
+      "zeke::curiosity_question": {
+        "success": 1,
+        "fail": 0,
+        "total": 1,
+        "last_updated": "2026-03-31T01:28:07"
+      }
+    },
+    "by_state_goal": {
+      "socially_open::maintain_connection": {
+        "success": 5,
+        "fail": 0,
+        "total": 5,
+        "last_updated": "2026-03-31T01:28:07"
+      }
+    }
+  },
+  "distribution_tracking": {
+    "wins": {
+      "curiosity_question": 12,
+      "recent_reflection": 11,
+      "salient_memory": 7,
+      "current_goal": 10,
+      "pattern_checkin": 8
+    },
+    "silence_wins": 0,
+    "fallback_wins": {},
+    "last_choice": {
+      "kind": "curiosity_question",
+      "goal": "maintain_connection",
+      "silence": false,
+      "fallback": "",
+      "timestamp": "2026-03-31T01:20:11"
+    }
+  },
+  "conflict_state": {
+    "drives": {
+      "reduce_stress": 0.068,
+      "increase_engagement": 0.202,
+      "explore_topic": 0.245,
+      "clarify": 0.045,
+      "maintain_connection": 0.309,
+      "observe_silently": 0.071,
+      "wait_for_user": 0.061
+    },
+    "active_drive": "maintain_connection",
+    "goal_blend": [
+      {
+        "name": "maintain_connection",
+        "weight": 0.562,
+        "style": "warm, casual, connected",
+        "silent": false
+      }
+    ],
+    "user_state": "socially_open",
+    "last_updated": "2026-04-01T11:33:01",
+    "interaction_mode": "balanced",
+    "force_mode": "balanced",
+    "engagement_confidence": 0.95,
+    "silence_pressure": 0.027,
+    "support_pressure": 0.0248,
+    "initiative_pressure": 0.5985
+  },
+  "meta_control": {
+    "drive_normalization_strength": 0.7553,
+    "drive_decay_rate": 0.0795,
+    "learning_rate": 0.0136,
+    "max_learning_influence": 0.161,
+    "state_smoothing_alpha": 0.7822,
+    "silence_bias": 0.0857,
+    "variation_chance": 0.06,
+    "interaction_mode": "balanced",
+    "force_mode": "balanced",
+    "reason": "mode=balanced stress=0.04 busy=0.00 ignored=0 over=0.00 engage=0.95",
+    "last_updated": "2026-04-01T11:33:01"
+  },
+  "meta_history": [
+    {
+      "timestamp": "2026-04-01T11:32:36",
+      "reason": "mode=balanced stress=0.04 busy=0.00 ignored=0 over=0.00 engage=0.95",
+      "mode": "balanced",
+      "force_mode": "balanced",
+      "normalization": 0.7553,
+      "decay": 0.0796,
+      "learning": 0.0136,
+      "smoothing": 0.7822,
+      "silence_bias": 0.0857,
+      "variation": 0.0602
+    },
+    {
+      "timestamp": "2026-04-01T11:32:51",
+      "reason": "mode=balanced stress=0.04 busy=0.00 ignored=0 over=0.00 engage=0.95",
+      "normalization": 0.7553,
+      "decay": 0.0796,
+      "learning": 0.0136,
+      "smoothing": 0.7822,
+      "silence_bias": 0.0857,
+      "variation": 0.0602
+    },
+    {
+      "timestamp": "2026-04-01T11:32:51",
+      "reason": "mode=balanced stress=0.04 busy=0.00 ignored=0 over=0.00 engage=0.95",
+      "mode": "balanced",
+      "force_mode": "balanced",
+      "normalization": 0.7553,
+      "decay": 0.0796,
+      "learning": 0.0136,
+      "smoothing": 0.7822,
+      "silence_bias": 0.0857,
+      "variation": 0.0602
+    },
+    {
+      "timestamp": "2026-04-01T11:32:51",
+      "reason": "mode=balanced stress=0.04 busy=0.00 ignored=0 over=0.00 engage=0.95",
+      "normalization": 0.7553,
+      "decay": 0.0798,
+      "learning": 0.0136,
+      "smoothing": 0.7822,
+      "silence_bias": 0.0857,
+      "variation": 0.0604
+    },
+    {
+      "timestamp": "2026-04-01T11:32:51",
+      "reason": "mode=balanced stress=0.04 busy=0.00 ignored=0 over=0.00 engage=0.95",
+      "mode": "balanced",
+      "force_mode": "balanced",
+      "normalization": 0.7553,
+      "decay": 0.0798,
+      "learning": 0.0136,
+      "smoothing": 0.7822,
+      "silence_bias": 0.0857,
+      "variation": 0.0604
+    },
+    {
+      "timestamp": "2026-04-01T11:32:56",
+      "reason": "mode=balanced stress=0.04 busy=0.00 ignored=0 over=0.00 engage=0.95",
+      "normalization": 0.7553,
+      "decay": 0.0796,
+      "learning": 0.0136,
+      "smoothing": 0.7822,
+      "silence_bias": 0.0857,
+      "variation": 0.0602
+    },
+    {
+      "timestamp": "2026-04-01T11:32:56",
+      "reason": "mode=balanced stress=0.04 busy=0.00 ignored=0 over=0.00 engage=0.95",
+      "mode": "balanced",
+      "force_mode": "balanced",
+      "normalization": 0.7553,
+      "decay": 0.0796,
+      "learning": 0.0136,
+      "smoothing": 0.7822,
+      "silence_bias": 0.0857,
+      "variation": 0.0602
+    },
+    {
+      "timestamp": "2026-04-01T11:32:56",
+      "reason": "mode=balanced stress=0.04 busy=0.00 ignored=0 over=0.00 engage=0.95",
+      "normalization": 0.7553,
+      "decay": 0.0796,
+      "learning": 0.0136,
+      "smoothing": 0.7822,
+      "silence_bias": 0.0857,
+      "variation": 0.0602
+    },
+    {
+      "timestamp": "2026-04-01T11:32:56",
+      "reason": "mode=balanced stress=0.04 busy=0.00 ignored=0 over=0.00 engage=0.95",
+      "mode": "balanced",
+      "force_mode": "balanced",
+      "normalization": 0.7553,
+      "decay": 0.0796,
+      "learning": 0.0136,
+      "smoothing": 0.7822,
+      "silence_bias": 0.0857,
+      "variation": 0.0602
+    },
+    {
+      "timestamp": "2026-04-01T11:33:01",
+      "reason": "mode=balanced stress=0.04 busy=0.00 ignored=0 over=0.00 engage=0.95",
+      "normalization": 0.7553,
+      "decay": 0.0795,
+      "learning": 0.0136,
+      "smoothing": 0.7822,
+      "silence_bias": 0.0857,
+      "variation": 0.06
+    },
+    {
+      "timestamp": "2026-04-01T11:33:01",
+      "reason": "mode=balanced stress=0.04 busy=0.00 ignored=0 over=0.00 engage=0.95",
+      "mode": "balanced",
+      "force_mode": "balanced",
+      "normalization": 0.7553,
+      "decay": 0.0795,
+      "learning": 0.0136,
+      "smoothing": 0.7822,
+      "silence_bias": 0.0857,
+      "variation": 0.06
+    },
+    {
+      "timestamp": "2026-04-01T11:33:01",
+      "reason": "mode=balanced stress=0.04 busy=0.00 ignored=0 over=0.00 engage=0.95",
+      "normalization": 0.7553,
+      "decay": 0.0795,
+      "learning": 0.0136,
+      "smoothing": 0.7822,
+      "silence_bias": 0.0857,
+      "variation": 0.06
+    },
+    {
+      "timestamp": "2026-04-01T11:33:01",
+      "reason": "mode=balanced stress=0.04 busy=0.00 ignored=0 over=0.00 engage=0.95",
+      "mode": "balanced",
+      "force_mode": "balanced",
+      "normalization": 0.7553,
+      "decay": 0.0795,
+      "learning": 0.0136,
+      "smoothing": 0.7822,
+      "silence_bias": 0.0857,
+      "variation": 0.06
+    }
+  ],
+  "meta_state": {
+    "interaction_mode": "balanced",
+    "force_mode": "balanced",
+    "confidence_in_user_engagement": 0.95,
+    "recent_overactivity": 0.0002,
+    "silence_pressure": 0.027,
+    "support_pressure": 0.0248,
+    "initiative_pressure": 0.5985,
+    "last_behavior_type": "curiosity_question",
+    "last_goal_name": "maintain_connection",
+    "last_updated": "2026-04-01T11:33:01"
+  },
+  "meta_feedback": {
+    "by_behavior": {
+      "recent_reflection": {
+        "success": 3,
+        "fail": 0,
+        "total": 3,
+        "last_updated": "2026-03-31T01:19:58"
+      },
+      "pattern_checkin": {
+        "success": 1,
+        "fail": 0,
+        "total": 1,
+        "last_updated": "2026-03-31T01:18:51"
+      },
+      "curiosity_question": {
+        "success": 1,
+        "fail": 0,
+        "total": 1,
+        "last_updated": "2026-03-31T01:28:07"
+      }
+    },
+    "by_goal": {
+      "maintain_connection": {
+        "success": 5,
+        "fail": 0,
+        "total": 5,
+        "last_updated": "2026-03-31T01:28:07"
+      }
+    },
+    "recent": [
+      {
+        "timestamp": "2026-03-31T01:15:55",
+        "success": true,
+        "behavior": "recent_reflection",
+        "goal": "maintain_connection",
+        "person_id": "zeke"
+      },
+      {
+        "timestamp": "2026-03-31T01:18:51",
+        "success": true,
+        "behavior": "pattern_checkin",
+        "goal": "maintain_connection",
+        "person_id": "zeke"
+      },
+      {
+        "timestamp": "2026-03-31T01:19:23",
+        "success": true,
+        "behavior": "recent_reflection",
+        "goal": "maintain_connection",
+        "person_id": "zeke"
+      },
+      {
+        "timestamp": "2026-03-31T01:19:58",
+        "success": true,
+        "behavior": "recent_reflection",
+        "goal": "maintain_connection",
+        "person_id": "zeke"
+      },
+      {
+        "timestamp": "2026-03-31T01:28:07",
+        "success": true,
+        "behavior": "curiosity_question",
+        "goal": "maintain_connection",
+        "person_id": "zeke"
+      }
+    ]
+  },
+  "custom_meta_modes": {}
+}

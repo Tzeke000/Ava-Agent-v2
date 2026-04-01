@@ -1,0 +1,31 @@
+{
+  "last_face_seen_ts": 0.0,
+  "last_interaction_ts": 1775057458.8783739,
+  "last_initiation_ts": 0.0,
+  "last_initiation_message": "",
+  "last_initiated_topic": "",
+  "last_presence_reason": "recent_interaction",
+  "presence_score": 0.4149,
+  "last_busy_score": 0.0,
+  "recent_initiated_topics": {},
+  "recent_initiated_texts": [],
+  "recent_candidate_kinds": [],
+  "recent_active_goals": [],
+  "pending_initiation": null,
+  "initiative_history": [],
+  "consecutive_ignored_initiations": 0,
+  "last_user_message_length": 64,
+  "last_user_response_brief": false,
+  "interaction_energy": 0.95,
+  "last_decisiveness": 0.5481,
+  "last_choice_confidence": 0.35,
+  "meta_control_snapshot": {
+    "drive_normalization_strength": 0.7553,
+    "drive_decay_rate": 0.0795,
+    "learning_rate": 0.0136,
+    "max_learning_influence": 0.161,
+    "state_smoothing_alpha": 0.7822,
+    "silence_bias": 0.0857,
+    "variation_chance": 0.06
+  }
+}

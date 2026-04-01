@@ -1,0 +1,12 @@
+{
+  "available": true,
+  "current_expression": "unknown",
+  "raw_emotion": "unknown",
+  "confidence": 0.0,
+  "stability": 0.0,
+  "visible_face": false,
+  "recognized_person_id": null,
+  "history": [],
+  "last_updated": "2026-04-01T11:33:01",
+  "note": "No face visible"
+}

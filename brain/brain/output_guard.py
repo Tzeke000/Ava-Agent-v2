@@ -1,0 +1,52 @@
+import re
+
+_INTERNAL_BLOCK_PATTERNS = [
+    re.compile(r"```\s*(?:MEMORY|GOAL|ACTION|WORKBENCH)[\s\S]*?```", re.IGNORECASE),
+    re.compile(r"`\s*(?:MEMORY|GOAL|ACTION|WORKBENCH)[\s\S]*?`", re.IGNORECASE),
+    re.compile(r"\*\*(?:MEMORY|GOAL|ACTION|WORKBENCH)\*\*[\s\S]*?(?=(?:\n\s*\n)|$)", re.IGNORECASE),
+    re.compile(r"(?im)^\s*(?:MEMORY|GOAL|ACTION|WORKBENCH)\s*:?[ \t]*$[\s\S]*?(?=(?:\n\s*\n)|$)"),
+    re.compile(r"(?im)^\s*(?:MEMORY|GOAL|ACTION|WORKBENCH)\s+action\s*:[\s\S]*?(?=(?:\n\s*\n)|$)"),
+    re.compile(r"(?im)^\s*(?:MEMORY|GOAL|ACTION|WORKBENCH).*?$"),
+    re.compile(r"Active goal expression:[^\n]+", re.IGNORECASE),
+]
+
+
+def scrub_visible_reply(text: str) -> str:
+    if not isinstance(text, str):
+        return text
+    cleaned = text
+    for pat in _INTERNAL_BLOCK_PATTERNS:
+        cleaned = pat.sub("", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    if cleaned and cleaned[-1] not in '.!?"\'':
+        tail = cleaned.rsplit('\n', 1)[-1]
+        if len(tail.split()) <= 8:
+            cleaned = cleaned[: -len(tail)].rstrip()
+    return cleaned.strip() or "I'm here."
+
+
+def scrub_history(history):
+    if not isinstance(history, list):
+        return history
+    out = []
+    for item in history:
+        if isinstance(item, dict):
+            new_item = dict(item)
+            if isinstance(new_item.get('content'), str):
+                new_item['content'] = scrub_visible_reply(new_item['content'])
+            out.append(new_item)
+        else:
+            out.append(item)
+    return out
+
+
+def scrub_chat_callback_result(result):
+    if not isinstance(result, tuple):
+        return result
+    items = list(result)
+    if items and isinstance(items[0], list):
+        items[0] = scrub_history(items[0])
+    for i, item in enumerate(items):
+        if isinstance(item, str):
+            items[i] = scrub_visible_reply(item)
+    return tuple(items)
