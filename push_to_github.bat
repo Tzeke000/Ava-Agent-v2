@@ -15,9 +15,19 @@ if "%msg%"=="" (
     exit /b
 )
 
+echo.
+echo Syncing with remote...
+git pull origin master --rebase
+if %errorlevel% neq 0 (
+    echo.
+    echo Pull/rebase failed. Check for conflicts above.
+    pause
+    exit /b
+)
+
 git add .
 git commit -m "%msg%"
-git push
+git push origin master
 
 echo.
 echo Done! Changes pushed to GitHub.
