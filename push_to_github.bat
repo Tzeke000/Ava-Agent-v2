@@ -1,5 +1,5 @@
 @echo off
-cd /d D:\AvaAgent_v2
+cd /d D:\AvaAgentv2
 
 echo.
 echo ================================
