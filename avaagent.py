@@ -19,6 +19,7 @@ from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.messages import HumanMessage, SystemMessage
 from brain.camera import CameraManager
+from brain.perception import build_perception
 from brain.identity import IdentityRegistry
 from brain.memory_bridge import MemoryBridge
 from brain.output_guard import scrub_visible_reply, scrub_chat_callback_result
@@ -5570,11 +5571,18 @@ def get_camera_identity_context(user_input: str, image) -> str:
 
 def camera_tick_fn(image, history):
     history = _sync_canonical_history(history)
-    camera_state = camera_manager.analyze(image, globals())
-    frame = camera_state.frame
-    face_status = camera_state.face_status
-    recognized_text = camera_state.recognized_text
-    recognized_person_id = camera_state.person_id
+    perception = build_perception(camera_manager, image, globals(), "")
+    try:
+        print(
+            f"[perception] face={perception.face_detected} "
+            f"emotion={perception.face_emotion or 'neutral'} salience={perception.salience:.1f}"
+        )
+    except Exception:
+        pass
+    frame = perception.frame
+    face_status = perception.face_status
+    recognized_text = perception.recognized_text
+    recognized_person_id = perception.face_identity
     expression_state = update_expression_state(frame, recognized_person_id=recognized_person_id)
     process_camera_snapshot(frame, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expression_state)
 
@@ -5646,12 +5654,12 @@ def chat_fn(message, history, image):
         note_user_interaction_for_initiative(clean_message, interaction_kind="text")
 
     if not clean_message:
-        camera_state = camera_manager.analyze(image, globals())
-        recognized_text, recognized_person_id = camera_state.recognized_text, camera_state.person_id
-        expr_state = update_expression_state(camera_state.frame, recognized_person_id=recognized_person_id)
-        process_camera_snapshot(camera_state.frame, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expr_state)
+        perception = build_perception(camera_manager, image, globals(), "")
+        recognized_text, recognized_person_id = perception.recognized_text, perception.face_identity
+        expr_state = update_expression_state(perception.frame, recognized_person_id=recognized_person_id)
+        process_camera_snapshot(perception.frame, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expr_state)
         return scrub_chat_callback_result((
-            _get_canonical_history(), "", camera_state.face_status, get_memory_status(),
+            _get_canonical_history(), "", perception.face_status, get_memory_status(),
             get_mood_status_text(),
             recognized_text,
             get_expression_status_text(expr_state),
@@ -5681,9 +5689,9 @@ def chat_fn(message, history, image):
         action_text = "\n".join(actions) if actions else "No action."
         reflections_text = format_reflections_ui(load_recent_reflections(limit=15, person_id=active_profile["person_id"]))
 
-        camera_state = camera_manager.analyze(image, globals())
-        expr_state = update_expression_state(camera_state.frame, recognized_person_id=camera_state.person_id)
-        process_camera_snapshot(camera_state.frame, recognized_text=camera_state.recognized_text, recognized_person_id=camera_state.person_id, expression_state=expr_state)
+        perception = build_perception(camera_manager, image, globals(), clean_message)
+        expr_state = update_expression_state(perception.frame, recognized_person_id=perception.face_identity)
+        process_camera_snapshot(perception.frame, recognized_text=perception.recognized_text, recognized_person_id=perception.face_identity, expression_state=expr_state)
         return scrub_chat_callback_result((
             _get_canonical_history(), "", visual["face_status"], get_memory_status(),
             get_mood_status_text(),
@@ -5705,10 +5713,11 @@ def chat_fn(message, history, image):
             print(f"chat_fn error: {e}")
         except Exception:
             pass
-        recognized_text, recognized_person_id = recognize_face(image)
-        expr_state = update_expression_state(image, recognized_person_id=recognized_person_id)
+        perception = build_perception(camera_manager, image, globals(), clean_message)
+        recognized_text, recognized_person_id = perception.recognized_text, perception.face_identity
+        expr_state = update_expression_state(perception.frame, recognized_person_id=recognized_person_id)
         return (
-            _get_canonical_history(), clean_message, detect_face(image), get_memory_status(),
+            _get_canonical_history(), clean_message, perception.face_status, get_memory_status(),
             get_mood_status_text(),
             recognized_text,
             get_expression_status_text(expr_state),
