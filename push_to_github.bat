@@ -16,14 +16,23 @@ if "%msg%"=="" (
 )
 
 echo.
+echo Stashing local changes...
+git stash
+
+echo.
 echo Syncing with remote...
 git pull origin master --rebase
 if %errorlevel% neq 0 (
     echo.
-    echo Pull/rebase failed. Check for conflicts above.
+    echo Pull/rebase failed. Restoring your changes...
+    git stash pop
     pause
     exit /b
 )
+
+echo.
+echo Restoring local changes...
+git stash pop
 
 git add .
 git commit -m "%msg%"
