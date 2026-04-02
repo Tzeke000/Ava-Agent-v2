@@ -19,7 +19,7 @@ def extract_identity_claim(text: str) -> Optional[str]:
         m = re.search(pat, t, flags=re.I)
         if m:
             return m.group(1).strip()
-    return None
+    return None  # only explicit self-ID patterns; no short-phrase fallback
 
 
 def resolve_confirmed_identity(text: str, profiles: Dict[str, Dict[str, Any]], current_active: Optional[str] = None) -> Tuple[Optional[str], Dict[str, Any]]:
