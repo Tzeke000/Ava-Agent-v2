@@ -25,7 +25,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from brain.camera import CameraManager
 from brain.perception import build_perception
 from brain.attention import compute_attention
-from brain.emotion import process_visual_emotion
 from brain.memory import decay_tick
 from brain.workspace import Workspace
 from brain.identity import IdentityRegistry
@@ -6057,19 +6056,6 @@ def finalize_ava_turn(user_input: str, ai_reply: str, visual: dict, active_profi
     log_chat("assistant", ai_reply, {"person_id": person_id, "person_name": active_profile["name"], "actions": actions})
     maybe_autoremember(user_input, ai_reply, person_id)
     reflection = reflect_on_last_reply(user_input, ai_reply, person_id, actions=actions)
-    try:
-        profile = load_profile_by_id(person_id)
-        current_rs = float(profile.get("relationship_score", 0.3))
-        importance = float(reflection.get("importance", 0.0)) if isinstance(reflection, dict) else 0.0
-        if importance >= 0.65:
-            new_rs = min(1.0, current_rs + 0.008)
-        else:
-            new_rs = max(0.0, current_rs - 0.002)
-        if abs(new_rs - current_rs) > 0.001:
-            profile["relationship_score"] = round(new_rs, 4)
-            save_profile(profile)
-    except Exception:
-        pass
     if person_id == OWNER_PERSON_ID:
         summary = (reflection or {}).get("summary") or ""
         importance = float((reflection or {}).get("importance", 0.0))
@@ -6213,13 +6199,6 @@ def camera_tick_fn(image, history):
             pass
     ws = workspace.tick(camera_manager, image, globals(), "")
     perception = ws.perception
-    try:
-        current_mood = load_mood()
-        updated_mood = process_visual_emotion(perception, current_mood)
-        if updated_mood != current_mood:
-            save_mood(enrich_mood_state(updated_mood))
-    except Exception:
-        pass
     frame = perception.frame
     face_status = perception.face_status
     recognized_text = perception.recognized_text
