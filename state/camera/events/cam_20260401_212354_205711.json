@@ -1,0 +1,61 @@
+{
+  "snapshot_id": "cam_20260401_212354_205711",
+  "timestamp": "2026-04-01T21:23:54",
+  "face_visible": true,
+  "recognized_person_id": null,
+  "recognized_name": "unknown",
+  "recognition_text": "Facial recognition unavailable in this OpenCV build",
+  "expression_label": "unknown",
+  "expression_confidence": 0.0,
+  "expression_stability": 0.0,
+  "raw_emotion": "unknown",
+  "ava_mood": "interest",
+  "ava_primary_emotions": [
+    {
+      "name": "interest",
+      "percent": 63
+    },
+    {
+      "name": "admiration",
+      "percent": 37
+    }
+  ],
+  "ava_dominant_style": "focused",
+  "ava_behavior_modifiers": {
+    "warmth": 0.453,
+    "humor": 0.152,
+    "assertiveness": 0.344,
+    "caution": 0.237,
+    "initiative": 0.4,
+    "memory_sensitivity": 0.493,
+    "depth": 0.358
+  },
+  "importance": 0.6432500000000001,
+  "kept_permanently": true,
+  "reason_saved": "face_visible, unknown_face_visible, novel_view, time_gap, goal_relevance",
+  "reason_not_saved": "",
+  "comparison_summary": "Something about the scene looks more active than earlier.",
+  "comparison_tags": [
+    "activity_change"
+  ],
+  "transition_summary": "",
+  "transition_tags": [],
+  "trend_summary": "",
+  "trend_tags": [],
+  "trend_tension_delta": 0.0,
+  "trend_calm_delta": 0.0,
+  "trend_engagement_delta": 0.0,
+  "trend_strength": 0.0,
+  "trend_family": "unknown",
+  "trend_persisting": false,
+  "stacked_state": "",
+  "pattern_summary": "",
+  "pattern_tags": [],
+  "interpretation_confidence": 0.3,
+  "transition_strength": 0.1156,
+  "action_confidence": 0.2428,
+  "change_reason": "face_visible, unknown_face_visible, novel_view, time_gap, goal_relevance",
+  "rolling_saved": true,
+  "rolling_reason": "important_event",
+  "scene_similarity": 0.537
+}

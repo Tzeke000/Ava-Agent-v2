@@ -1,0 +1,61 @@
+{
+  "snapshot_id": "cam_20260401_212439_224785",
+  "timestamp": "2026-04-01T21:24:39",
+  "face_visible": true,
+  "recognized_person_id": null,
+  "recognized_name": "unknown",
+  "recognition_text": "Facial recognition unavailable in this OpenCV build",
+  "expression_label": "unknown",
+  "expression_confidence": 0.0,
+  "expression_stability": 0.0,
+  "raw_emotion": "unknown",
+  "ava_mood": "interest",
+  "ava_primary_emotions": [
+    {
+      "name": "interest",
+      "percent": 63
+    },
+    {
+      "name": "admiration",
+      "percent": 37
+    }
+  ],
+  "ava_dominant_style": "focused",
+  "ava_behavior_modifiers": {
+    "warmth": 0.453,
+    "humor": 0.152,
+    "assertiveness": 0.344,
+    "caution": 0.237,
+    "initiative": 0.4,
+    "memory_sensitivity": 0.493,
+    "depth": 0.358
+  },
+  "importance": 0.56325,
+  "kept_permanently": false,
+  "reason_saved": "",
+  "reason_not_saved": "no_meaningful_change",
+  "comparison_summary": "",
+  "comparison_tags": [],
+  "transition_summary": "",
+  "transition_tags": [],
+  "trend_summary": "",
+  "trend_tags": [],
+  "trend_tension_delta": 0.0,
+  "trend_calm_delta": 0.0,
+  "trend_engagement_delta": 0.0,
+  "trend_strength": 0.0,
+  "trend_family": "unknown",
+  "trend_persisting": false,
+  "stacked_state": "",
+  "pattern_summary": "The same visible person has remained at the screen for a sustained stretch.",
+  "pattern_tags": [
+    "sustained_presence"
+  ],
+  "interpretation_confidence": 0.3,
+  "transition_strength": 0.1156,
+  "action_confidence": 0.2428,
+  "change_reason": "scene_meaningfully_changed",
+  "rolling_saved": true,
+  "rolling_reason": "scene_meaningfully_changed",
+  "scene_similarity": 0.537
+}

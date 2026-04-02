@@ -1,1 +1,0 @@
-You mentioned two problems I'm experiencing, specifically with the Snapshot box not updating and the UI not refreshing the image display even though the camera is ticking. Is this related to those issues?

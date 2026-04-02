@@ -1,39 +1,39 @@
 {
-  "snapshot_id": "cam_20260331_210321_827231",
-  "timestamp": "2026-03-31T21:03:21",
+  "snapshot_id": "cam_20260401_212814_212294",
+  "timestamp": "2026-04-01T21:28:14",
   "face_visible": true,
-  "recognized_person_id": "zeke",
-  "recognized_name": "Zeke",
-  "recognition_text": "Recognized: Zeke (0.0)",
+  "recognized_person_id": null,
+  "recognized_name": "unknown",
+  "recognition_text": "Facial recognition unavailable in this OpenCV build",
   "expression_label": "unknown",
   "expression_confidence": 0.0,
   "expression_stability": 0.0,
   "raw_emotion": "unknown",
-  "ava_mood": "admiration",
+  "ava_mood": "interest",
   "ava_primary_emotions": [
     {
-      "name": "admiration",
-      "percent": 51
+      "name": "interest",
+      "percent": 63
     },
     {
-      "name": "adoration",
-      "percent": 49
+      "name": "admiration",
+      "percent": 37
     }
   ],
   "ava_dominant_style": "focused",
   "ava_behavior_modifiers": {
-    "warmth": 0.513,
-    "humor": 0.143,
-    "assertiveness": 0.339,
-    "caution": 0.222,
-    "initiative": 0.384,
-    "memory_sensitivity": 0.522,
-    "depth": 0.328
+    "warmth": 0.453,
+    "humor": 0.152,
+    "assertiveness": 0.344,
+    "caution": 0.237,
+    "initiative": 0.4,
+    "memory_sensitivity": 0.493,
+    "depth": 0.358
   },
-  "importance": 0.7497500000000001,
-  "kept_permanently": true,
-  "reason_saved": "face_visible, known_person_visible, novel_view, time_gap, goal_relevance, owner_present",
-  "reason_not_saved": "",
+  "importance": 0.56325,
+  "kept_permanently": false,
+  "reason_saved": "",
+  "reason_not_saved": "no_meaningful_change",
   "comparison_summary": "",
   "comparison_tags": [],
   "transition_summary": "",
@@ -51,11 +51,11 @@
   "pattern_tags": [
     "sustained_presence"
   ],
-  "interpretation_confidence": 0.6,
-  "transition_strength": 0.0969,
-  "action_confidence": 0.4614,
-  "change_reason": "face_visible, known_person_visible, novel_view, time_gap, goal_relevance, owner_present",
+  "interpretation_confidence": 0.3,
+  "transition_strength": 0.1156,
+  "action_confidence": 0.2428,
+  "change_reason": "scene_meaningfully_changed",
   "rolling_saved": true,
-  "rolling_reason": "important_event",
-  "scene_similarity": 0.613
+  "rolling_reason": "scene_meaningfully_changed",
+  "scene_similarity": 0.537
 }

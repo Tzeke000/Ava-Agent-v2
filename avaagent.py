@@ -5764,7 +5764,7 @@ def chat_fn(message, history, image):
         history = list(history)
         history.append({"role": "user", "content": clean_message})
         _set_canonical_history(history)
-        reply, visual, active_profile, actions, reflection = run_ava(clean_message, image, get_active_person_id())
+        reply, visual, active_profile, actions, _ = run_ava(clean_message, image, get_active_person_id())
         history = _get_canonical_history()
         history.append({"role": "assistant", "content": reply})
         history = _set_canonical_history(history)
@@ -5790,29 +5790,31 @@ def chat_fn(message, history, image):
         except Exception:
             pass
 
-        recent = list_recent_memories(active_profile["person_id"], 12)
-        action_text = "\n".join(actions) if actions else "No action."
-        reflections_text = format_reflections_ui(load_recent_reflections(limit=15, person_id=active_profile["person_id"]))
-
         workspace.tick(camera_manager, image, globals(), clean_message)
         perception = workspace.state.perception if workspace.state else build_perception(camera_manager, image, globals(), clean_message)
         expr_state = update_expression_state(perception.frame, recognized_person_id=perception.face_identity)
         process_camera_snapshot(perception.frame, recognized_text=perception.recognized_text, recognized_person_id=perception.face_identity, expression_state=expr_state)
+        person_id = active_profile["person_id"]
         return scrub_chat_callback_result((
-            _get_canonical_history(), "", visual["face_status"], get_memory_status(),
+            _get_canonical_history(),
+            "",
+            visual.get("face_status", ""),
+            get_memory_status(),
             get_mood_status_text(),
-            visual["recognition_status"], visual["expression_status"], get_emotion_blend_text(),
+            visual.get("recognition_status", ""),
+            get_expression_status_text(expr_state),
+            get_emotion_blend_text(),
             get_time_status_text(),
-            f"{active_profile['name']} [{active_profile['person_id']}]",
-            json.dumps(active_profile, indent=2, ensure_ascii=False),
-            format_recent_memories_ui(recent),
-            action_text,
-            reflections_text,
+            get_active_profile_text(),
+            get_active_profile_summary(),
+            format_recent_memories_ui(list_recent_memories(person_id, 12)),
+            str(actions),
+            format_reflections_ui(load_recent_reflections(limit=15, person_id=person_id)),
             format_self_model_ui(load_self_model()),
             initiative_status_text(),
             get_latest_annotated_snapshot_for_ui(),
             get_camera_memory_status_text(),
-            recent_camera_events_text(limit=8)
+            recent_camera_events_text(limit=8),
         ))
     except Exception as e:
         try:
