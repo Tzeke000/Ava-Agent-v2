@@ -29,6 +29,13 @@ from brain.output_guard import scrub_visible_reply, scrub_chat_callback_result
 from brain.selfstate_router import is_selfstate_query, build_selfstate_reply
 from brain.health_runtime import print_startup_selftest
 from brain.initiative_sanity import desaturate_candidate_scores, sanitize_candidate_result
+from brain.beliefs import (
+    SELF_NARRATIVE_PATH,
+    get_self_narrative_for_prompt,
+    load_self_narrative,
+    save_self_narrative,
+    update_self_narrative,
+)
 
 try:
     from deepface import DeepFace
@@ -59,7 +66,6 @@ SELF_MODEL_PATH = SELF_REFLECTION_DIR / "self_model.json"
 GOAL_SYSTEM_PATH = STATE_DIR / "goal_system.json"
 MEMORY_IMPORTANCE_OVERRIDES_PATH = MEMORY_DIR / "memory_importance_overrides.json"
 EXPRESSION_STATE_PATH = STATE_DIR / "expression_state.json"
-SELF_NARRATIVE_PATH = STATE_DIR / "self_narrative.json"
 INITIATIVE_STATE_PATH = STATE_DIR / "initiative_state.json"
 EMOTION_REFERENCE_PATH = BASE_DIR / "ava_emotion_reference.json"
 CAMERA_STATE_DIR = STATE_DIR / "camera"
@@ -5042,6 +5048,17 @@ Do not use these blocks unless you genuinely want to act.
 
 llm = ChatOllama(model=LLM_MODEL, temperature=0.6)
 
+
+def call_llm(prompt: str, max_tokens: int = 256) -> str:
+    """Host hook for brain.beliefs.update_self_narrative (non-critical path)."""
+    try:
+        _ = max_tokens  # reserved for future model-specific limits
+        result = llm.invoke([HumanMessage(content=prompt)])
+        return (getattr(result, "content", None) or str(result)).strip()
+    except Exception:
+        return ""
+
+
 def build_prompt(user_input: str, image=None, active_person_id: str | None = None) -> tuple[list, dict, dict]:
     if active_person_id is None:
         active_person_id = get_active_person_id()
@@ -5107,6 +5124,8 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
 
     workbench_index = format_workbench_index(limit=20)
 
+    self_narrative_block = get_self_narrative_for_prompt()
+
     active_memories = globals().get("_active_person_memories", []) or []
     recalled_block = ""
     if active_memories:
@@ -5117,6 +5136,8 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
 
     prompt = f"""
 {personality}
+
+{self_narrative_block}
 
 ACTIVE PERSON:
 {json.dumps(profile_summary, indent=2)}
@@ -5493,19 +5514,13 @@ def _apply_repetition_control(reply: str, user_input: str, person_id: str, sourc
 
 
 def _load_self_narrative_snippet() -> str | None:
-    if not SELF_NARRATIVE_PATH.exists():
-        return None
     try:
-        data = json.loads(SELF_NARRATIVE_PATH.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            s = (data.get("snippet") or data.get("text") or "").strip()
-            return s or None
-        if isinstance(data, str):
-            s = data.strip()
-            return s or None
+        n = load_self_narrative()
+        parts = [n.get("who_i_am"), n.get("how_i_feel"), n.get("patterns_i_notice")]
+        s = " ".join(str(p).strip() for p in parts if p)
+        return s.strip() or None
     except Exception:
-        pass
-    return None
+        return None
 
 
 def finalize_ava_turn(user_input: str, ai_reply: str, visual: dict, active_profile: dict, actions: list[str]) -> tuple[str, dict, dict, list[str], dict]:
@@ -5631,6 +5646,7 @@ def get_camera_identity_context(user_input: str, image) -> str:
 def camera_tick_fn(image, history):
     history = _sync_canonical_history(history)
     perception = build_perception(camera_manager, image, globals(), "")
+    globals()["_last_perception_emotion"] = perception.face_emotion or "neutral"
     try:
         print(
             f"[perception] face={perception.face_detected} "
@@ -5764,6 +5780,27 @@ def chat_fn(message, history, image):
         history = _get_canonical_history()
         history.append({"role": "assistant", "content": reply})
         history = _set_canonical_history(history)
+
+        try:
+            canonical = _get_canonical_history()
+            turn_count = len(canonical) if canonical else 0
+            if turn_count > 0 and turn_count % 10 == 0:
+                recent_h = canonical[-5:] if len(canonical) >= 5 else canonical
+                summary_lines = []
+                for turn in recent_h:
+                    if isinstance(turn, dict):
+                        role = str(turn.get("role", "")).strip()
+                        content = str(turn.get("content", ""))[:160]
+                        summary_lines.append(f"{role}: {content}")
+                    elif isinstance(turn, (list, tuple)) and len(turn) == 2:
+                        summary_lines.append(f"User: {str(turn[0])[:100]}")
+                        summary_lines.append(f"Ava: {str(turn[1])[:100]}")
+                summary = "\n".join(summary_lines)
+                current_mood = load_mood() if callable(globals().get("load_mood")) else {}
+                face_emotion = globals().get("_last_perception_emotion", "neutral")
+                update_self_narrative(globals(), summary, current_mood, face_emotion)
+        except Exception:
+            pass
 
         recent = list_recent_memories(active_profile["person_id"], 12)
         action_text = "\n".join(actions) if actions else "No action."
@@ -6282,6 +6319,12 @@ def load_emotion_reference() -> dict:
 ensure_owner_profile()
 ensure_emotion_reference_file()
 print_startup_selftest(globals())
+if not SELF_NARRATIVE_PATH.exists():
+    save_self_narrative(load_self_narrative())
+    print("[beliefs] self-narrative initialized")
+else:
+    load_self_narrative()
+    print("[beliefs] self-narrative loaded")
 load_goal_system()
 init_vectorstore()
 try:

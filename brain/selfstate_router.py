@@ -87,6 +87,19 @@ def build_selfstate_reply(
     ).strip()
     if active_goal:
         reply += f"\nRight now my focus is: {active_goal}."
-    if narrative_snippet:
-        reply += f"\nI've been thinking: {narrative_snippet}"
+    ns = narrative_snippet
+    if not ns:
+        try:
+            from .beliefs import load_self_narrative
+
+            n = load_self_narrative()
+            ns = " ".join(
+                str(x).strip()
+                for x in (n.get("who_i_am"), n.get("how_i_feel"))
+                if x
+            ).strip() or None
+        except Exception:
+            ns = None
+    if ns:
+        reply += f"\nI've been thinking: {ns}"
     return reply
