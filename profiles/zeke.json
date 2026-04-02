@@ -1,0 +1,15 @@
+{
+  "person_id": "zeke",
+  "name": "Zeke",
+  "relationship_to_zeke": "self",
+  "allowed_to_use_computer": true,
+  "notes": [
+    "Zeke is an artist.",
+    "Creativity is important to Zeke."
+  ],
+  "likes": [],
+  "dislikes": [],
+  "ava_impressions": [],
+  "last_seen": null,
+  "created_at": "2026-04-01T20:47:21"
+}
