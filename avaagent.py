@@ -2296,7 +2296,6 @@ def map_emotion_to_soft_signal(emotion: str) -> str:
     return mapping.get(e, e or "unknown")
 
 def _deepface_via_py312(face_bgr_image) -> dict:
-    """Run DeepFace in a Python 3.12 subprocess to bypass TF/3.14 incompatibility."""
     tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
@@ -2345,8 +2344,6 @@ def analyze_expression(image) -> dict:
     crop = extract_face_crop(image)
     if crop is None:
         return {"ok": False, "reason": "no_face"}
-    if not DEEPFACE_AVAILABLE:
-        return {"ok": False, "reason": "deepface_unavailable"}
     try:
         face_bgr = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
         return _deepface_via_py312(face_bgr)
@@ -5160,6 +5157,7 @@ Expression: {expression_prompt_text(expression_state)}
 Current camera memory: {current_camera_memory_summary()}
 Recent camera events: {recent_camera_events_text(limit=4)}
 Identity context: {get_camera_identity_context(user_input, image) or "No special camera identity note."}
+If the user is asking about the camera, face, who is visible, or recognition — answer ONLY from the current camera state. Do NOT rephrase or echo the user's question. Do NOT start your reply with their words. If no face is detected, say so plainly.
 If the user is asking about the camera, face, frame, what Ava sees, or who is present, answer that directly from the current camera state first and do not drift into unrelated time or memory topics.
 
 RELEVANT MEMORIES:

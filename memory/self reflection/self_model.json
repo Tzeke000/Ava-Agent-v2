@@ -30,92 +30,14 @@
     "Stay aware of: yes. can you see now or tell who is at the camera?",
     "Stay aware of: ok doing some more tests Ava. Who is at the camera right now?",
     "Stay aware of: i see so your camera still isnt working correctly and by the amount of time you bring it up and guide the convo back to it i see that its important to you. and…",
-    "Stay aware of: ok how is your memory now Ava?",
-    "Stay aware of: yes you keep saying your memory is fuzzy",
-    "Stay aware of: no nothing specific your memory should be good now"
+    "Stay aware of: can you tell who is at the camera right now?",
+    "Stay aware of: what about now can you tell whos at the camera?",
+    "Stay aware of: can you tell me who is at the camera now Ava"
   ],
   "curiosity_questions": [
     "Clarify or learn more about: ok im going to put you to sleep to fix some things Ava is should help your camera"
   ],
   "goal_history": [
-    {
-      "timestamp": "2026-03-31T21:12:45",
-      "kind": "goal",
-      "text": "Stay aware of: yes i am in front of the camera currently",
-      "goal_id": "goal_344d37e61f"
-    },
-    {
-      "timestamp": "2026-03-31T21:13:08",
-      "kind": "question",
-      "text": "Clarify or learn more about who is in front of the camera.",
-      "goal_id": "goal_d280373a8d"
-    },
-    {
-      "timestamp": "2026-03-31T21:13:08",
-      "kind": "goal",
-      "text": "Stay aware of: you can see that your what... Ava",
-      "goal_id": "goal_7bb4116d40"
-    },
-    {
-      "timestamp": "2026-03-31T21:13:47",
-      "kind": "goal",
-      "text": "Stay aware of: why does your camera feed not give you enough information?",
-      "goal_id": "goal_714b1a835d"
-    },
-    {
-      "timestamp": "2026-03-31T21:41:49",
-      "kind": "question",
-      "text": "Clarify or learn more about: ok Ava ive just put you back online, how are you feeling?",
-      "goal_id": "goal_21450b3859"
-    },
-    {
-      "timestamp": "2026-03-31T21:41:49",
-      "kind": "goal",
-      "text": "Stay aware of: ok Ava ive just put you back online, how are you feeling?",
-      "goal_id": "goal_36a3369625"
-    },
-    {
-      "timestamp": "2026-03-31T21:42:11",
-      "kind": "goal",
-      "text": "Stay aware of: yes can you see me now?",
-      "goal_id": "goal_54f299affe"
-    },
-    {
-      "timestamp": "2026-03-31T21:42:38",
-      "kind": "question",
-      "text": "Clarify or learn more about: yes it is me, Ezekiel",
-      "goal_id": "goal_f2e1ac1855"
-    },
-    {
-      "timestamp": "2026-03-31T21:48:49",
-      "kind": "question",
-      "text": "Clarify or learn more about: why not?",
-      "goal_id": "goal_edf540777f"
-    },
-    {
-      "timestamp": "2026-03-31T21:54:55",
-      "kind": "question",
-      "text": "Clarify or learn more about: ok im going to put you to sleep to fix some things Ava is should help your camera",
-      "goal_id": "goal_5cb706ae01"
-    },
-    {
-      "timestamp": "2026-03-31T21:54:55",
-      "kind": "goal",
-      "text": "Stay aware of: ok im going to put you to sleep to fix some things Ava is should help your camera",
-      "goal_id": "goal_c0635d4fba"
-    },
-    {
-      "timestamp": "2026-03-31T22:19:31",
-      "kind": "question",
-      "text": "Clarify or learn more about: i dont know what the issue is right now but im going to find out and help fix you it has to do you you making unusual profiles right now you should only have…",
-      "goal_id": "goal_2f870153dd"
-    },
-    {
-      "timestamp": "2026-03-31T22:19:31",
-      "kind": "goal",
-      "text": "Stay aware of: i dont know what the issue is right now but im going to find out and help fix you it has to do you you making unusual profiles right now you should only have…",
-      "goal_id": "goal_ca0f5d4559"
-    },
     {
       "timestamp": "2026-03-31T22:20:32",
       "kind": "goal",
@@ -277,6 +199,84 @@
       "kind": "goal",
       "text": "Stay aware of: whos is at the camera Ava",
       "goal_id": "goal_555f91621a"
+    },
+    {
+      "timestamp": "2026-04-01T22:47:46",
+      "kind": "question",
+      "text": "Find out what Zeke wants to do with Ava now that she's back online.",
+      "goal_id": "goal_9e71169c07"
+    },
+    {
+      "timestamp": "2026-04-01T22:47:47",
+      "kind": "goal",
+      "text": "Stay aware of: Hello Ava you're back online now",
+      "goal_id": "goal_0f04082d5a"
+    },
+    {
+      "timestamp": "2026-04-01T22:48:31",
+      "kind": "question",
+      "text": "Clarify or learn more about: how do you feel right now?",
+      "goal_id": "goal_4cd156b687"
+    },
+    {
+      "timestamp": "2026-04-01T22:48:31",
+      "kind": "goal",
+      "text": "Stay aware of: how do you feel right now?",
+      "goal_id": "goal_d56f6f5341"
+    },
+    {
+      "timestamp": "2026-04-01T22:49:16",
+      "kind": "goal",
+      "text": "Stay aware of: can you tell who is at the camera right now?",
+      "goal_id": "goal_1a977545e4"
+    },
+    {
+      "timestamp": "2026-04-01T22:49:43",
+      "kind": "goal",
+      "text": "Stay aware of: thats correct Ava",
+      "goal_id": "goal_32ffeff0cf"
+    },
+    {
+      "timestamp": "2026-04-01T22:50:16",
+      "kind": "goal",
+      "text": "Stay aware of: what about now can you tell whos at the camera?",
+      "goal_id": "goal_ffa249c082"
+    },
+    {
+      "timestamp": "2026-04-01T22:50:45",
+      "kind": "question",
+      "text": "Clarify or learn more about: and can you tell now?",
+      "goal_id": "goal_d8a2e0a627"
+    },
+    {
+      "timestamp": "2026-04-01T22:50:45",
+      "kind": "goal",
+      "text": "Stay aware of: and can you tell now?",
+      "goal_id": "goal_0c4e5f44d1"
+    },
+    {
+      "timestamp": "2026-04-01T22:51:08",
+      "kind": "goal",
+      "text": "Stay aware of: can you tell me who is at the camera now Ava",
+      "goal_id": "goal_6d83b4bfb4"
+    },
+    {
+      "timestamp": "2026-04-01T22:52:17",
+      "kind": "goal",
+      "text": "Stay aware of: can you tell me who is at the camera now Ava",
+      "goal_id": "goal_6d83b4bfb4"
+    },
+    {
+      "timestamp": "2026-04-01T22:52:55",
+      "kind": "goal",
+      "text": "Stay aware of: ok you have some bugs i can tell now",
+      "goal_id": "goal_5689c4c32a"
+    },
+    {
+      "timestamp": "2026-04-01T22:59:39",
+      "kind": "goal",
+      "text": "Stay aware of: ok im going to fix some bugs i see. so im going to put you to sleep Ava",
+      "goal_id": "goal_645646576c"
     }
   ],
   "behavior_patterns": [
@@ -302,93 +302,93 @@
     "emotion"
   ],
   "confidence_notes": [
-    "On 2026-04-01T01:53:07, I took self-directed actions: ✅ Ava saved the full latest user message as memory ffe123b4-d742-4b3e-a747-4212677e7fb0.",
-    "On 2026-04-01T01:58:27, I took self-directed actions: ✅ Ava saved memory d9d80ecf-d374-49e2-9efd-8a40fa29e4e8.",
-    "On 2026-04-01T02:00:51, I took self-directed actions: ✅ Ava saved the full latest user message as memory 863cf0cf-2317-43d0-8a8f-919e07f45c26.",
-    "On 2026-04-01T02:05:49, I took self-directed actions: ✅ Ava saved the full latest user message as memory f95fef89-92b0-4aec-a98c-1e1a1b51491a.",
-    "On 2026-04-01T02:07:01, I took self-directed actions: ✅ Ava saved the full latest user message as memory 02c70eab-e696-439c-bb75-483d5f16d14e.",
-    "On 2026-04-01T02:07:16, I took self-directed actions: ✅ Wrote drafts/conversation.txt, ✅ Ava saved the full latest user message as memory da2c1416-4f45-4604-9def-6fbbb0d65a44.",
-    "On 2026-04-01T02:22:03, I took self-directed actions: ✅ Ava saved the full latest user message as memory 9a88c573-5d28-408a-9c48-2fb0f1272fcf, ✅ Ava added question: Is there any update or progress made regarding these issues?.",
-    "On 2026-04-01T02:23:04, I took self-directed actions: ✅ Ava saved the full latest user message as memory 8c051649-6a41-449b-a173-2b3dd9064088, ✅ Ava added question: What specific changes would you like to see in the camera feed for better functionality?.",
-    "On 2026-04-01T02:26:04, I took self-directed actions: ✅ Ava saved the full latest user message as memory 2e93f004-8647-45ff-a3c6-56f3b6df6e2b, ✅ Ava added question: What are the two main problems Zeke is seeing with my current functionality?.",
-    "On 2026-04-01T22:18:51, I took self-directed actions: camera_reflection_trigger.",
-    "On 2026-04-01T22:23:38, I took self-directed actions: camera_reflection_trigger.",
-    "On 2026-04-01T22:26:13, I took self-directed actions: camera_reflection_trigger."
+    "On 2026-04-01T22:48:06, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-01T22:48:31, I took self-directed actions: ✅ Ava saved the full latest user message as memory f99e196a-f862-4bd1-870b-39191ed0784b.",
+    "On 2026-04-01T22:48:32, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-01T22:48:46, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-01T22:49:32, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-01T22:50:36, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-01T22:50:45, I took self-directed actions: ✅ Ava saved the full latest user message as memory 2ccd5658-a85f-4c0e-9e05-82c6f38ffe32.",
+    "On 2026-04-01T22:51:21, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-01T22:54:26, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-01T22:54:46, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-01T22:58:56, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-01T22:59:07, I took self-directed actions: camera_reflection_trigger."
   ],
-  "last_updated": "2026-04-01T22:26:13",
-  "reflection_count": 189,
+  "last_updated": "2026-04-01T22:59:39",
+  "reflection_count": 212,
   "goal_system_summary": [
     {
       "text": "Stay aware of: ok im going to put you to sleep to fix some things Ava is should help your camera",
-      "priority": 0.58,
+      "priority": 0.56,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: yes that is correct. why are you confused who is actually at the camera?",
-      "priority": 0.58,
+      "priority": 0.55,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: yes, but right now your camera UI isnt work how it should",
-      "priority": 0.58,
+      "priority": 0.55,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: is your camera working well?",
-      "priority": 0.58,
+      "priority": 0.55,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: yes i am in front of the camera currently",
-      "priority": 0.58,
+      "priority": 0.55,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: why does your camera feed not give you enough information?",
-      "priority": 0.58,
+      "priority": 0.55,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: ok thats good, we're going to do some tests now. what about now who is in front of the camera.",
-      "priority": 0.58,
+      "priority": 0.55,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: ok i see two probles with you right now Snapshot box not updating — the UI isn't refreshing the image display even though the camera is ticking No face…",
-      "priority": 0.58,
+      "priority": 0.55,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: ok Who's at the camera?",
-      "priority": 0.58,
+      "priority": 0.55,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: no, no one is at the camera right now. im actually covering the camera so you cat see anything because im testing you",
-      "priority": 0.58,
+      "priority": 0.55,
       "horizon": "medium_term",
       "kind": "goal"
     }
   ],
   "active_goal": {
     "name": "clarify",
-    "strength": 0.542,
+    "strength": 0.48,
     "style": "structured, guiding, careful",
     "silent": false
   },
   "goal_blend": [
     {
       "name": "clarify",
-      "weight": 0.617,
+      "weight": 0.672,
       "style": "structured, guiding, careful",
       "silent": false
     }

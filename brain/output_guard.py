@@ -1,15 +1,20 @@
 import re
 
 _INTERNAL_BLOCK_PATTERNS = [
-    re.compile(r"```\s*(?:MEMORY|GOAL|ACTION|WORKBENCH)[\s\S]*?```", re.IGNORECASE),
+    re.compile(r"```\s*(?:MEMORY|GOAL|ACTION|WORKBENCH|REFLECTION|DEBUG)[\s\S]*?```", re.IGNORECASE),
     re.compile(r"`\s*(?:MEMORY|GOAL|ACTION|WORKBENCH)[\s\S]*?`", re.IGNORECASE),
     re.compile(r"\*\*(?:MEMORY|GOAL|ACTION|WORKBENCH)\*\*[\s\S]*?(?=(?:\n\s*\n)|$)", re.IGNORECASE),
     re.compile(r"(?im)^\s*(?:MEMORY|GOAL|ACTION|WORKBENCH)\s*:?[ \t]*$[\s\S]*?(?=(?:\n\s*\n)|$)"),
     re.compile(r"(?im)^\s*(?:MEMORY|GOAL|ACTION|WORKBENCH)\s+action\s*:[\s\S]*?(?=(?:\n\s*\n)|$)"),
     re.compile(r"(?im)^\s*(?:MEMORY|GOAL|ACTION|WORKBENCH).*?$"),
     re.compile(r"Active goal expression:[^\n]+", re.IGNORECASE),
+    re.compile(r"ACTIVE PERSON\s*:[\s\S]*?(?=\n\s*\n|$)", re.IGNORECASE),
+    re.compile(r"\bMEMORY\s+action\s*:.*$", re.IGNORECASE | re.MULTILINE),
+    re.compile(
+        r"\b(?:MEMORY|GOAL|ACTION|WORKBENCH)\s+\w+\s*:.*?(?:category|importance|tags|text)\s*:.*$",
+        re.IGNORECASE | re.MULTILINE,
+    ),
 ]
-
 
 def scrub_visible_reply(text: str) -> str:
     if not isinstance(text, str):
