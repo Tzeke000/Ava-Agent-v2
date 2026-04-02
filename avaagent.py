@@ -5537,6 +5537,10 @@ def finalize_ava_turn(user_input: str, ai_reply: str, visual: dict, active_profi
     log_chat("assistant", ai_reply, {"person_id": person_id, "person_name": active_profile["name"], "actions": actions})
     maybe_autoremember(user_input, ai_reply, person_id)
     reflection = reflect_on_last_reply(user_input, ai_reply, person_id, actions=actions)
+    # log_chat only appends to the JSONL file; Gradio uses in-memory canonical history.
+    canon = list(_get_canonical_history())
+    canon.append({"role": "assistant", "content": ai_reply})
+    _set_canonical_history(canon)
     return ai_reply, visual, active_profile, actions, reflection
 
 
@@ -5761,13 +5765,10 @@ def chat_fn(message, history, image):
     _mark_user_reply_started()
     try:
         workspace.tick(camera_manager, image, globals(), clean_message)
-        history = list(history)
-        history.append({"role": "user", "content": clean_message})
-        _set_canonical_history(history)
+        canon = list(_get_canonical_history())
+        canon.append({"role": "user", "content": clean_message})
+        _set_canonical_history(canon)
         reply, visual, active_profile, actions, _ = run_ava(clean_message, image, get_active_person_id())
-        history = _get_canonical_history()
-        history.append({"role": "assistant", "content": reply})
-        history = _set_canonical_history(history)
 
         try:
             canonical = _get_canonical_history()
@@ -5894,11 +5895,13 @@ def voice_fn(audio, history, image):
 
     if should_ask_identity_when_no_camera_face(text.strip(), image):
         reply = no_face_identity_prompt()
-        history.append({"role": "user", "content": text.strip()})
-        history.append({"role": "assistant", "content": reply})
         current_person_id = get_active_person_id()
         log_chat("user", text.strip(), {"person_id": current_person_id, "person_name": load_profile_by_id(current_person_id)["name"]})
         log_chat("assistant", reply, {"person_id": current_person_id, "person_name": load_profile_by_id(current_person_id)["name"], "actions": ["asked_identity_no_face"]})
+        canon = list(_get_canonical_history())
+        canon.append({"role": "user", "content": text.strip()})
+        canon.append({"role": "assistant", "content": reply})
+        _set_canonical_history(canon)
         recognized_text, recognized_person_id = recognize_face(image)
         expr_state = update_expression_state(image, recognized_person_id=recognized_person_id)
         process_camera_snapshot(image, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expr_state)
@@ -5918,9 +5921,10 @@ def voice_fn(audio, history, image):
             recent_camera_events_text(limit=8)
         )
 
-    reply, visual, active_profile, actions, reflection = run_ava(text.strip(), image, get_active_person_id())
-    history.append({"role": "user", "content": text.strip()})
-    history.append({"role": "assistant", "content": reply})
+    canon = list(_get_canonical_history())
+    canon.append({"role": "user", "content": text.strip()})
+    _set_canonical_history(canon)
+    reply, visual, active_profile, actions, _ = run_ava(text.strip(), image, get_active_person_id())
 
     recent = list_recent_memories(active_profile["person_id"], 12)
     action_text = "\n".join(actions) if actions else "No action."
@@ -5929,10 +5933,15 @@ def voice_fn(audio, history, image):
     recognized_text, recognized_person_id = recognize_face(image)
     expr_state = update_expression_state(image, recognized_person_id=recognized_person_id)
     process_camera_snapshot(image, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expr_state)
-    return (
-        history, None, visual["face_status"], get_memory_status(),
+    return scrub_chat_callback_result((
+        _get_canonical_history(),
+        None,
+        visual["face_status"],
+        get_memory_status(),
         get_mood_status_text(),
-        visual["recognition_status"], visual["expression_status"], get_emotion_blend_text(),
+        visual["recognition_status"],
+        visual["expression_status"],
+        get_emotion_blend_text(),
         get_time_status_text(),
         f"{active_profile['name']} [{active_profile['person_id']}]",
         json.dumps(active_profile, indent=2, ensure_ascii=False),
@@ -5943,8 +5952,8 @@ def voice_fn(audio, history, image):
         initiative_status_text(),
         get_latest_annotated_snapshot_for_ui(),
         get_camera_memory_status_text(),
-        recent_camera_events_text(limit=8)
-    )
+        recent_camera_events_text(limit=8),
+    ))
 
 def refresh_profiles_fn():
     return gr.update(choices=get_profile_choices(), value=get_active_profile_text())
