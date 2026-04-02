@@ -23,7 +23,14 @@ def _safe_call(fn, *args, **kwargs):
         return None
 
 
-def build_selfstate_reply(g: dict, user_input: str, image, active_profile: dict) -> str:
+def build_selfstate_reply(
+    g: dict,
+    user_input: str,
+    image,
+    active_profile: dict,
+    active_goal: str | None = None,
+    narrative_snippet: str | None = None,
+) -> str:
     now = datetime.now().strftime("%I:%M %p")
     mood = {}
     if 'load_mood' in g:
@@ -73,8 +80,13 @@ def build_selfstate_reply(g: dict, user_input: str, image, active_profile: dict)
         details.append(f"recognition: {recognized}")
     detail_text = (" " + " ".join(details[:2]) + ".") if details else ""
 
-    return (
+    reply = (
         f"I'm {health} at the moment. {qualifier} "
         f"Mood-wise I'm leaning {blend_text}. "
         f"It is {now}, and I'm doing a quick self-check before answering you.{detail_text}"
     ).strip()
+    if active_goal:
+        reply += f"\nRight now my focus is: {active_goal}."
+    if narrative_snippet:
+        reply += f"\nI've been thinking: {narrative_snippet}"
+    return reply

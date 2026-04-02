@@ -22,6 +22,7 @@ from brain.camera import CameraManager
 from brain.perception import build_perception
 from brain.attention import compute_attention
 from brain.emotion import process_visual_emotion
+from brain.memory import decay_tick, recall_for_person
 from brain.identity import IdentityRegistry
 from brain.memory_bridge import MemoryBridge
 from brain.output_guard import scrub_visible_reply, scrub_chat_callback_result
@@ -58,6 +59,7 @@ SELF_MODEL_PATH = SELF_REFLECTION_DIR / "self_model.json"
 GOAL_SYSTEM_PATH = STATE_DIR / "goal_system.json"
 MEMORY_IMPORTANCE_OVERRIDES_PATH = MEMORY_DIR / "memory_importance_overrides.json"
 EXPRESSION_STATE_PATH = STATE_DIR / "expression_state.json"
+SELF_NARRATIVE_PATH = STATE_DIR / "self_narrative.json"
 INITIATIVE_STATE_PATH = STATE_DIR / "initiative_state.json"
 EMOTION_REFERENCE_PATH = BASE_DIR / "ava_emotion_reference.json"
 CAMERA_STATE_DIR = STATE_DIR / "camera"
@@ -135,6 +137,8 @@ identity_registry = IdentityRegistry(PROFILES_DIR, settings=SETTINGS)
 memory_bridge = MemoryBridge(MEMORY_DIR, settings=SETTINGS)
 
 _last_user_message_ts = time.time()
+_last_recognized_person_id: str | None = None
+_active_person_memories: list[str] = []
 
 # User-reply priority guards
 USER_REPLY_PRIORITY_SECONDS = 8.0
@@ -5103,6 +5107,14 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
 
     workbench_index = format_workbench_index(limit=20)
 
+    active_memories = globals().get("_active_person_memories", []) or []
+    recalled_block = ""
+    if active_memories:
+        recalled_block = (
+            "\n\n[Recalled memories for this person]\n"
+            + "\n".join(f"- {m}" for m in active_memories)
+        )
+
     prompt = f"""
 {personality}
 
@@ -5147,6 +5159,7 @@ RECENT SELF REFLECTION SNAPSHOT:
 
 DYNAMIC SELF / MEMORY READER:
 {dynamic_memory_summary}
+{recalled_block}
 
 AVAILABLE READ-ONLY FILES:
 - chatlog.jsonl
@@ -5479,6 +5492,22 @@ def _apply_repetition_control(reply: str, user_input: str, person_id: str, sourc
     return cleaned
 
 
+def _load_self_narrative_snippet() -> str | None:
+    if not SELF_NARRATIVE_PATH.exists():
+        return None
+    try:
+        data = json.loads(SELF_NARRATIVE_PATH.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            s = (data.get("snippet") or data.get("text") or "").strip()
+            return s or None
+        if isinstance(data, str):
+            s = data.strip()
+            return s or None
+    except Exception:
+        pass
+    return None
+
+
 def finalize_ava_turn(user_input: str, ai_reply: str, visual: dict, active_profile: dict, actions: list[str]) -> tuple[str, dict, dict, list[str], dict]:
     person_id = active_profile["person_id"]
     log_chat("user", user_input, {"person_id": person_id, "person_name": active_profile["name"]})
@@ -5492,7 +5521,27 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
     if is_selfstate_query(user_input):
         active_person_id = active_person_id or get_active_person_id()
         active_profile = load_profile_by_id(active_person_id)
-        reply = scrub_visible_reply(build_selfstate_reply(globals(), user_input, image, active_profile))
+        active_goal_txt = ""
+        try:
+            gs = load_goal_system()
+            ag = gs.get("active_goal")
+            if isinstance(ag, dict):
+                active_goal_txt = str(ag.get("name") or ag.get("title") or "").strip()[:200]
+            elif ag:
+                active_goal_txt = str(ag)[:200]
+        except Exception:
+            pass
+        narrative = _load_self_narrative_snippet()
+        reply = scrub_visible_reply(
+            build_selfstate_reply(
+                globals(),
+                user_input,
+                image,
+                active_profile,
+                active_goal=active_goal_txt or None,
+                narrative_snippet=narrative,
+            )
+        )
         return finalize_ava_turn(user_input, reply, {}, active_profile, [])
 
     if is_camera_identity_intent(user_input) or is_camera_visual_query(user_input):
@@ -5595,6 +5644,14 @@ def camera_tick_fn(image, history):
         save_mood(updated_mood)
     except Exception:
         pass
+    prev_pid = globals().get("_last_recognized_person_id")
+    pid = perception.face_identity
+    if pid and pid != prev_pid:
+        globals()["_last_recognized_person_id"] = pid
+        globals()["_active_person_memories"] = recall_for_person(globals(), pid, limit=5)
+        mems = globals()["_active_person_memories"]
+        if mems:
+            print(f"[memory] recalled {len(mems)} memories for {pid}")
     frame = perception.frame
     face_status = perception.face_status
     recognized_text = perception.recognized_text
@@ -6037,6 +6094,39 @@ def iso_to_ts(value) -> float:
     except Exception:
         return 0.0
 
+def list_memories() -> list[dict]:
+    """All vector memories as flat dicts for brain.memory.decay_tick."""
+    collection = get_collection()
+    if collection is None:
+        return []
+    try:
+        got = collection.get(include=["metadatas", "documents"])
+        ids = got.get("ids") or []
+        metas = got.get("metadatas") or []
+        out: list[dict] = []
+        for mid, meta in zip(ids, metas):
+            meta = meta or {}
+            created_at = meta.get("created_at", "")
+            created_ts = iso_to_ts(created_at)
+            la = meta.get("last_accessed_at", "")
+            last_ts = iso_to_ts(la) if la else 0.0
+            try:
+                imp = float(meta.get("importance_score", 0.5))
+            except (TypeError, ValueError):
+                imp = 0.5
+            out.append({
+                "memory_id": mid,
+                "id": mid,
+                "importance": imp,
+                "importance_score": imp,
+                "created_at": created_at,
+                "created_ts": created_ts,
+                "last_accessed_ts": last_ts or created_ts,
+            })
+        return out
+    except Exception:
+        return []
+
 def _deep_merge_defaults_v37(target, defaults):
     if not isinstance(target, dict) or not isinstance(defaults, dict):
         return target
@@ -6194,6 +6284,11 @@ ensure_emotion_reference_file()
 print_startup_selftest(globals())
 load_goal_system()
 init_vectorstore()
+try:
+    decay_tick(globals())
+    print("[memory] decay tick complete")
+except Exception as e:
+    print(f"[memory] decay tick failed: {e}")
 load_face_labels()
 load_face_model_if_available()
 

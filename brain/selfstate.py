@@ -38,7 +38,13 @@ def summarize_health(health: dict | None) -> tuple[str, str]:
     detail = ", ".join(detail_bits) if detail_bits else "all core systems look stable"
     return state, detail
 
-def build_selfstate_reply(health: dict | None, mood: dict | None, tendency: str | None = None) -> str:
+def build_selfstate_reply(
+    health: dict | None,
+    mood: dict | None,
+    tendency: str | None = None,
+    active_goal: str | None = None,
+    narrative_snippet: str | None = None,
+) -> str:
     state, detail = summarize_health(health)
     mood_text = summarize_mood(mood)
     tendency = tendency or "balanced"
@@ -50,10 +56,15 @@ def build_selfstate_reply(health: dict | None, mood: dict | None, tendency: str 
         prefix = "I'm running, but something is definitely off."
     else:
         prefix = "I'm not fully okay right now."
-    return (
+    reply = (
         f"{prefix} Operationally, {detail}. "
         f"Mood-wise I'm leaning {mood_text}, and behavior-wise I'm a bit more {tendency} at the moment."
     )
+    if active_goal:
+        reply += f"\nRight now my focus is: {active_goal}."
+    if narrative_snippet:
+        reply += f"\nI've been thinking: {narrative_snippet}"
+    return reply
 
 def startup_health_banner(health: dict | None) -> str:
     state, detail = summarize_health(health)
