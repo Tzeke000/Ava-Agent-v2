@@ -35,6 +35,22 @@ from brain.selfstate import is_selfstate_query, build_selfstate_reply
 from brain.health_runtime import print_startup_selftest
 from brain.initiative_sanity import desaturate_candidate_scores, sanitize_candidate_result
 from brain.vision import analyze_face_emotion_detailed
+from brain.profile_manager import (
+    DEFAULT_ALIASES,
+    looks_like_phrase_profile,
+    normalize_person_key,
+    is_valid_profile_name,
+)
+from brain.trust_manager import get_trust_level, get_trust_label, is_blocked, can
+from brain.persona_switcher import build_persona_block, should_deflect, get_blocked_reply, get_deflect_reply
+from brain.profile_store import seed_default_profiles, get_or_create_profile as _store_get_or_create, touch_last_seen
+from brain.identity_loader import (
+    ensure_identity_files,
+    load_ava_identity,
+    process_identity_actions,
+    append_to_user_file,
+)
+from brain.health import run_system_health_check, load_health_state
 from brain.beliefs import (
     SELF_NARRATIVE_PATH,
     get_self_narrative_for_prompt,
@@ -98,6 +114,7 @@ CAMERA_STATE_PATH = CAMERA_STATE_DIR / "camera_state.json"
 CAMERA_LATEST_RAW_PATH = CAMERA_STATE_DIR / "latest_snapshot.jpg"
 CAMERA_LATEST_ANNOTATED_PATH = CAMERA_STATE_DIR / "latest_annotated.jpg"
 CAMERA_LATEST_JSON_PATH = CAMERA_STATE_DIR / "latest_snapshot.json"
+HEALTH_STATE_PATH = STATE_DIR / "health_state.json"
 
 MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 PROFILES_DIR.mkdir(parents=True, exist_ok=True)
@@ -165,6 +182,9 @@ camera_manager = CameraManager()
 identity_registry = IdentityRegistry(PROFILES_DIR, settings=SETTINGS)
 memory_bridge = MemoryBridge(MEMORY_DIR, settings=SETTINGS)
 workspace = Workspace()
+
+# Filled at startup (Stage 7 identity + persona injection).
+_AVA_IDENTITY_BLOCK = ""
 
 # User-reply priority guards
 USER_REPLY_PRIORITY_SECONDS = 8.0
@@ -670,6 +690,9 @@ def ensure_owner_profile():
     save_profile(profile)
 
 def create_or_get_profile(name: str, relationship_to_zeke: str = "known person", allowed: bool = True) -> dict:
+    cleaned = (name or "").strip()
+    if not is_valid_profile_name(cleaned):
+        return load_profile_by_id(OWNER_PERSON_ID)
     pid = slugify_name(name)
     profile = load_profile_by_id(pid)
     profile["name"] = name.strip() or profile["name"]
@@ -3801,7 +3824,22 @@ def _session_state_atexit():
         pass
 
 
+def _maybe_update_narrative():
+    try:
+        sess = load_session_state()
+        count = int(sess.get("total_message_count", 0))
+        if count >= 5:
+            recent = load_recent_chat(limit=20)
+            summary = " ".join((row.get("content", "") or "")[:80] for row in recent[-10:])
+            mood = load_mood()
+            face_emotion = load_expression_state().get("raw_emotion", "neutral")
+            update_self_narrative(globals(), summary, mood, face_emotion)
+    except Exception as e:
+        print(f"[narrative-update] failed: {e}")
+
+
 atexit.register(_session_state_atexit)
+atexit.register(_maybe_update_narrative)
 
 
 def update_presence_continuity(face_visible: bool, presence_state: dict) -> dict:
@@ -4264,6 +4302,29 @@ def collect_initiative_candidates(person_id: str) -> list[dict]:
         seen.add(cand.get("text", "").lower())
         candidates.append(cand)
 
+    camera_state = load_camera_state()
+    current = camera_state.get("current", {}) or {}
+    trans = str(current.get("transition_summary", "") or "").lower()
+    if trans and "came back" in trans:
+        name = load_profile_by_id(person_id).get("name", "you")
+        nm = (name or "").strip()
+        if nm and nm.lower() not in ("you", "unknown", "user"):
+            txt = f"Hey {nm}, you're back. How's it going?"
+        else:
+            txt = "Hey, you're back. How's it going?"
+        tk = txt.lower()
+        if tk not in seen:
+            seen.add(tk)
+            candidates.append({
+                "kind": "return_greeting",
+                "text": txt,
+                "topic_key": _topic_key(txt),
+                "base_score": 0.82,
+                "memory_importance": 0.65,
+                "action_confidence": 1.0,
+                "interpretation_confidence": 1.0,
+            })
+
     if int(initiative_state.get("consecutive_ignored_initiations", 0) or 0) >= 2:
         feedback_text = "I can ease off a bit if you want — should I keep bringing things up on my own, or would you rather lead for a while?"
         if feedback_text.lower() not in seen:
@@ -4288,6 +4349,21 @@ def collect_initiative_candidates(person_id: str) -> list[dict]:
         if tkey and tkey not in seen:
             seen.add(tkey)
             candidates.append(cal)
+
+    if random.random() < 0.15:
+        prompt = random.choice(SELF_CALIBRATION_PROMPTS)
+        tkey = (prompt or "").strip().lower()
+        if tkey and tkey not in seen:
+            seen.add(tkey)
+            candidates.append({
+                "kind": "self_calibration_check",
+                "text": prompt,
+                "topic_key": _topic_key(prompt),
+                "base_score": 0.70,
+                "memory_importance": 0.68,
+                "action_confidence": 1.0,
+                "interpretation_confidence": 1.0,
+            })
 
     return desaturate_candidate_scores(candidates)
 
@@ -4657,6 +4733,9 @@ def choose_initiative_candidate(person_id: str, expression_state: dict | None = 
     recent_topics = state.get("recent_initiated_topics", {}) or {}
     busy_score = float(state.get("last_busy_score", 0.0) or 0.0)
     all_candidates = collect_initiative_candidates(person_id)
+    health = load_health_state(globals())
+    mods = health.get("behavior_modifiers", {}) or {}
+    initiative_scale = float(mods.get("initiative_scale", 1.0))
     # Keep silence candidate, but goal-filter spoken candidates before deeper scoring.
     silence_candidate = None
     prefiltered = []
@@ -4674,6 +4753,8 @@ def choose_initiative_candidate(person_id: str, expression_state: dict | None = 
     viable_candidates = []
     raw_viable_candidates = []
     for cand in prefiltered:
+        if cand.get("kind") != "do_nothing":
+            cand["base_score"] = float(cand.get("base_score", 0.6) or 0.6) * initiative_scale
         cand["score"] = score_initiative_candidate(cand, person_id, state=state)
         if cand.get("kind") in ["visual_pattern", "visual_checkin", "visual_observation", "transition_observation", "uncertainty_observation", "engagement_observation", "attention_drift"]:
             if float(cand.get("interpretation_confidence", 0.0) or 0.0) < VISUAL_INITIATIVE_CONFIDENCE_THRESHOLD:
@@ -5015,19 +5096,21 @@ _set_canonical_history([])
 def maybe_autonomous_initiation(history, image, recognized_person_id: str | None = None, expression_state: dict | None = None, perception=None):
     history = _sync_canonical_history(history)
     wst = workspace.state
-    if wst is not None:
-        attention = wst.attention
-        if perception is None:
+    if perception is None:
+        if wst is not None:
             perception = wst.perception
-    else:
-        if perception is None:
+        else:
             perception = build_perception(camera_manager, image, globals(), "")
-        _cscale = float(get_circadian_modifiers().get("initiative_scale", 1.0))
-        attention = compute_attention(
-            perception,
-            time.time() - workspace._last_user_message_ts,
-            circadian_initiative_scale=_cscale,
-        )
+
+    if perception:
+        seconds_idle = (time.time() - _LAST_USER_REPLY_END_TS) if _LAST_USER_REPLY_END_TS > 0 else 9999.0
+        circ = float(get_circadian_modifiers().get("initiative_scale", 1.0))
+        attention = compute_attention(perception, seconds_idle, circadian_initiative_scale=circ)
+        if not attention.should_speak:
+            return history, f"Attention gate: {attention.suppression_reason}"
+    else:
+        attention = None
+
     face_visible = detect_face(image) == "Face detected"
     state = update_presence_state(face_visible, recognized_person_id=recognized_person_id, interaction_happened=False)
     person_id = recognized_person_id or state.get("last_seen_person_id") or get_active_person_id()
@@ -5171,10 +5254,50 @@ def recognize_face(image):
 # =========================================================
 # PERSON INFERENCE
 # =========================================================
+def _load_settings_aliases() -> dict:
+    try:
+        p = BASE_DIR / "config" / "settings.json"
+        data = json.loads(p.read_text(encoding="utf-8"))
+        al = data.get("aliases") or {}
+        if isinstance(al, dict):
+            return {str(k): (v if isinstance(v, list) else [v]) for k, v in al.items()}
+    except Exception:
+        pass
+    return {}
+
+
+def _resolve_config_alias(pid: str) -> tuple[str | None, str | None]:
+    """Map a person_id slug to canonical id when it matches config or DEFAULT_ALIASES."""
+    nk_pid = normalize_person_key(pid)
+    if not nk_pid:
+        return None, None
+    for alias_map in (_load_settings_aliases(), {k: list(v) for k, v in DEFAULT_ALIASES.items()}):
+        for primary_id, alias_list in alias_map.items():
+            canon = normalize_person_key(str(primary_id))
+            if nk_pid == canon:
+                continue
+            vals = alias_list if isinstance(alias_list, list) else [alias_list]
+            for a in vals:
+                if normalize_person_key(str(a)) == nk_pid:
+                    return canon, "config_alias"
+    return None, None
+
+
 def infer_person_from_text(user_input: str, current_person_id: str) -> tuple[str, str]:
     try:
         resolved, source = identity_registry.resolve_text_claim(user_input, current_person_id)
-        return (resolved or current_person_id), (source or "unchanged")
+        pid = resolved or current_person_id
+        source = source or "unchanged"
+        if pid and pid != current_person_id:
+            if looks_like_phrase_profile(pid.replace("_", " ")):
+                return current_person_id, "rejected_phrase_profile"
+            nk = normalize_person_key(pid)
+            if not pid or not nk or len(nk) < 2:
+                return current_person_id, "rejected_empty_id"
+        canon, alias_src = _resolve_config_alias(pid)
+        if canon:
+            pid, source = canon, alias_src
+        return pid, source
     except Exception as e:
         print(f"[v2-clean] identity resolution failed: {e}")
         return current_person_id, "unchanged"
@@ -5590,6 +5713,17 @@ Respond as Ava.
         HumanMessage(content=prompt)
     ]
 
+    try:
+        persona_block = build_persona_block(active_profile)
+        trust_note = f"[Trust level: {get_trust_label(active_profile).upper()} ({get_trust_level(active_profile)})]"
+        injected = f"{_AVA_IDENTITY_BLOCK}\n\n{persona_block}\n\n{trust_note}"
+        if messages and isinstance(messages[0], SystemMessage):
+            messages[0].content = injected + "\n\n" + messages[0].content
+        else:
+            messages.insert(0, SystemMessage(content=injected))
+    except Exception as _e:
+        print(f"[stage7] persona inject failed: {_e}")
+
     visual = {
         "face_status": face_status,
         "recognition_status": recognized_text,
@@ -5915,10 +6049,35 @@ def _load_self_narrative_snippet() -> str | None:
 
 def finalize_ava_turn(user_input: str, ai_reply: str, visual: dict, active_profile: dict, actions: list[str]) -> tuple[str, dict, dict, list[str], dict]:
     person_id = active_profile["person_id"]
+    try:
+        touch_last_seen(person_id, topic=user_input)
+    except Exception:
+        pass
     log_chat("user", user_input, {"person_id": person_id, "person_name": active_profile["name"]})
     log_chat("assistant", ai_reply, {"person_id": person_id, "person_name": active_profile["name"], "actions": actions})
     maybe_autoremember(user_input, ai_reply, person_id)
     reflection = reflect_on_last_reply(user_input, ai_reply, person_id, actions=actions)
+    try:
+        profile = load_profile_by_id(person_id)
+        current_rs = float(profile.get("relationship_score", 0.3))
+        importance = float(reflection.get("importance", 0.0)) if isinstance(reflection, dict) else 0.0
+        if importance >= 0.65:
+            new_rs = min(1.0, current_rs + 0.008)
+        else:
+            new_rs = max(0.0, current_rs - 0.002)
+        if abs(new_rs - current_rs) > 0.001:
+            profile["relationship_score"] = round(new_rs, 4)
+            save_profile(profile)
+    except Exception:
+        pass
+    if person_id == OWNER_PERSON_ID:
+        summary = (reflection or {}).get("summary") or ""
+        importance = float((reflection or {}).get("importance", 0.0))
+        if summary and importance >= 0.72:
+            try:
+                append_to_user_file(summary)
+            except Exception:
+                pass
     # log_chat only appends to the JSONL file; Gradio uses in-memory canonical history.
     canon = list(_get_canonical_history())
     canon.append({"role": "assistant", "content": ai_reply})
@@ -5928,9 +6087,15 @@ def finalize_ava_turn(user_input: str, ai_reply: str, visual: dict, active_profi
 
 
 def run_ava(user_input: str, image=None, active_person_id: str | None = None) -> tuple[str, dict, dict, list[str], dict]:
+    active_person_id = active_person_id or get_active_person_id()
+    active_profile = load_profile_by_id(active_person_id)
+
+    if is_blocked(active_profile):
+        return get_blocked_reply(), {}, active_profile, [], {}
+    if should_deflect(active_profile, user_input):
+        return get_deflect_reply(active_profile, user_input), {}, active_profile, [], {}
+
     if is_selfstate_query(user_input):
-        active_person_id = active_person_id or get_active_person_id()
-        active_profile = load_profile_by_id(active_person_id)
         active_goal_txt = ""
         try:
             gs = load_goal_system()
@@ -5972,6 +6137,7 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
 
     person_id = active_profile["person_id"]
     ai_reply, actions = process_ava_action_blocks(raw_reply, person_id, latest_user_input=user_input)
+    ai_reply = process_identity_actions(ai_reply)
     ai_reply = _apply_reply_guardrails(ai_reply, user_input)
     ai_reply = _apply_repetition_control(ai_reply, user_input, person_id, source="chat")
     ai_reply = _scrub_internal_leakage(ai_reply)
@@ -6040,8 +6206,20 @@ def get_camera_identity_context(user_input: str, image) -> str:
 
 def camera_tick_fn(image, history):
     history = _sync_canonical_history(history)
+    if int(time.time()) % 60 < 5:
+        try:
+            run_system_health_check(globals(), kind="light")
+        except Exception:
+            pass
     ws = workspace.tick(camera_manager, image, globals(), "")
     perception = ws.perception
+    try:
+        current_mood = load_mood()
+        updated_mood = process_visual_emotion(perception, current_mood)
+        if updated_mood != current_mood:
+            save_mood(enrich_mood_state(updated_mood))
+    except Exception:
+        pass
     frame = perception.frame
     face_status = perception.face_status
     recognized_text = perception.recognized_text
@@ -6051,6 +6229,10 @@ def camera_tick_fn(image, history):
     if recognized_person_id is not None:
         try:
             identity_registry.update_emotional_association(recognized_person_id, perception.face_emotion or "neutral", globals())
+        except Exception:
+            pass
+        try:
+            touch_last_seen(recognized_person_id)
         except Exception:
             pass
 
@@ -6704,6 +6886,9 @@ def load_emotion_reference() -> dict:
 # STARTUP
 # =========================================================
 ensure_owner_profile()
+ensure_identity_files()
+seed_default_profiles()
+_AVA_IDENTITY_BLOCK = load_ava_identity()
 ensure_emotion_reference_file()
 print_startup_selftest(globals())
 if not SELF_NARRATIVE_PATH.exists():
@@ -6719,6 +6904,11 @@ try:
     print("[memory] decay tick complete")
 except Exception as e:
     print(f"[memory] decay tick failed: {e}")
+try:
+    _health_state = run_system_health_check(globals(), kind="startup")
+    print(f"Health: {_health_state.get('startup_summary', 'UNKNOWN')}")
+except Exception as e:
+    print(f"[health] startup check failed: {e}")
 def load_face_model_if_available():
     if DEEPFACE_AVAILABLE:
         print("[face] DeepFace ready")

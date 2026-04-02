@@ -3,7 +3,7 @@ identity_loader.py  —  Ava Brain Stage 7
 Loads Ava's own identity files (IDENTITY.md, SOUL.md, USER.md) at startup
 and injects them as the first system message — just like Nema's identity system.
 
-Files live at: D:\AvaAgent\ava_core\
+Files live under repo ava_core/ (see IDENTITY_DIR).
   - IDENTITY.md  — who Ava is (rarely changes)
   - SOUL.md      — how Ava behaves (changes slowly, deliberately)
   - USER.md      — what Ava knows about Ezekiel (grows over time)
@@ -17,7 +17,7 @@ import re
 from pathlib import Path
 from typing import Dict, Optional
 
-IDENTITY_DIR = Path("D:/AvaAgent/ava_core")
+IDENTITY_DIR = Path(__file__).resolve().parent.parent / "ava_core"
 
 IDENTITY_FILES = {
     "IDENTITY.md": "IDENTITY",
