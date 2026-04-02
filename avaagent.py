@@ -22,7 +22,8 @@ from brain.camera import CameraManager
 from brain.perception import build_perception
 from brain.attention import compute_attention
 from brain.emotion import process_visual_emotion
-from brain.memory import decay_tick, recall_for_person
+from brain.memory import decay_tick
+from brain.workspace import Workspace
 from brain.identity import IdentityRegistry
 from brain.memory_bridge import MemoryBridge
 from brain.output_guard import scrub_visible_reply, scrub_chat_callback_result
@@ -141,10 +142,7 @@ SETTINGS = {"owner_person_id": OWNER_PERSON_ID}
 camera_manager = CameraManager()
 identity_registry = IdentityRegistry(PROFILES_DIR, settings=SETTINGS)
 memory_bridge = MemoryBridge(MEMORY_DIR, settings=SETTINGS)
-
-_last_user_message_ts = time.time()
-_last_recognized_person_id: str | None = None
-_active_person_memories: list[str] = []
+workspace = Workspace()
 
 # User-reply priority guards
 USER_REPLY_PRIORITY_SECONDS = 8.0
@@ -4723,13 +4721,20 @@ _set_canonical_history([])
 
 def maybe_autonomous_initiation(history, image, recognized_person_id: str | None = None, expression_state: dict | None = None, perception=None):
     history = _sync_canonical_history(history)
-    if perception is None:
-        perception = build_perception(camera_manager, image, globals(), "")
+    wst = workspace.state
+    if wst is not None:
+        attention = wst.attention
+        if perception is None:
+            perception = wst.perception
+    else:
+        if perception is None:
+            perception = build_perception(camera_manager, image, globals(), "")
+        attention = compute_attention(
+            perception, time.time() - workspace._last_user_message_ts
+        )
     face_visible = detect_face(image) == "Face detected"
     state = update_presence_state(face_visible, recognized_person_id=recognized_person_id, interaction_happened=False)
     person_id = recognized_person_id or state.get("last_seen_person_id") or get_active_person_id()
-    seconds_since = time.time() - _last_user_message_ts
-    attention = compute_attention(perception, seconds_since)
     candidate, reason, state = choose_initiative_candidate(person_id, expression_state=expression_state, attention_state=attention)
     if not candidate:
         return history, reason
@@ -5063,12 +5068,16 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
     if active_person_id is None:
         active_person_id = get_active_person_id()
 
-    camera_state = camera_manager.analyze(image, globals())
-    frame = camera_state.frame
+    ws = workspace.state
+    if ws is None:
+        ws = workspace.tick(camera_manager, image, globals(), user_input)
+
+    perception = ws.perception
+    frame = perception.frame
     inferred_person_id, infer_source = infer_person_from_text(user_input, active_person_id)
 
-    recognized_text = camera_state.recognized_text
-    recognized_person_id = camera_state.person_id
+    recognized_text = perception.recognized_text
+    recognized_person_id = perception.face_identity
     expression_state = update_expression_state(frame, recognized_person_id=recognized_person_id)
     if recognized_person_id is not None and recognized_person_id != active_person_id:
         inferred_person_id = recognized_person_id
@@ -5086,7 +5095,7 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
     reflections = search_reflections(user_input, person_id=active_profile["person_id"], k=REFLECTION_RECALL_K)
     recent_reflections = load_recent_reflections(limit=3, person_id=active_profile["person_id"])
     self_model = load_self_model()
-    face_status = camera_state.face_status
+    face_status = perception.face_status
     dynamic_memory_summary = memory_bridge.build_summary(globals(), user_input, active_profile)
 
     recent_text = "\n".join(
@@ -5124,14 +5133,13 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
 
     workbench_index = format_workbench_index(limit=20)
 
-    self_narrative_block = get_self_narrative_for_prompt()
+    self_narrative_block = ws.self_narrative or get_self_narrative_for_prompt()
 
-    active_memories = globals().get("_active_person_memories", []) or []
     recalled_block = ""
-    if active_memories:
+    if ws.active_memory:
         recalled_block = (
             "\n\n[Recalled memories for this person]\n"
-            + "\n".join(f"- {m}" for m in active_memories)
+            + "\n".join(f"- {m}" for m in ws.active_memory)
         )
 
     prompt = f"""
@@ -5645,29 +5653,8 @@ def get_camera_identity_context(user_input: str, image) -> str:
 
 def camera_tick_fn(image, history):
     history = _sync_canonical_history(history)
-    perception = build_perception(camera_manager, image, globals(), "")
-    globals()["_last_perception_emotion"] = perception.face_emotion or "neutral"
-    try:
-        print(
-            f"[perception] face={perception.face_detected} "
-            f"emotion={perception.face_emotion or 'neutral'} salience={perception.salience:.1f}"
-        )
-    except Exception:
-        pass
-    try:
-        current_mood = load_mood()
-        updated_mood = process_visual_emotion(perception, current_mood)
-        save_mood(updated_mood)
-    except Exception:
-        pass
-    prev_pid = globals().get("_last_recognized_person_id")
-    pid = perception.face_identity
-    if pid and pid != prev_pid:
-        globals()["_last_recognized_person_id"] = pid
-        globals()["_active_person_memories"] = recall_for_person(globals(), pid, limit=5)
-        mems = globals()["_active_person_memories"]
-        if mems:
-            print(f"[memory] recalled {len(mems)} memories for {pid}")
+    ws = workspace.tick(camera_manager, image, globals(), "")
+    perception = ws.perception
     frame = perception.frame
     face_status = perception.face_status
     recognized_text = perception.recognized_text
@@ -5742,15 +5729,15 @@ def camera_tick_fn(image, history):
     )
 
 def chat_fn(message, history, image):
-    global _last_user_message_ts
     history = _sync_canonical_history(history)
     clean_message = _extract_text_content(message).strip()
     if clean_message:
-        _last_user_message_ts = time.time()
+        workspace.record_user_message()
         note_user_interaction_for_initiative(clean_message, interaction_kind="text")
 
     if not clean_message:
-        perception = build_perception(camera_manager, image, globals(), "")
+        workspace.tick(camera_manager, image, globals(), "")
+        perception = workspace.state.perception if workspace.state else build_perception(camera_manager, image, globals(), "")
         recognized_text, recognized_person_id = perception.recognized_text, perception.face_identity
         expr_state = update_expression_state(perception.frame, recognized_person_id=recognized_person_id)
         process_camera_snapshot(perception.frame, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expr_state)
@@ -5773,6 +5760,7 @@ def chat_fn(message, history, image):
 
     _mark_user_reply_started()
     try:
+        workspace.tick(camera_manager, image, globals(), clean_message)
         history = list(history)
         history.append({"role": "user", "content": clean_message})
         _set_canonical_history(history)
@@ -5806,7 +5794,8 @@ def chat_fn(message, history, image):
         action_text = "\n".join(actions) if actions else "No action."
         reflections_text = format_reflections_ui(load_recent_reflections(limit=15, person_id=active_profile["person_id"]))
 
-        perception = build_perception(camera_manager, image, globals(), clean_message)
+        workspace.tick(camera_manager, image, globals(), clean_message)
+        perception = workspace.state.perception if workspace.state else build_perception(camera_manager, image, globals(), clean_message)
         expr_state = update_expression_state(perception.frame, recognized_person_id=perception.face_identity)
         process_camera_snapshot(perception.frame, recognized_text=perception.recognized_text, recognized_person_id=perception.face_identity, expression_state=expr_state)
         return scrub_chat_callback_result((
@@ -5830,7 +5819,8 @@ def chat_fn(message, history, image):
             print(f"chat_fn error: {e}")
         except Exception:
             pass
-        perception = build_perception(camera_manager, image, globals(), clean_message)
+        workspace.tick(camera_manager, image, globals(), clean_message)
+        perception = workspace.state.perception if workspace.state else build_perception(camera_manager, image, globals(), clean_message)
         recognized_text, recognized_person_id = perception.recognized_text, perception.face_identity
         expr_state = update_expression_state(perception.frame, recognized_person_id=recognized_person_id)
         return (
@@ -5897,6 +5887,8 @@ def voice_fn(audio, history, image):
         )
 
     note_user_interaction_for_initiative(text.strip(), interaction_kind="voice")
+    workspace.record_user_message()
+    workspace.tick(camera_manager, image, globals(), text.strip())
 
     if should_ask_identity_when_no_camera_face(text.strip(), image):
         reply = no_face_identity_prompt()
