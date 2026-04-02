@@ -6324,6 +6324,12 @@ try:
     print("[memory] decay tick complete")
 except Exception as e:
     print(f"[memory] decay tick failed: {e}")
+def load_face_model_if_available():
+    if DEEPFACE_AVAILABLE:
+        print("[face] DeepFace ready")
+    else:
+        print("[face] DeepFace unavailable - skipping face model load")
+
 load_face_labels()
 load_face_model_if_available()
 
