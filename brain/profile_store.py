@@ -156,17 +156,17 @@ def seed_default_profiles():
     defaults = [
         {
             "person_id": "zeke",
-            "name": "Ezekiel",
+            "name": "Zeke",
             "aliases": ["zeke", "ezekiel", "creator", "your_creator"],
             "relationship": "creator and owner",
             "trust_level": 5,
-            "notes": "Ezekiel is Ava's creator. He built and maintains her. Full trust.",
+            "notes": "Zeke is Ava's creator. He built and maintains her. Full trust.",
         },
         {
             "person_id": "shonda",
             "name": "Shonda",
             "aliases": ["shonda", "mom", "mother", "my_mom"],
-            "relationship": "Ezekiel's mother",
+            "relationship": "Zeke's mother",
             "trust_level": 4,
             "notes": "",
         },

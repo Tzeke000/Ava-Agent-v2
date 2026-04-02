@@ -5,3 +5,5 @@ __pycache__/
 state/*.tmp
 state/**/*.tmp
 memory/**/*.tmp
+
+chatlog.jsonl

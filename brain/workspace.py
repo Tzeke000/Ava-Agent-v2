@@ -35,6 +35,7 @@ class Workspace:
         self._state: WorkspaceState | None = None
         self._last_user_message_ts: float = time.time()
         self._last_recognized_person: str | None = None
+        self._last_ws_tick_log_key: tuple | None = None
 
     def record_user_message(self) -> None:
         self._last_user_message_ts = time.time()
@@ -133,13 +134,22 @@ class Workspace:
 
         ag = ws.active_goals.get("active_goal", "?")
         goal_s = ag.get("name", ag) if isinstance(ag, dict) else ag
-        print(
-            f"[workspace] tick | face={ws.perception.face_detected} "
-            f"emotion={ws.perception.face_emotion} "
-            f"speak={ws.attention.should_speak} "
-            f"goal={goal_s!s} "
-            f"memories={len(ws.active_memory)}"
+        log_key = (
+            bool(ws.perception.face_detected),
+            str(ws.perception.face_emotion or ""),
+            bool(ws.attention.should_speak),
+            str(goal_s),
+            len(ws.active_memory),
         )
+        if log_key != self._last_ws_tick_log_key:
+            self._last_ws_tick_log_key = log_key
+            print(
+                f"[workspace] tick | face={ws.perception.face_detected} "
+                f"emotion={ws.perception.face_emotion} "
+                f"speak={ws.attention.should_speak} "
+                f"goal={goal_s!s} "
+                f"memories={len(ws.active_memory)}"
+            )
 
         return ws
 
