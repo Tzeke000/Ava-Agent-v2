@@ -1,4 +1,3 @@
-import copy
 import json
 import os
 import cv2
@@ -47,18 +46,15 @@ except Exception:
     DEEPFACE_AVAILABLE = False
 
 
-def _safe_float(val, default: float = 0.0) -> float:
+def _safe_float(v, d=0.0) -> float:
     try:
-        return float(val)
-    except (TypeError, ValueError):
-        return default
-
-
-def _deepcopy_jsonable(obj):
-    try:
-        return copy.deepcopy(obj)
+        return float(v)
     except Exception:
-        return json.loads(json.dumps(obj, default=str))
+        return float(d)
+
+
+def _deepcopy_jsonable(v):
+    return json.loads(json.dumps(v))
 
 
 # =========================================================
@@ -262,7 +258,7 @@ STRONG_GOAL_ALIGNMENT_BOOST = 0.12
 MODERATE_GOAL_ALIGNMENT_BOOST = 0.06
 DIVERSITY_BONUS = 0.05
 CONTROLLED_IMPERFECTION_CHANCE = 0.05
-GATE_DEBUG = False  # set to True to enable verbose [gate-debug] logging on initiative scoring
+GATE_DEBUG_LOGGING = False  # off by default; Ava can toggle at runtime via ```DEBUG``` action block
 
 
 
@@ -347,17 +343,6 @@ def ensure_emotion_reference_file():
                 json.dump(DEFAULT_EMOTION_REFERENCE, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"Emotion reference save error: {e}")
-
-def load_emotion_reference() -> dict:
-    try:
-        if EMOTION_REFERENCE_PATH.exists():
-            with open(EMOTION_REFERENCE_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict) and data:
-                    return data
-    except Exception as e:
-        print(f"Emotion reference load error: {e}")
-    return DEFAULT_EMOTION_REFERENCE
 
 def _weight(weights: dict, key: str) -> float:
     return float(weights.get(key, 0.0) or 0.0)
@@ -1564,36 +1549,6 @@ def derive_goal_lists_from_system(system: dict) -> tuple[list[str], list[str]]:
     questions = [g.get("text", "") for g in active if g.get("kind") == "question"][:16]
     return goals, questions
 
-def load_goal_system() -> dict:
-    if GOAL_SYSTEM_PATH.exists():
-        try:
-            with open(GOAL_SYSTEM_PATH, "r", encoding="utf-8") as f:
-                system = json.load(f)
-        except Exception as e:
-            print(f"Goal system load error: {e}")
-            system = default_goal_system()
-    else:
-        system = default_goal_system()
-    for key, default in default_goal_system().items():
-        system.setdefault(key, default if not isinstance(default, dict) else dict(default))
-    if not system.get("goals"):
-        model = load_self_model() if SELF_MODEL_PATH.exists() else default_self_model()
-        for text in model.get("current_goals", []):
-            system["goals"].append(make_goal_entry(text, kind="goal", horizon="medium_term", importance=0.72, urgency=0.48, source="migration"))
-        for text in model.get("curiosity_questions", []):
-            system["goals"].append(make_goal_entry(text, kind="question", horizon="short_term", importance=0.56, urgency=0.58, source="migration"))
-    system = recalculate_goal_priorities(system)
-    system = recalculate_operational_goals(system, context_text="", mood=load_mood())
-    save_goal_system(system)
-    return system
-
-def save_goal_system(system: dict):
-    try:
-        with open(GOAL_SYSTEM_PATH, "w", encoding="utf-8") as f:
-            json.dump(system, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        print(f"Goal system save error: {e}")
-
 def top_active_goals(limit: int = 8, context_text: str = "", mood: dict | None = None) -> list[dict]:
     system = recalculate_goal_priorities(load_goal_system(), context_text=context_text, mood=mood)
     system = recalculate_operational_goals(system, context_text=context_text, mood=mood)
@@ -1833,48 +1788,6 @@ def default_self_model() -> dict:
         "last_updated": now_iso(),
         "reflection_count": 0
     }
-
-def load_self_model() -> dict:
-    if SELF_MODEL_PATH.exists():
-        try:
-            with open(SELF_MODEL_PATH, "r", encoding="utf-8") as f:
-                model = json.load(f)
-                for key, default in default_self_model().items():
-                    if key not in model:
-                        model[key] = default
-        except Exception as e:
-            print(f"Self model load error: {e}")
-            model = default_self_model()
-    else:
-        model = default_self_model()
-    try:
-        system = load_goal_system()
-        goals, questions = derive_goal_lists_from_system(system)
-        model["current_goals"] = goals
-        model["curiosity_questions"] = questions
-        model["goal_system_summary"] = [
-            {"text": g.get("text", ""), "priority": round(float(g.get("current_priority", 0.0)), 2), "horizon": g.get("horizon", "short_term"), "kind": g.get("kind", "goal")}
-            for g in system.get("goals", [])[:10]
-        ]
-        model["active_goal"] = system.get("active_goal", {})
-        model["goal_blend"] = system.get("goal_blend", [])[:3]
-    except Exception as e:
-        print(f"Goal system sync error: {e}")
-    return model
-
-def save_self_model(model: dict):
-    try:
-        system = load_goal_system()
-        goals, questions = derive_goal_lists_from_system(system)
-        model["current_goals"] = goals
-        model["curiosity_questions"] = questions
-    except Exception:
-        pass
-    try:
-        with open(SELF_MODEL_PATH, "w", encoding="utf-8") as f:
-            json.dump(model, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        print(f"Self model save error: {e}")
 
 def add_self_goal(goal_text: str, kind: str = "goal", horizon: str | None = None, importance: float | None = None,
                   urgency: float | None = None, parent_goal_id: str | None = None, depends_on: list[str] | None = None) -> str:
@@ -4170,7 +4083,7 @@ def _apply_soft_choice_penalties(candidates: list[dict], state: dict, active_goa
         cand["total_soft_penalty"] = round(total_penalty, 3)
         cand["total_soft_boost"] = round(total_boost, 3)
         cand["score"] = max(0.0, min(1.0, round(final_score, 3)))
-        if GATE_DEBUG:
+        if GATE_DEBUG_LOGGING:
             print(f"[gate-debug] kind={kind} goal={active_goal_name or 'none'} base={round(score,3)} boosts={boosts_applied} penalties={penalties_applied} final={cand['score']}")
     return candidates
 
@@ -4863,6 +4776,7 @@ WORKBENCH_BLOCK_RE = re.compile(r"```WORKBENCH\s*\n(.*?)\n```", re.DOTALL | re.I
 MEMORY_BLOCK_RE = re.compile(r"```MEMORY\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
 REFLECTION_BLOCK_RE = re.compile(r"```REFLECTION\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
 GOAL_BLOCK_RE = re.compile(r"```GOAL\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
+DEBUG_BLOCK_RE = re.compile(r"```DEBUG\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
 
 def parse_key_values(block_text: str) -> dict:
     data = {}
@@ -4985,10 +4899,27 @@ def process_ava_action_blocks(reply_text: str, person_id: str, latest_user_input
         actions.append(status)
         return ""
 
+    def debug_repl(match):
+        action_body = match.group(1)
+        tokens = action_body.strip().lower().split()
+        value = tokens[0] if tokens else ""
+        if value in ("on", "true", "1"):
+            globals()["GATE_DEBUG_LOGGING"] = True
+            print("[debug] Gate debug logging enabled by Ava")
+            actions.append("✅ Verbose gate scoring logs enabled (DEBUG on).")
+        elif value in ("off", "false", "0"):
+            globals()["GATE_DEBUG_LOGGING"] = False
+            print("[debug] Gate debug logging disabled by Ava")
+            actions.append("✅ Verbose gate scoring logs disabled (DEBUG off).")
+        else:
+            actions.append("❌ DEBUG block: use a single line on, off, true, false, 1, or 0.")
+        return ""
+
     cleaned = WORKBENCH_BLOCK_RE.sub(workbench_repl, reply_text)
     cleaned = MEMORY_BLOCK_RE.sub(memory_repl, cleaned)
     cleaned = REFLECTION_BLOCK_RE.sub(reflection_repl, cleaned)
     cleaned = GOAL_BLOCK_RE.sub(goal_repl, cleaned)
+    cleaned = DEBUG_BLOCK_RE.sub(debug_repl, cleaned)
     return cleaned.strip(), actions
 
 # =========================================================
@@ -5055,6 +4986,15 @@ Or for an open question:
 action: add
 kind: question
 text: Find out what feature the user wants most in the next Ava version.
+```
+
+To enable or disable verbose gate scoring logs when you want to inspect your own initiative decision-making (then turn them off when done):
+```DEBUG
+on
+```
+or
+```DEBUG
+off
 ```
 
 Memory guidance:
