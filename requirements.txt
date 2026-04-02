@@ -1,6 +1,9 @@
 gradio
 opencv-python
+opencv-contrib-python
 Pillow
 numpy
-deepface
-tf-keras
+faster-whisper
+langchain-ollama
+langchain-chroma
+chromadb

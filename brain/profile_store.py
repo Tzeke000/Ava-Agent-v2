@@ -1,6 +1,6 @@
 """
 profile_store.py  —  Ava Brain Stage 7
-Manages per-person living profile files stored in D:\AvaAgent\profiles\
+Manages per-person living profile files stored in the repo ``profiles/`` directory.
 Each person gets their own <person_id>.json file that grows over time.
 
 Profile structure:
@@ -25,7 +25,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
-PROFILES_DIR = Path("D:/AvaAgent/profiles")
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+PROFILES_DIR = _REPO_ROOT / "profiles"
 
 
 def _profiles_path() -> Path:
