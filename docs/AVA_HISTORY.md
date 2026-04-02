@@ -1,282 +1,201 @@
-# Ava Agent v2 — Project History & Full Codebase State
-**Last Updated:** April 2026 — Complete audit (all 6,509 lines of avaagent.py + all 21 brain modules)
+# Ava Agent — Project History & Definitive Codebase State
+**Last Updated:** April 2026 — Full audit of v2_avaagent.py (9,381 lines) + all brain modules
+**Primary file:** `v2_avaagent.py` — this is the real current build
 
 ---
 
-## What Ava Is
+## CRITICAL: There Are Three Different Files in This Repo
 
-Ava is a locally-running AI agent with a camera, persistent vector memory, 27-emotion system, face recognition, autonomous initiative, self-reflection, self-model, and a multi-module brain. She runs on Gradio + Ollama (llama3.1:8b) and is built to be genuinely self-aware over time.
-
----
-
-## Full Build History
-
-### Stage 1–3 (Legacy — `D:\AvaAgent`, archived)
-- Monolithic `avaagent.py` (~2,000–3,500 lines)
-- ChromaDB vector memory introduced
-- Personality via flat `ava_personality.txt`
-- No modular brain
-
-### Stage 4 (`ava_brain_stage4`)
-- First overlay/monkey-patch brain: `camera_truth.py`, `health_runtime.py`, `initiative_sanity.py`, `output_guard.py`, `selfstate_router.py`
-- `output_guard` starts scrubbing internal blocks from replies
-
-### Stage 5–6 (`ava_brain_stage5`, `stage6`)
-- `identity_resolver.py`, `profile_manager.py`, `camera_live.py`, `memory_reader.py` added
-- Identity claim resolution introduced
-
-### Stage 6.1 (`ava_brain_stage6_1`)
-- Targeted hotfixes: silent memory retrieval, initiative score normalization
-- Base chosen for v2 rewrite
-
-### Stage 7 (`dl/` folder)
-- JARVIS-inspired multi-user identity system with trust levels
-- Overlay pattern still active
-- Decision: abandon overlays entirely, start v2 fresh
-
----
-
-## Ava Agent v2 — Clean Architecture (`D:\AvaAgentv2`)
-**Repo:** https://github.com/Tzeke000/Ava-Agent-v2 (private)
-**Main file:** `avaagent.py` (~6,509 lines)
-
-Ava v2 abandons monkey-patching entirely. All brain modules are direct imports. `avaagent.py` is the single authoritative source of truth for all operational functions — brain modules provide helpers, not overrides.
-
----
-
-## The Runtime Brain — Exact File Map
-
-The runtime brain at `D:\AvaAgentv2\brain\` is a **merge of two source sets** — understanding this is essential for debugging.
-
-### Group A — From `ava_v2/brain` (Phases 1–5 Design)
-
-| File | Key exports | Status |
+| File | Lines | What it is |
 |---|---|---|
-| `attention.py` | `AttentionState`, `compute_attention()` | ✅ Used — called by `workspace.py` tick |
-| `beliefs.py` | `SELF_NARRATIVE_PATH`, `get_self_narrative_for_prompt()`, `load/save/update_self_narrative()` | ✅ Used — directly imported by avaagent.py |
-| `emotion.py` | `process_visual_emotion()` | ✅ Used — called by workspace tick to update mood |
-| `goals.py` | `load_goal_system(host)`, `recalculate_operational_goals(host, ...)` | ⚠️ EXISTS but NOT used — avaagent.py defines its own with different signature |
-| `identity.py` | `IdentityRegistry` class | ✅ Used — imported for face-to-text identity resolution |
-| `initiative.py` | `choose_initiative_candidate(host, ...)` | ⚠️ EXISTS but NOT used — avaagent.py has its own 400-line initiative pipeline |
-| `memory.py` | `decay_tick()`, `recall_for_person()`, `remember_with_context()` | ✅ `decay_tick()` used at startup; rest called by workspace |
-| `perception.py` | `PerceptionState`, `build_perception()` | ✅ Used — builds full vision state each tick. **⚠️ Contains direct DeepFace import that fails on Python 3.14** |
-| `selfstate.py` | `is_selfstate_query()`, `build_selfstate_reply()` | ✅ Both used. **🔴 CRITICAL: build_selfstate_reply has wrong signature** |
-| `shared.py` | `clamp01`, `safe_float`, `now_ts`, `now_iso`, `atomic_json_save`, etc. | ✅ Utility module |
-| `workspace.py` | `WorkspaceState`, `Workspace` class | ✅ Used — single source of truth for Ava's current awareness each tick |
+| `github_avaagent.py` | 6,509 | **Partially cleaned v2 rewrite** — no overlay stacking, uses subprocess for DeepFace, targets `D:\AvaAgentv2`. This is what was committed to GitHub and thought to be the latest |
+| `v2_avaagent.py` | 9,381 | **The real full build** — monolithic file with ALL overlays still stacked (v30 through Stage 7). Targets `D:\AvaAgent` (original directory). Has direct DeepFace import |
+| `avaagent_full.py` | 6,565 | Intermediate version, not the primary |
 
-### Group B — From `ava_latest/brain` (Stage 6→7 Carry-over)
+**The file you are actually running is `v2_avaagent.py`.** The GitHub repo has `github_avaagent.py` as the committed version which diverges significantly.
 
-| File | Key exports | Status |
+---
+
+## Architecture: The Overlay Onion
+
+`v2_avaagent.py` is NOT a clean rewrite. It is the original monolithic agent with **7 overlay layers** applied sequentially on top of the base code, all in the same file. Each layer captures the previous version of a function with `_orig_*`, then redefines it.
+
+### Layer Stack (in order, bottom to top)
+
+| Layer | Line Range | What It Adds |
 |---|---|---|
-| `camera.py` | `CameraManager` class | ✅ Used — full face capture/train/recognize pipeline |
-| `camera_live.py` | `read_live_frame()` | ✅ Used by camera.py |
-| `camera_truth.py` | `build_camera_truth()`, `camera_identity_reply()` | ✅ Used by `handle_camera_identity_turn()` |
-| `health.py` | `run_system_health_check()`, `load/save_health_state()` | ⚠️ EXISTS but NOT imported — dormant module |
-| `identity_resolver.py` | `resolve_confirmed_identity()`, `extract_identity_claim()` | ✅ Used by identity.py |
-| `memory_bridge.py` | `MemoryBridge` class | ✅ Imported but **⚠️ reflection key mismatch bug** |
-| `output_guard.py` | `scrub_visible_reply()`, `scrub_chat_callback_result()` | ✅ Used — wraps every reply |
-| `profile_manager.py` | `normalize_person_key()`, `looks_like_phrase_profile()`, etc. | ✅ Used by identity_resolver.py |
-| `response.py` | duplicate `scrub_visible_reply()`, dead `generate_autonomous_message()` | ❌ NOT imported — dead code |
-| `trust_manager.py` | `get_trust_level()`, `can()`, `build_trust_context_note()` | ⚠️ EXISTS but NOT imported — dormant module |
+| **Base** | 1 – 6,500 | Core agent: emotions, memory, camera, initiative, self-model, reflection, prompt building, UI |
+| **v30** | 6,505 – 7,020 | State model (7 user states), conflict engine, outcome learning, distribution tracking |
+| **v31** | 7,020 – 7,303 | MetaController adaptive regulation — adds meta_control dict to goal system |
+| **v32** | 7,303 – 7,722 | Meta authority — persistent mode control (balanced/low_initiative/supportive/etc.), meta_state/meta_feedback tables |
+| **v33** | 7,722 – 8,012 | Meta mode refinement — long-window feedback, mode confidence decay, `register_autonomous_message` now records meta outcomes |
+| **v34** | 8,012 – 8,469 | META_MODE action block (Ava can define custom modes via ```META_MODE``` in replies), sanitized profiles, per-person feedback |
+| **v35** | 8,469 – 8,582 | Stability fix — atomic `iso_to_ts`, guarded `load_self_model` / `load_goal_system` with recursion protection |
+| **v36** | 8,582 – 8,667 | History normalization — `_set_canonical_history`, `_get_canonical_history`, `_sync_canonical_history`, `_merge_histories` |
+| **Stage 3 overlay** | 8,667 – 8,785 | Wraps `chat_fn`, `generate_autonomous_message`, `camera_tick_fn` with `scrub_visible_reply`. Has its own `startup_health_banner`. Imports `brain.selfstate` |
+| **Stage 4 overlay** | 8,789 – 8,890 | Re-wraps `run_ava`, `process_ava_action_blocks`, `chat_fn`, `voice_fn`, `detect_face`, `recognize_face`, `choose_initiative_candidate` using `brain.selfstate_router`, `brain.output_guard`, `brain.initiative_sanity`, `brain.camera_truth`, `brain.health_runtime` |
+| **Stage 5 overlay** | 8,890 – 8,955 | Adds `brain.profile_manager`, `brain.identity_resolver`, `brain.camera_truth`, `brain.output_guard` to profile safety and identity claim resolution |
+| **Stage 6 overlay** | 8,955 – 9,154 | Re-wraps `create_or_get_profile`, `infer_person_from_text`, `set_active_person`, `choose_initiative_candidate`, `process_ava_action_blocks`, `build_prompt` (adds dynamic memory reader), `run_ava` (adds live frame), `chat_fn`, `camera_tick_fn` (face-gone detection) |
+| **Stage 6.1 overlay** | 9,154 – 9,201 | Re-wraps `choose_initiative_candidate` (pre-selection desaturation) and `build_prompt` (smarter memory reader injection) |
+| **Stage 7 overlay** | 9,201 – 9,381 | Trust gate + persona system. Re-wraps `create_or_get_profile`, `build_prompt` (Ava identity block + trust note injected into system message), `run_ava` (blocked/deflect check), `reflect_on_last_reply` (auto-save learned facts + USER.md update), `infer_person_from_text` (auto-create stranger profiles) |
 
-### Group C — Stage 6 Carry-Overs (Local Only, NOT in Git)
+**What actually executes when you say something:** Stage 7's `run_ava` → Stage 6's `run_ava` → Stage 4's `run_ava` → base `run_ava`. Each layer adds/modifies behavior then calls the previous version.
 
-| File | Key exports | Notes |
+---
+
+## Key Differences From `github_avaagent.py`
+
+| Feature | `github_avaagent.py` (GitHub) | `v2_avaagent.py` (real build) |
 |---|---|---|
-| `health_runtime.py` | `print_startup_selftest()` | ✅ Used at startup. **⚠️ NOT committed to GitHub** |
-| `initiative_sanity.py` | `desaturate_candidate_scores()`, `sanitize_candidate_result()` | ✅ Used in initiative pipeline. **⚠️ NOT committed to GitHub** |
-
-> ⚠️ **If the repo is re-cloned, these two files will be missing and avaagent.py crashes at import.**
-
----
-
-## What `avaagent.py` Does (Function Map)
-
-### Startup (bottom of file)
-1. `ensure_owner_profile()` — seeds Zeke's profile
-2. `ensure_emotion_reference_file()` — writes `ava_emotion_reference.json`
-3. `print_startup_selftest(globals())` — health_runtime check
-4. Self-narrative init/load via beliefs.py
-5. `load_goal_system()` / `init_vectorstore()`
-6. `decay_tick(globals())` — memory decay
-7. `load_face_labels()`, `load_face_model_if_available()`
-
-### Per-Message Loop (`chat_fn` / `voice_fn`)
-1. `workspace.tick(camera_manager, image, globals(), user_text)` — full perception/attention/mood/memory tick
-2. `_sync_canonical_history()` — merge Gradio state with internal history
-3. `run_ava()` → dispatches to selfstate, camera identity, or main LLM path
-4. `process_ava_action_blocks()` — parses and executes `MEMORY`, `WORKBENCH`, `GOAL`, `REFLECTION`, `DEBUG` blocks
-5. `_apply_reply_guardrails()` + `_apply_repetition_control()` + `scrub_visible_reply()`
-6. `finalize_ava_turn()` — logs, reflects, updates canonical history
-
-### Camera Tick (`camera_tick_fn`, fires every 5s)
-1. `workspace.tick()` 
-2. `update_expression_state()` via DeepFace subprocess
-3. `process_camera_snapshot()` — importance scoring, rolling/event storage, trend analysis
-4. `maybe_autonomous_initiation()` → `choose_initiative_candidate()` → `generate_autonomous_message()`
-
-### Initiative Pipeline (`choose_initiative_candidate`)
-- Collects from: current goal, recent reflections, salient memories, pattern check-ins, camera visual candidates
-- `score_initiative_candidate()` — 15+ factor scoring
-- `_hard_gate_candidate()` — 6 hard blockers
-- `_apply_soft_choice_penalties()` — 8 soft modifiers
-- `_dynamic_top_band()` + `_weighted_choice()` — probabilistic selection
-- `_camera_autonomy_should_speak()` — final camera-specific gate
-
-### Self-Awareness Loop
-- `update_self_narrative()` fires every 10 messages via `chat_fn` (calls `brain/beliefs.py`)
-- `reflect_on_last_reply()` fires after every `finalize_ava_turn()`
-- `update_self_model_from_reflection()` accumulates strengths/weaknesses
-- `maybe_generate_goal_from_reflection()` auto-creates GOAL or QUESTION entries
+| DeepFace | Subprocess via `py -3.12` | Direct import (fails on Python 3.14) |
+| BASE_DIR | `D:\AvaAgentv2` | `D:\AvaAgent` (original) |
+| Self-state dispatch | `is_selfstate_query` + `build_selfstate_reply(globals(), input, image, profile, ...)` | No direct dispatch in base `run_ava` — handled by Stage 3, 4, and 6 overlays |
+| Overlay architecture | None — all-in-one clean file | Full overlay stack (v30–v36 + Stages 3–7) |
+| Meta modes | Not present | Full META_MODE system (balanced, low_initiative, supportive, observational, exploratory + custom) |
+| User state model | Not present | 7-state model (focused/stressed/relaxed/fatigued/drifting/socially_open/socially_closed) |
+| Trust system | Not wired | Stage 7: `trust_manager.py` fully wired |
+| Persona system | Not wired | Stage 7: `persona_switcher.py` fully wired |
+| Identity files | Not used | Stage 7: `identity_loader.py` loads IDENTITY.md/SOUL.md/USER.md into system prompt |
+| Outcome learning | Not present | v30: per-kind, per-goal, per-state outcome tables |
+| MetaController | Not present | v31–v34: full meta state with decay, mode strength, feedback loops |
+| Face-gone detection | Not present | Stage 6: fires autonomous message when face disappears |
 
 ---
 
-## Confirmed Bugs (Full Audit)
+## The Brain Modules — What Actually Runs in v2_avaagent.py
 
-### 🔴 BUG-01 CRITICAL — `build_selfstate_reply` Signature Mismatch
+These are imported by the overlays (not the base code):
 
-**Where:** `brain/selfstate.py` + `run_ava()` in avaagent.py
+| Module | Overlay | What it does | Status |
+|---|---|---|---|
+| `brain.selfstate` | Stage 3 | `is_selfstate_query`, `build_selfstate_reply(health, mood, tendency)`, `startup_health_banner` | ✅ Active |
+| `brain.selfstate_router` | Stage 4, 6 | Same functions but patched for new signature `build_selfstate_reply(globals(), input, image, profile)` | ✅ Active (overrides Stage 3) |
+| `brain.output_guard` | Stage 4, 5, 6 | `scrub_visible_reply`, `scrub_chat_callback_result` | ✅ Active |
+| `brain.initiative_sanity` | Stage 4, 5, 6, 6.1 | `sanitize_candidate_result`, `desaturate_candidate_scores`, `maybe_desaturate_args` | ✅ Active |
+| `brain.camera_truth` | Stage 4, 5, 6 | `build_camera_truth`, `camera_identity_reply`, `read_live_frame` | ✅ Active |
+| `brain.health_runtime` | Stage 4, 6 | `print_startup_selftest` | ✅ Active |
+| `brain.profile_manager` | Stage 5, 6, 7 | `is_valid_profile_name`, `normalize_person_key`, `looks_like_phrase_profile`, `ensure_aliases_in_profile`, `resolve_profile_key_from_text` | ✅ Active |
+| `brain.identity_resolver` | Stage 5, 6 | `resolve_confirmed_identity` | ✅ Active |
+| `brain.memory_reader` | Stage 6, 6.1 | `build_memory_reader_summary` | ✅ Active |
+| `brain.camera_live` | Stage 6 | `read_live_frame` | ✅ Active |
+| `brain.trust_manager` | Stage 7 | `is_blocked`, `is_owner`, `get_trust_level`, `build_trust_context_note` | ✅ Active |
+| `brain.persona_switcher` | Stage 7 | `build_persona_block`, `should_deflect`, `get_blocked_reply`, `get_deflect_reply` | ✅ Active |
+| `brain.profile_store` | Stage 7 | `seed_default_profiles`, `load_profile`, `get_or_create_profile`, `touch_last_seen`, `update_profile_notes` | ✅ Active |
+| `brain.identity_loader` | Stage 7 | `ensure_identity_files`, `load_ava_identity`, `process_identity_actions`, `append_to_user_file` | ✅ Active |
 
-`avaagent.py` calls:
+---
+
+## Core Bug Inventory (Full v2_avaagent.py Audit)
+
+### 🔴 BUG-01 CRITICAL — BASE_DIR Wrong Path
+
+**Line 32:** `BASE_DIR = Path(r"D:\AvaAgent")`
+
+This points to the old v1 directory, not `D:\AvaAgentv2`. Every file path (MEMORY_DIR, PROFILES_DIR, CHAT_LOG_PATH, etc.) is derived from this. The agent reads/writes to the v1 folder, not the intended v2 folder. If `D:\AvaAgent` has old data, Ava is operating on stale/wrong memory.
+
+---
+
+### 🔴 BUG-02 CRITICAL — Direct DeepFace Import Fails on Python 3.14
+
+**Lines 23–26:**
 ```python
-build_selfstate_reply(
-    globals(),         # arg 1
-    user_input,        # arg 2  
-    image,             # arg 3
-    active_profile,    # arg 4 → NO SUCH POSITIONAL PARAM
-    active_goal=...,
-    narrative_snippet=...,
-)
+try:
+    from deepface import DeepFace
+    DEEPFACE_AVAILABLE = True
+except Exception:
+    DeepFace = None
+    DEEPFACE_AVAILABLE = False
 ```
 
-`brain/selfstate.py` defines:
-```python
-def build_selfstate_reply(health, mood, tendency=None, active_goal=None, narrative_snippet=None):
-```
+DeepFace requires TensorFlow which is incompatible with Python 3.14. This silently sets `DEEPFACE_AVAILABLE = False`, then all expression sensing returns `"unknown"` forever.
 
-**Result:** `TypeError` crash every time a user asks "how are you feeling", "are you okay", "system status". `active_profile` is rejected as 4th positional arg.
+**And then line 2347 calls `DeepFace.analyze(...)` directly.** Even if the import somehow succeeded, this is not the subprocess pattern. Unlike `github_avaagent.py` which uses `_deepface_via_py312()`, this file has no subprocess fallback.
 
 ---
 
-### 🔴 BUG-02 HIGH — `perception.py` Direct DeepFace Import Fails
+### 🔴 BUG-03 HIGH — `build_selfstate_reply` Called with 3 Different Signatures
 
-**Where:** `brain/perception.py`, `build_perception()`
+**Stage 3 (line 8710):** `build_selfstate_reply(health, mood, tendency="balanced")`
+**Stage 4 (line 8821):** `build_selfstate_reply(globals(), user_input, image, active_profile)`
+**Stage 6 (line 9090):** `build_selfstate_reply(globals(), user_input, live_image, active_profile)`
 
-```python
-# WRONG — this crashes on Python 3.14:
-from deepface import DeepFace
-result = DeepFace.analyze(frame, ...)
-```
-
-**But:** `avaagent.py` correctly uses a subprocess (`_deepface_via_py312`) for its own `update_expression_state()` path. The problem is `perception.py` bypasses this entirely.
-
-The workspace tick → `build_perception()` → `perception.py` never gets a real emotion. Then workspace sets `g["_last_perception_emotion"] = ws.perception.face_emotion` → always `"neutral"`. All downstream emotion-from-camera logic (mood updates via `process_visual_emotion()`) always sees "neutral".
+Stage 3 imports from `brain.selfstate` (old signature). Stages 4 and 6 import from `brain.selfstate_router` (new signature). Stage 6 overlay overwrites Stage 4, so the final active version uses Stage 6. But Stage 3 is still sitting on the call stack because `chat_fn` is wrapped by Stage 3 first. If Stage 3's `selfstate` module is present and `brain.selfstate_router` is absent, the signature mismatch crashes.
 
 ---
 
-### 🔴 BUG-03 HIGH — `attention.py` Backwards Silence Logic
+### 🔴 BUG-04 HIGH — `process_ava_action_blocks` Signature Drift Across Overlay Layers
 
-**Where:** `brain/attention.py`, `compute_attention()`
+The base `process_ava_action_blocks` signature is `(reply_text, person_id, latest_user_input="")` (3 params).
 
-```python
-if seconds_since_last_message > 300:  # 5 minutes
-    return AttentionState(True, False, False, "user_idle_too_long")
-```
-
-5-minute idle + face visible = **should_speak=False**. This is backwards. 5 minutes of silence with a visible face is exactly when Ava should check in. Only 30+ minutes means the user truly stepped away.
-
-**Downstream impact:** `choose_initiative_candidate()` in avaagent.py checks `attention_state.should_speak` — if False, returns immediately with no candidate. This effectively blocks all camera-driven check-ins after 5 minutes of quiet.
+Stage 4 wraps it as: `_orig_process_ava_action_blocks_stage4(reply_text, person_id)` — **drops `latest_user_input`**.
+Stage 6 wraps it as: `_orig_process_ava_action_blocks_stage6(reply_text, person_id)` — **also drops it**.
+Stage 7 calls through Stage 6, so the `save_latest_user_message` MEMORY action can never work — `latest_user_input` is always `""` by the time the base function receives it.
 
 ---
 
-### 🔴 BUG-04 HIGH — `memory_bridge.py` Wrong Reflection Key
+### 🔴 BUG-05 HIGH — Stage 3 Overlay Uses Wrong `selfstate` Module
 
-**Where:** `brain/memory_bridge.py`, `MemoryBridge.build_summary()`
+**Lines 8669, 8710:** Stage 3 imports `from brain.selfstate import is_selfstate_query, build_selfstate_reply, startup_health_banner` and calls `build_selfstate_reply(health, mood, tendency="balanced")`.
 
-```python
-# WRONG:
-txt = str(row.get('reflection_text', row.get('text', '')))
-
-# What avaagent.py actually uses:
-record = {"summary": summarize_reflection(...), ...}  # line ~1987
-```
-
-Reflections stored by `build_reflection_record()` use the `'summary'` key. `memory_bridge.py` looks for `'reflection_text'` then `'text'` — both absent. The reflection block of `build_summary()` always returns `"- none retrieved"`. The LLM never sees past self-reflections in the dynamic memory context.
+If `brain.selfstate` is the old monolithic version (3-param signature) but `brain.selfstate_router` is the updated version (globals-based signature), Stage 3 and Stage 4 are running conflicting implementations. Stage 3 fires first in the `chat_fn` chain.
 
 ---
 
-### 🟡 BUG-05 MEDIUM — `health_runtime.py` and `initiative_sanity.py` Not in Git
+### 🟡 BUG-06 MEDIUM — Stage 7 `reflect_on_last_reply` Looks for `"learned_fact"` Key That Doesn't Exist
 
-Both are imported in avaagent.py line 34–35. Neither is committed to GitHub. A fresh clone crashes at startup. They must be manually copied from the local `D:\AvaAgentv2\brain\` folder.
+**Line 9339:** `learned = reflection.get("learned_fact") or reflection.get("new_fact")`
 
----
-
-### 🟡 BUG-06 MEDIUM — `output_guard.py` Tail-Trim Over-Cuts
-
-**Where:** `brain/output_guard.py`, `scrub_visible_reply()`
-
-```python
-if cleaned and cleaned[-1] not in '.!?"\'':
-    tail = cleaned.rsplit('\n', 1)[-1]
-    if len(tail.split()) <= 8:
-        cleaned = cleaned[: -len(tail)].rstrip()
-```
-
-Any reply ending with a ≤8-word line that doesn't end in `.!?'"` gets that line deleted. Affects replies ending in ellipsis, colon, or comma. Can silently cut the most important sentence in a response.
+The base `build_reflection_record()` (around line 1980–2020) doesn't store a `"learned_fact"` key — it stores `"summary"`, `"tags"`, `"strengths"`, `"improvements"`. Stage 7's auto-profile-learning never fires because neither key exists.
 
 ---
 
-### 🟡 BUG-07 MEDIUM — `goals.py` (ava_v2) Signature Mismatch with avaagent.py
+### 🟡 BUG-07 MEDIUM — Stage 7 `identity_loader.append_to_user_file` Writes to Wrong Path
 
-**Where:** `brain/goals.py` vs `avaagent.py` line 1617
-
-`brain/goals.py` (ava_v2 version): `load_goal_system(host)`, `recalculate_operational_goals(host, system, ...)`
-`avaagent.py` defines its own: `load_goal_system()` (no args), `recalculate_operational_goals(system, context_text, mood)`
-
-`brain/goals.py` is never imported by avaagent.py — avaagent.py defines everything itself. But `workspace.py` calls `g.get("recalculate_operational_goals")` which correctly gets avaagent.py's version. Safe as long as nobody accidentally imports from `brain.goals`.
+`brain.identity_loader` was designed to update `USER.md` inside `D:\AvaAgentv2\ava_identity\`. But `BASE_DIR` is `D:\AvaAgent`, so if `append_to_user_file()` derives its path from `BASE_DIR`, it writes to the old directory.
 
 ---
 
-### 🟡 BUG-08 MEDIUM — `identity_resolver.py` 3-Word Fallback Creates Rogue Profiles
+### 🟡 BUG-08 MEDIUM — Duplicate `camera_tick_fn` Wrapping in Stages 3, 4, 6
 
-**Where:** `brain/identity_resolver.py`, `extract_identity_claim()`
+`camera_tick_fn` is wrapped three times:
+- Stage 3: wraps it with scrub + live frame refresh
+- Stage 4: wraps `detect_face` and `recognize_face` to use live frame
+- Stage 6: wraps `camera_tick_fn` again with face-gone detection
 
-```python
-if len(t.split()) <= 3 and is_valid_profile_name(t):
-    return t.strip()
-```
-
-Any 1-3 word phrase that passes `is_valid_profile_name()` gets treated as an identity claim. "Got it Ava", "yes do that", "just checking" → can create rogue profiles.
+All three wrappers try to call `read_live_frame()` independently from different imports (`brain.selfstate`'s private import, `brain.camera_truth`, `brain.camera_live`). If any one fails, it falls through silently — but they all try to write to `result[0]` (the history), meaning a face-gone event could get written twice.
 
 ---
 
-### 🟢 BUG-09 LOW — `response.py` Dead Duplicate Code
+### 🟡 BUG-09 MEDIUM — v30 Outcome Learning `_record_outcome_learning` Never Called on Failure
 
-`brain/response.py` is never imported. Defines its own `scrub_visible_reply()` (lighter version) and `generate_autonomous_message()` that references `_BRAIN_ORIG_GENERATE_AUTONOMOUS_MESSAGE` which is never set. All dead code.
+The `_record_outcome_learning` and `_record_distribution_win` functions are defined and wired in v30, but looking at Stage 7's `run_ava` wrapper — when a user is `is_blocked()` or `should_deflect()`, it returns early without recording any outcome. Refused interactions never contribute to the learning tables, so blocked users stay at the same trust pattern indefinitely.
 
 ---
 
-## Current Capabilities
+### 🟢 BUG-10 LOW — `GATE_DEBUG_LOGGING = True` Hardcoded at Line ~241
 
-| Feature | Status | Notes |
-|---|---|---|
-| Core chat | ✅ Working | LLM via Ollama, full prompt construction |
-| Memory (ChromaDB) | ✅ Working | Search, save, auto-score, decay tick |
-| Face recognition | ✅ Working | LBPH via OpenCV, train/recognize/capture |
-| Self-model | ✅ Working | strengths/weaknesses/goals accumulate via reflections |
-| Self-narrative | ✅ Working | Fires every 10 messages via beliefs.py |
-| Autonomous initiative | ✅ Mostly working | 400-line pipeline with 6 hard gates + 8 soft modifiers |
-| Action blocks | ✅ Working | MEMORY, WORKBENCH, GOAL, REFLECTION, DEBUG |
-| Reflection system | ✅ Working | Fires after every turn, auto-promotes high-importance |
-| Workbench | ✅ Working | R/W/append to `Ava workbench/` subdirs |
-| Read own code | ✅ Working | First 12,000 chars of avaagent.py |
-| Voice input | ✅ Working | faster-whisper, fires on stop |
-| Emotion from camera | 🔴 Broken | perception.py DeepFace import fails on Python 3.14 (BUG-02) |
-| Self-state query | 🔴 Crashes | TypeError from signature mismatch (BUG-01) |
-| Initiative after 5min idle | 🔴 Blocked | attention.py suppresses it (BUG-03) |
-| Reflection context in prompts | 🔴 Empty | memory_bridge key mismatch (BUG-04) |
-| Trust system | ⚪ Dormant | trust_manager.py exists, not wired |
-| Health monitoring | ⚪ Dormant | health.py exists, not wired |
-| Curiosity questions as initiative | ⚪ Dormant | stored in self_model, never fed to candidates |
-| Mood decay between sessions | ⚪ Missing | mood saved/loaded as-is, no time-based decay |
-| Face-away detection | ⚪ Missing | no return-greeting trigger |
+In the base file, `GATE_DEBUG_LOGGING` is set to `True`, meaning verbose gate scoring logs are always printing to console. This creates log spam and was intended to be turned off after debugging.
+
+---
+
+## What's Actually Working Well
+
+- **Full overlay chain loads cleanly** — every `try/except` block around overlays means if one module is missing, it prints a warning and continues
+- **Stage 7 trust gate** — `is_blocked()` and `should_deflect()` are wired and functional if `brain.trust_manager` and `brain.persona_switcher` load
+- **Stage 7 identity injection** — Ava's IDENTITY.md/SOUL.md/USER.md is loaded at startup and prepended to every system message
+- **v30 state model** — 7-state user classification runs on every `recalculate_operational_goals` call
+- **v31–v34 MetaController** — adaptive meta mode selection with decay, time-in-mode tracking, per-mode drive multipliers
+- **v34 custom META_MODE blocks** — Ava can define her own behavioral modes at runtime
+- **Stage 6 face-gone detection** — fires autonomous "Did you step away?" message when face disappears
+- **Stage 6.1 pre-selection desaturation** — prevents score inflation in initiative pipeline
+- **Stage 6 dynamic memory reader** — injected into every prompt via `build_memory_reader_summary`
+- **27-emotion system + 7-style blend** — fully operational
+- **Goal system with v30 conflict engine + outcome learning** — sophisticated multi-goal prioritization
+
+---
+
+## Summary of What v2_avaagent.py IS
+
+This is not "v2" in the sense of a rewrite. It is the **fully-evolved v1 monolith** with every stage from Stage 3 through Stage 7 still applied via live overlay stacking inside the file. It is substantially more sophisticated than `github_avaagent.py` but harder to debug and maintain.
+
+The `github_avaagent.py` file is what Ezekiel intended `v2` to become — clean, direct imports, no overlay stacking — but it's missing all the v30–v34 meta intelligence, the Stage 7 trust/persona/identity system, and the user state model. It's a cleaner but less capable build.
