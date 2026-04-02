@@ -19,8 +19,6 @@ def extract_identity_claim(text: str) -> Optional[str]:
         m = re.search(pat, t, flags=re.I)
         if m:
             return m.group(1).strip()
-    if len(t.split()) <= 3 and is_valid_profile_name(t):
-        return t.strip()
     return None
 
 
