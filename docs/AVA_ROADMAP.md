@@ -1,787 +1,428 @@
-# Ava Agent v2 — Master Roadmap for Cursor
-**Last Updated:** April 2026 — Based on full codebase audit (all 6,509 lines of avaagent.py + all 21 brain modules)
-**Base:** `D:\AvaAgentv2` / https://github.com/Tzeke000/Ava-Agent-v2
+# Ava Agent — Master Roadmap (Based on Full v2_avaagent.py Audit)
+**Last Updated:** April 2026 — Full audit of v2_avaagent.py (9,381 lines)
+**Files:** `v2_avaagent.py` (real running build) | `github_avaagent.py` (cleaner but less capable GitHub build)
 
 ---
 
-## How to Use This Document
+## Decision You Need to Make First
 
-Sessions are in priority order. Do SESSION 1 before anything else — these are crashes and silent failures.
-Every fix includes: exact file, exact problem, exact code change.
-Never rewrite a working module — patch only the broken function.
+There are now two valid paths. You cannot merge these indefinitely.
 
----
+### PATH A — Keep v2_avaagent.py as the primary build
+Fix the 4 critical bugs, commit the full file to GitHub, accept that it uses overlay stacking.
+**Pros:** Has everything (v30–v34 meta intelligence, Stage 7 trust/identity, user state model, face-gone detection).
+**Cons:** 9,381 lines with 7 overlay layers in one file. Hard to maintain.
 
-## SESSION 1 — Fix 4 Silent/Critical Failures
+### PATH B — Migrate everything into github_avaagent.py
+Port the v30–v34 MetaController, user state model, Stage 7 trust/identity, and face-gone detection into the clean file.
+**Pros:** Clean architecture, maintainable, modular brain imports.
+**Cons:** Significant work. Roughly 3,000 lines of logic need to be folded in cleanly.
 
-These are broken now and block real usage.
-
----
-
-### FIX-01 🔴 CRITICAL — `build_selfstate_reply` Signature Mismatch
-
-**File to edit:** `brain/selfstate.py`
-
-**Problem:** `run_ava()` calls:
-```python
-build_selfstate_reply(globals(), user_input, image, active_profile, active_goal=..., narrative_snippet=...)
-```
-But `selfstate.py` defines:
-```python
-def build_selfstate_reply(health, mood, tendency=None, active_goal=None, narrative_snippet=None):
-```
-Passing `active_profile` as the 4th positional arg → `TypeError` crash on every self-state query.
-
-**Fix:** Replace `build_selfstate_reply` in `brain/selfstate.py` with a dual-signature version:
-
-```python
-def build_selfstate_reply(
-    g_or_health,
-    user_input_or_mood=None,
-    image_or_tendency=None,
-    active_profile=None,
-    active_goal: str | None = None,
-    narrative_snippet: str | None = None,
-) -> str:
-    """
-    Accepts both call signatures:
-      avaagent.py v2: (globals(), user_input, image, active_profile, active_goal=, narrative_snippet=)
-      legacy:         (health_dict, mood_dict, tendency_str, active_goal=, narrative_snippet=)
-    """
-    # Detect which signature we got by checking if the first arg has load_mood
-    if isinstance(g_or_health, dict) and callable(g_or_health.get("load_mood")):
-        # New signature: g_or_health is globals()
-        g = g_or_health
-        load_mood_fn = g.get("load_mood")
-        load_health_fn = g.get("load_health_state")
-        mood = {}
-        health = {}
-        try:
-            mood = dict(load_mood_fn() or {}) if callable(load_mood_fn) else {}
-        except Exception:
-            pass
-        try:
-            health = dict(load_health_fn(g) if callable(load_health_fn) else {})
-        except TypeError:
-            try:
-                health = dict(load_health_fn() or {}) if callable(load_health_fn) else {}
-            except Exception:
-                pass
-        except Exception:
-            pass
-        # Derive tendency from mood behavior_modifiers
-        tendency = None
-        try:
-            bm = mood.get("behavior_modifiers", {}) or {}
-            if float(bm.get("caution", 0.0)) > 0.60:
-                tendency = "cautious"
-            elif float(bm.get("initiative", 0.0)) > 0.65:
-                tendency = "engaged"
-            else:
-                tendency = "balanced"
-        except Exception:
-            tendency = "balanced"
-    else:
-        # Legacy signature
-        health = g_or_health or {}
-        mood = user_input_or_mood or {}
-        tendency = image_or_tendency
-
-    state, detail = summarize_health(health)
-    mood_text = summarize_mood(mood)
-    tendency = tendency or "balanced"
-
-    if state == "healthy":
-        prefix = "I'm A-OK right now."
-    elif state == "degraded":
-        prefix = "I'm mostly okay, but a little degraded right now."
-    elif state == "error":
-        prefix = "I'm running, but something is definitely off."
-    else:
-        prefix = "I'm not fully okay right now."
-
-    reply = (
-        f"{prefix} Operationally, {detail}. "
-        f"Mood-wise I'm leaning {mood_text}, and behavior-wise I'm a bit more {tendency} at the moment."
-    )
-    if active_goal:
-        reply += f"\nRight now my focus is: {active_goal}."
-    if narrative_snippet:
-        reply += f"\nI've been thinking: {narrative_snippet}"
-    return reply
-```
+**Recommendation:** Fix the 4 critical bugs in `v2_avaagent.py` first (Session 1 below), then decide. Don't migrate until it's stable.
 
 ---
 
-### FIX-02 🔴 HIGH — `perception.py` DeepFace Always Returns Neutral
+## SESSION 1 — Fix 4 Critical Crashes in v2_avaagent.py
 
-**File to edit:** `brain/perception.py`
+These must be fixed before anything else.
 
-**Problem:** `build_perception()` does a direct `from deepface import DeepFace` which fails silently on Python 3.14 → `face_emotion` always `"neutral"` → `process_visual_emotion()` in workspace tick always sees neutral → mood never updates from camera.
+---
 
-**Note:** `avaagent.py` already has `_deepface_via_py312()` that uses a subprocess correctly. We just need perception.py to use the same pattern.
+### FIX-01 🔴 CRITICAL — BASE_DIR Points to Wrong Directory
 
-**Fix — add this function at the top of `brain/perception.py`** (before `build_perception`):
+**File:** `v2_avaagent.py`, **line 32**
 
+**Problem:**
 ```python
-def _subprocess_face_emotion(frame) -> str:
-    """Analyze face emotion via Python 3.12 subprocess (DeepFace/TF incompatible with 3.14)."""
-    try:
-        import subprocess, tempfile, os as _os, cv2 as _cv2, json as _json
-        tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-        tmp_path = tmp.name
-        tmp.close()
-        _cv2.imwrite(tmp_path, frame)
-        script = (
-            "from deepface import DeepFace; import json; "
-            f"r=DeepFace.analyze(img_path={_json.dumps(tmp_path)}, actions=['emotion'],"
-            "detector_backend='skip',enforce_detection=False,silent=True);"
-            "r=r[0] if isinstance(r,list) else r;"
-            "print(json.dumps(r.get('dominant_emotion','neutral')))"
-        )
-        res = subprocess.run(
-            ["py", "-3.12", "-c", script],
-            capture_output=True, text=True, timeout=8
-        )
-        try:
-            _os.remove(tmp_path)
-        except Exception:
-            pass
-        if res.returncode == 0 and res.stdout.strip():
-            return res.stdout.strip().strip('"').lower() or "neutral"
-    except Exception:
-        pass
-    return "neutral"
+BASE_DIR = Path(r"D:\AvaAgent")  # WRONG — this is the old v1 directory
 ```
 
-**Then in `build_perception()`, replace the entire DeepFace try/except block** with:
+**Fix:**
+```python
+BASE_DIR = Path(r"D:\AvaAgentv2")
+```
 
+If `D:\AvaAgentv2` is your actual working directory, this single change fixes all path derivations (MEMORY_DIR, PROFILES_DIR, STATE_DIR, WORKBENCH_DIR, etc.) because they're all `BASE_DIR / "subdir"`.
+
+---
+
+### FIX-02 🔴 CRITICAL — Direct DeepFace Import + No Subprocess Fallback
+
+**File:** `v2_avaagent.py`, **lines 23–26 and ~2347**
+
+**Problem:**
 ```python
 try:
-    if state.face_detected and frame is not None:
-        state.face_emotion = _subprocess_face_emotion(frame)
-    else:
-        state.face_emotion = "neutral"
+    from deepface import DeepFace  # Fails silently on Python 3.14
+    DEEPFACE_AVAILABLE = True
 except Exception:
-    state.face_emotion = "neutral"
+    DeepFace = None
+    DEEPFACE_AVAILABLE = False
 ```
-
-Python 3.12 is at `C:\Users\Tzeke\AppData\Local\Programs\Python\Python312\` — `py -3.12` will find it.
-
----
-
-### FIX-03 🔴 HIGH — `attention.py` Kills Check-ins After 5 Minutes
-
-**File to edit:** `brain/attention.py`
-
-**Problem:** `seconds_since_last_message > 300` → `should_speak=False`. 5 min quiet with face = suppressed. But `choose_initiative_candidate()` in avaagent.py checks `attention_state.should_speak` first and returns immediately if False. This means the camera-driven check-in that's supposed to happen at 8-minute idle never fires.
-
-**Fix — replace `compute_attention()` entirely:**
-
+And later:
 ```python
-def compute_attention(perception: PerceptionState, seconds_since_last_message: float) -> AttentionState:
-    if not perception.face_detected:
-        return AttentionState(False, False, False, "no_face_detected")
-
-    em = (perception.face_emotion or "").lower()
-    if em in ("angry", "disgust"):
-        return AttentionState(True, True, False, "negative_expression_hold")
-
-    # 30+ minutes with face visible — probably stepped away but left cam on
-    if seconds_since_last_message > 1800:
-        return AttentionState(True, False, False, "extended_absence")
-
-    # 5–30 min idle — prime window for a check-in, NOT for suppression
-    if seconds_since_last_message > 300:
-        return AttentionState(True, False, True, "idle_checkin_window")
-
-    # Active: < 2 min since last message
-    engaged = seconds_since_last_message < 120
-    return AttentionState(True, engaged, engaged, "clear")
+result = DeepFace.analyze(img_path=..., ...)  # Called directly, no subprocess
 ```
+Expression sensing is permanently broken on Python 3.14.
 
----
-
-### FIX-04 🔴 HIGH — `memory_bridge.py` Never Finds Reflections
-
-**File to edit:** `brain/memory_bridge.py`
-
-**Problem:** In `MemoryBridge.build_summary()`, reflection rows are read as:
+**Fix — replace the import block at the top of the file:**
 ```python
-txt = str(row.get('reflection_text', row.get('text', '')))[:180].strip()
-```
+import subprocess as _sp
+import tempfile as _tempfile
+DeepFace = None
+DEEPFACE_AVAILABLE = False
 
-But `build_reflection_record()` in avaagent.py (line ~1987) stores:
-```python
-{"summary": summarize_reflection(...), ...}
-```
-
-The key is `'summary'`. `'reflection_text'` and `'text'` are both absent. The reflection section always shows `"- none retrieved"` and the LLM never sees past self-reflections in context.
-
-**Fix — one line change in `build_summary()`:**
-
-```python
-# OLD:
-txt = str(row.get('reflection_text', row.get('text', '')))[:180].strip()
-
-# NEW:
-txt = str(
-    row.get('summary') or
-    row.get('reflection_text') or
-    row.get('text') or
-    ''
-)[:180].strip()
-```
-
----
-
-## SESSION 2 — Commit Missing Files to Git
-
-### FIX-05 🟡 MEDIUM — `health_runtime.py` and `initiative_sanity.py` Missing from Repo
-
-These are imported at avaagent.py startup (lines 34–35) but not committed to GitHub. A re-clone crashes immediately.
-
-**Action in `D:\AvaAgentv2`:**
-```bash
-git add brain/health_runtime.py brain/initiative_sanity.py
-git commit -m "fix: commit missing brain modules (health_runtime, initiative_sanity)"
-git push
-```
-
-If the files are somehow missing locally, recreate them:
-
-**`brain/health_runtime.py`:**
-```python
-def print_startup_selftest(g: dict):
-    checks = [
-        ("vector_memory", g.get("vectorstore") is not None),
-        ("mood_path", bool(g.get("MOOD_PATH"))),
-        ("personality_path", bool(g.get("PERSONALITY_PATH"))),
-        ("face_model_loader", callable(g.get("load_face_model_if_available"))),
-    ]
-    ok = sum(1 for _, v in checks if v)
-    total = len(checks)
-    status = "HEALTHY" if ok == total else "DEGRADED"
-    parts = ", ".join(f"{name}={'ok' if v else 'missing'}" for name, v in checks)
-    print(f"[startup-selftest] {status} ({ok}/{total}) :: {parts}")
-```
-
-**`brain/initiative_sanity.py`** — copy from `incoming_files/ava_brain_stage6_1/brain/initiative_sanity.py` (it's the correct version).
-
----
-
-## SESSION 3 — Output and Identity Polish
-
-### FIX-06 🟡 MEDIUM — `output_guard.py` Tail-Trim Over-Cuts
-
-**File to edit:** `brain/output_guard.py`
-
-**Problem:** Any trailing line ≤8 words not ending in `.!?'"` is deleted. Can silently cut a complete, short reply.
-
-**Fix — tighten to only trim clearly hanging fragments:**
-
-```python
-# Replace this block:
-if cleaned and cleaned[-1] not in '.!?"\'':
-    tail = cleaned.rsplit('\n', 1)[-1]
-    if len(tail.split()) <= 8:
-        cleaned = cleaned[: -len(tail)].rstrip()
-
-# With this:
-if cleaned and cleaned[-1] not in '.!?"\'':
-    tail = cleaned.rsplit('\n', 1)[-1]
-    tail_words = tail.strip().lower().split()
-    HANGING_ENDINGS = {
-        "and", "but", "or", "so", "to", "for", "with", "in", "on",
-        "at", "of", "the", "a", "an", "i", "it", "is"
-    }
-    is_hanging_fragment = (
-        len(tail_words) <= 4 and
-        (not tail_words or tail_words[-1] in HANGING_ENDINGS)
-    )
-    if is_hanging_fragment:
-        cleaned = cleaned[: -len(tail)].rstrip()
-```
-
----
-
-### FIX-07 🟡 MEDIUM — `identity_resolver.py` 3-Word Rogue Profile Fallback
-
-**File to edit:** `brain/identity_resolver.py`
-
-**Problem:** The fallback `if len(t.split()) <= 3 and is_valid_profile_name(t): return t.strip()` creates profiles from normal phrases that happen to be ≤3 words.
-
-**Fix — remove the fallback entirely:**
-```python
-def extract_identity_claim(text: str) -> Optional[str]:
-    t = (text or "").strip()
-    for pat in SELF_PATTERNS:
-        m = re.search(pat, t, flags=re.I)
-        if m:
-            return m.group(1).strip()
-    return None  # Explicit "I am X" / "it's me X" only — no fallback
-```
-
----
-
-## SESSION 4 — Wire the Dormant Systems
-
-Two complete, well-written modules exist and are never wired in.
-
----
-
-### FEATURE-01 — Wire `trust_manager.py` Into Prompts + Initiative Gate
-
-**File to edit:** `avaagent.py`
-
-`trust_manager.py` has 5 trust levels, per-permission flags, and `build_trust_context_note()`. It just needs to be imported and used.
-
-**Step 1 — add import near line 32:**
-```python
-from brain.trust_manager import get_trust_label, build_trust_context_note, can, is_blocked
-```
-
-**Step 2 — in `build_prompt()` after `active_profile` is resolved, add:**
-```python
-trust_note = build_trust_context_note(active_profile)
-```
-
-**Step 3 — add to ACTIVE PERSON section in the prompt string:**
-```
-TRUST CONTEXT:
-{trust_note}
-```
-
-**Step 4 — in `maybe_autonomous_initiation()`, add before `choose_initiative_candidate()` call:**
-```python
-if is_blocked(load_profile_by_id(person_id)):
-    return history, "Blocked person — initiative suppressed."
-if not can(load_profile_by_id(person_id), "trigger_initiative"):
-    return history, "Trust level too low for autonomous initiative."
-```
-
----
-
-### FEATURE-02 — Wire `health.py` Into Startup + Runtime
-
-**File to edit:** `avaagent.py` and `brain/health.py`
-
-**Step 1 — fix relative path fallback in `brain/health.py`:**
-```python
-def _health_path(host):
-    p = host.get('HEALTH_STATE_PATH') or host.get('STATE_DIR')
-    if p:
-        from pathlib import Path
-        base = Path(str(p))
-        return str(base / 'health_state.json' if base.is_dir() else base)
-    return 'state/health_state.json'
-```
-
-**Step 2 — add to avaagent.py near other PATH constants:**
-```python
-HEALTH_STATE_PATH = STATE_DIR / "health_state.json"
-```
-
-**Step 3 — add import to avaagent.py:**
-```python
-from brain.health import run_system_health_check, load_health_state, print_startup_health
-```
-
-**Step 4 — add to startup section (after `print_startup_selftest`):**
-```python
-print_startup_health(globals())
-```
-
-**Step 5 — run light check every 20 turns in `chat_fn()`:**
-```python
-if len(_get_canonical_history()) % 20 == 0:
+def _test_deepface_available() -> bool:
     try:
-        run_system_health_check(globals(), kind='light')
+        result = _sp.run(
+            ["py", "-3.12", "-c", "from deepface import DeepFace"],
+            capture_output=True, timeout=15
+        )
+        return result.returncode == 0
     except Exception:
-        pass
+        return False
+
+DEEPFACE_AVAILABLE = _test_deepface_available()
 ```
 
----
-
-## SESSION 5 — Goal Intelligence
-
-### FEATURE-03 — Curiosity Questions Into Initiative
-
-**File to edit:** `avaagent.py`, `collect_initiative_candidates()`
-
-Curiosity questions build up in `self_model.json` (up to 16) but are never fed into the initiative pipeline.
-
-**Add at the end of `collect_initiative_candidates()`, before the `return` line:**
-
+**Fix — replace `analyze_expression()` (around line 2347) with subprocess version:**
 ```python
-# Feed stored curiosity questions into initiative candidates
-model = load_self_model()
-questions = model.get("curiosity_questions", []) or []
-if questions:
-    recent_text = " ".join(
-        r.get("content", "") for r in load_recent_chat(person_id=person_id)[-10:]
-    ).lower()
-    for q in questions[-6:]:
-        q_text = str(q).strip()
-        if not q_text or q_text.lower() in seen:
-            continue
-        # Skip if topic is being actively discussed
-        key_words = [w for w in q_text.lower().split()[:4] if len(w) > 4]
-        if sum(1 for w in key_words if w in recent_text) >= 2:
-            continue
-        seen.add(q_text.lower())
-        candidates.append({
-            "kind": "genuine_curiosity",
-            "text": q_text,
-            "topic_key": _topic_key(q_text),
-            "base_score": 0.58,
-            "memory_importance": 0.58,
-        })
-```
-
-**Also add `"genuine_curiosity"` to `CAMERA_AUTONOMOUS_ALLOWED_KINDS`** (near line 192):
-```python
-CAMERA_AUTONOMOUS_ALLOWED_KINDS = {
-    ...,
-    "genuine_curiosity",
-}
-```
-
----
-
-### FEATURE-04 — Semantic Goal Deduplication
-
-**File to edit:** `avaagent.py`, `add_structured_goal()`
-
-**Problem:** Goals with same meaning but different wording accumulate until hitting the 48-goal cap.
-
-**Add before the `entry = make_goal_entry(...)` block:**
-
-```python
-def _goal_text_jaccard(a: str, b: str) -> float:
-    ta = set(re.findall(r"[a-z]+", a.lower()))
-    tb = set(re.findall(r"[a-z]+", b.lower()))
-    if not ta or not tb:
-        return 0.0
-    return len(ta & tb) / len(ta | tb)
-
-# In add_structured_goal(), after the exact-match loop:
-active_goals = [g for g in system.get("goals", []) if g.get("status", "active") == "active"]
-for existing in active_goals:
-    if _goal_text_jaccard(goal_text, existing.get("text", "")) >= 0.52:
-        existing["importance"] = min(1.0, float(existing.get("importance", 0.6)) + 0.05)
-        existing["last_updated"] = now_iso()
-        system = recalculate_goal_priorities(system)
-        save_goal_system(system)
-        return existing  # merge, don't add
-```
-
----
-
-### FEATURE-05 — Goal Auto-Pruning
-
-**File to edit:** `avaagent.py`, `recalculate_goal_priorities()`
-
-Add at the end before `return system`:
-
-```python
-GOAL_PRUNE_PRIORITY = 0.08
-GOAL_STALE_DAYS = 14
-GOAL_MAX_HEALTHY = 20
-
-goals = system.get("goals", [])
-now_dt = datetime.now()
-
-for g in goals:
-    if g.get("status") != "active":
-        continue
-    if float(g.get("current_priority", 1.0) or 1.0) < GOAL_PRUNE_PRIORITY:
-        g["status"] = "pruned"
-        g["pruned_reason"] = "low_priority"
-        continue
+def _deepface_via_py312(face_bgr_image) -> dict:
+    tmp_path = None
     try:
-        updated = datetime.fromisoformat(g.get("last_updated", g.get("created_at", now_dt.isoformat())))
-        if (now_dt - updated).days > GOAL_STALE_DAYS:
-            g["status"] = "pruned"
-            g["pruned_reason"] = "stale"
-    except Exception:
-        pass
-
-active = [g for g in goals if g.get("status") == "active"]
-if len(active) > GOAL_MAX_HEALTHY:
-    active_sorted = sorted(active, key=lambda g: float(g.get("current_priority", 0) or 0))
-    for g in active_sorted[:len(active) - GOAL_MAX_HEALTHY]:
-        g["status"] = "pruned"
-        g["pruned_reason"] = "capacity"
-
-system["goals"] = goals
-```
-
----
-
-## SESSION 6 — Self-Evolution Features
-
-### FEATURE-06 — Mood Decay Between Sessions
-
-**File to edit:** `avaagent.py`, `load_mood()` and `save_mood()`
-
-**Problem:** Mood is saved and loaded as-is. If Ava ends a session anxious, she starts the next equally anxious forever.
-
-**Fix — add `_saved_at` stamp on save, apply decay on load:**
-
-```python
-def save_mood(mood: dict):
-    try:
-        mood["_saved_at"] = now_iso()
-        with open(MOOD_PATH, "w", encoding="utf-8") as f:
-            json.dump(mood, f, indent=2, ensure_ascii=False)
+        with _tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            tmp_path = tmp.name
+        cv2.imwrite(tmp_path, face_bgr_image)
+        img_literal = json.dumps(tmp_path)
+        script = (
+            "from deepface import DeepFace; import json; "
+            "p = " + img_literal + "; "
+            "r = DeepFace.analyze(img_path=p, actions=['emotion'], "
+            "detector_backend='skip', enforce_detection=False, silent=True); "
+            "r = r[0] if isinstance(r, list) else r; "
+            "print(json.dumps({'dominant': r.get('dominant_emotion','unknown'), 'emotions': r.get('emotion', {})}))"
+        )
+        result = _sp.run(["py", "-3.12", "-c", script],
+            capture_output=True, text=True, timeout=10)
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout.strip())
+            dominant = (data.get("dominant") or "unknown").lower()
+            emotions = data.get("emotions", {})
+            conf = float(emotions.get(dominant, 0.0)) / 100.0 if dominant in emotions else 0.0
+            return {"ok": True, "raw_emotion": dominant,
+                    "confidence": max(0.0, min(1.0, conf)),
+                    "soft_signal": map_emotion_to_soft_signal(dominant), "emotions": emotions}
+        return {"ok": False, "reason": f"subprocess_error: {result.stderr.strip()}"}
     except Exception as e:
-        print(f"Mood save error: {e}")
-
-def load_mood() -> dict:
-    if MOOD_PATH.exists():
-        try:
-            with open(MOOD_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            last_saved = data.get("_saved_at")
-            if last_saved:
-                try:
-                    elapsed = time.time() - datetime.fromisoformat(last_saved).timestamp()
-                    # Up to 15% decay per hour, max 85%
-                    decay_rate = min(0.85, elapsed / 3600 * 0.15)
-                    if decay_rate > 0.01:
-                        weights = data.get("emotion_weights", DEFAULT_EMOTIONS.copy())
-                        baseline = DEFAULT_EMOTIONS.copy()
-                        for k in weights:
-                            if k in baseline:
-                                weights[k] = weights[k] + (baseline[k] - weights[k]) * decay_rate
-                        data["emotion_weights"] = normalize_emotions(weights)
-                except Exception:
-                    pass
-            return enrich_mood_state(data)
-        except Exception as e:
-            print(f"Mood load error: {e}")
-    return enrich_mood_state(default_mood())
-```
-
----
-
-### FEATURE-07 — Face-Away / Return Greeting
-
-**File to edit:** `avaagent.py`
-
-**Add near top of file (after constants):**
-
-```python
-_FACE_PRESENCE = {"visible": False, "left_at": None, "was_absent": False, "absent_seconds": 0}
-
-def update_face_presence(face_visible: bool) -> dict:
-    global _FACE_PRESENCE
-    was = _FACE_PRESENCE["visible"]
-    now_str = now_iso()
-    if was and not face_visible:
-        _FACE_PRESENCE["left_at"] = now_str
-        _FACE_PRESENCE["was_absent"] = False
-    elif not was and face_visible:
-        left_at = _FACE_PRESENCE.get("left_at")
-        if left_at:
+        return {"ok": False, "reason": f"deepface_subprocess_error: {e}"}
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
             try:
-                gone = (datetime.fromisoformat(now_str) - datetime.fromisoformat(left_at)).total_seconds()
-                _FACE_PRESENCE["was_absent"] = gone > 30
-                _FACE_PRESENCE["absent_seconds"] = round(gone)
-            except Exception:
-                _FACE_PRESENCE["was_absent"] = False
-        _FACE_PRESENCE["left_at"] = None
-    _FACE_PRESENCE["visible"] = face_visible
-    return dict(_FACE_PRESENCE)
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+def analyze_expression(image) -> dict:
+    if image is None:
+        return {"ok": False, "reason": "no_image"}
+    crop = extract_face_crop(image)
+    if crop is None:
+        return {"ok": False, "reason": "no_face"}
+    try:
+        face_bgr = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+        return _deepface_via_py312(face_bgr)
+    except Exception as e:
+        return {"ok": False, "reason": f"analysis_error: {e}"}
 ```
 
-**Call at top of `camera_tick_fn()`:**
-```python
-presence = update_face_presence(face_visible)
-```
-
-**Add to `collect_initiative_candidates()`** (after the pattern check-in block):
-```python
-if _FACE_PRESENCE.get("was_absent"):
-    secs = _FACE_PRESENCE.get("absent_seconds", 60)
-    absence_text = (
-        "You're back — I noticed you stepped away for a bit." if secs < 600
-        else "You're back — it's been a while."
-    )
-    if absence_text.lower() not in seen:
-        seen.add(absence_text.lower())
-        candidates.append({
-            "kind": "return_greeting",
-            "text": absence_text,
-            "topic_key": "return_greeting",
-            "base_score": 0.90,
-            "memory_importance": 0.75,
-        })
-    _FACE_PRESENCE["was_absent"] = False
-```
-
-**Add `"return_greeting"` to `CAMERA_AUTONOMOUS_ALLOWED_KINDS`.**
+Python 3.12 location: `C:\Users\Tzeke\AppData\Local\Programs\Python\Python312\`. The `py -3.12` launcher will find it.
 
 ---
 
-### FEATURE-08 — Per-Person Relationship Score
+### FIX-03 🔴 HIGH — `process_ava_action_blocks` Drops `latest_user_input` in Stage 4 and 6 Wrappers
 
-**File to edit:** `avaagent.py`, `finalize_ava_turn()`
+**File:** `v2_avaagent.py`, **line ~8803 (Stage 4) and ~9010 (Stage 6)**
+
+**Problem:** Stage 4's wrapper:
+```python
+def process_ava_action_blocks(reply_text, person_id):  # missing latest_user_input
+    cleaned, actions = _orig_process_ava_action_blocks_stage4(reply_text, person_id)
+    return _brain_stage4_guard.scrub_visible_reply(cleaned), actions
+```
+And Stage 6's wrapper is the same. This means the `save_latest_user_message` MEMORY action block always gets `latest_user_input=""` and fails.
+
+**Fix — update both wrappers to pass through `latest_user_input`:**
+
+Stage 4 wrapper (around line 8803):
+```python
+def process_ava_action_blocks(reply_text, person_id, latest_user_input=""):
+    cleaned, actions = _orig_process_ava_action_blocks_stage4(reply_text, person_id, latest_user_input=latest_user_input)
+    return _brain_stage4_guard.scrub_visible_reply(cleaned), actions
+```
+
+Stage 6 wrapper (around line 9010):
+```python
+def process_ava_action_blocks(reply_text, person_id, latest_user_input=""):
+    cleaned, actions = _orig_process_ava_action_blocks_stage6(reply_text, person_id, latest_user_input=latest_user_input)
+    return _brain_stage6_guard.scrub_visible_reply(cleaned), actions
+```
+
+---
+
+### FIX-04 🔴 HIGH — Turn Off Debug Logging
+
+**File:** `v2_avaagent.py`, **~line 241**
 
 ```python
-def update_relationship_score(profile: dict, session_quality: float = 0.5) -> dict:
-    score = float(profile.get("relationship_score", 0.3))
-    interaction_count = int(profile.get("interaction_count", 0)) + 1
-    absence_decay = 0.0
-    last_seen = profile.get("last_seen")
-    if last_seen:
+GATE_DEBUG_LOGGING = True  # WRONG — floods the console
+```
+
+**Fix:**
+```python
+GATE_DEBUG_LOGGING = False
+```
+
+This constant controls verbose initiative gate scoring output. It was left on from debugging and creates massive console spam.
+
+---
+
+## SESSION 2 — Fix the Stage 7 Auto-Learning Loop
+
+### FIX-05 🟡 — Stage 7 `reflect_on_last_reply` Looks for Wrong Key
+
+**File:** `v2_avaagent.py`, **line ~9339**
+
+**Problem:** Stage 7 does:
+```python
+learned = reflection.get("learned_fact") or reflection.get("new_fact")
+```
+But the base `build_reflection_record()` stores `"summary"`, `"tags"`, `"strengths"`, `"improvements"` — no `"learned_fact"` key exists. Auto-learning never fires.
+
+**Fix — two options:**
+
+**Option A (easier): Change Stage 7 to use "summary":**
+```python
+# In Stage 7's reflect_on_last_reply wrapper, change:
+learned = reflection.get("learned_fact") or reflection.get("new_fact")
+# To:
+learned = reflection.get("learned_fact") or reflection.get("new_fact") or (
+    reflection.get("summary") if float(reflection.get("importance", 0)) >= 0.75 else None
+)
+```
+
+**Option B (better): Add "learned_fact" extraction to `build_reflection_record()`**
+
+In `build_reflection_record()` (around line 1980), after building the summary:
+```python
+# Extract a learnable fact from the reflection
+learned_fact = None
+summary_text = (record.get("summary", "") or "").strip()
+tags = record.get("tags", []) or []
+if any(t in tags for t in ["user_preference", "identity", "personalization", "new_or_changed"]):
+    if len(summary_text) >= 20:
+        learned_fact = summary_text[:200]
+record["learned_fact"] = learned_fact
+```
+
+---
+
+### FIX-06 🟡 — Stage 7 Identity Files Path Relies on BASE_DIR Being Correct
+
+**Dependency on FIX-01.** Once BASE_DIR is corrected to `D:\AvaAgentv2`, verify that `brain/identity_loader.py` derives its identity file paths from the same base. If it hardcodes a path, update it to:
+```python
+BASE_DIR = Path(r"D:\AvaAgentv2")
+IDENTITY_DIR = BASE_DIR / "ava_identity"
+IDENTITY_MD = IDENTITY_DIR / "IDENTITY.md"
+SOUL_MD = IDENTITY_DIR / "SOUL.md"
+USER_MD = IDENTITY_DIR / "USER.md"
+```
+
+---
+
+## SESSION 3 — Consolidate the Overlay Chain
+
+The overlay stacking is the root cause of maintenance difficulty. The right long-term move is to consolidate.
+
+### REFACTOR-01 — Merge Stage 3/4/6 run_ava Wrappers Into Base
+
+The base `run_ava` (line 5596) doesn't handle selfstate queries — Stages 3, 4, and 6 all independently add selfstate routing. They do roughly the same thing with slightly different code. 
+
+**Consolidate by adding to base `run_ava` directly:**
+
+```python
+def run_ava(user_input: str, image=None, active_person_id: str | None = None) -> tuple[str, dict, dict, list[str], dict]:
+    active_person_id = active_person_id or get_active_person_id()
+    active_profile = load_profile_by_id(active_person_id)
+    
+    # Self-state shortcut (handles "how are you feeling", "are you okay", etc.)
+    if is_selfstate_query(user_input):
+        active_goal_txt = ""
         try:
-            elapsed_days = (datetime.now() - datetime.fromisoformat(last_seen)).days
-            absence_decay = min(0.08, elapsed_days * 0.004)
+            gs = load_goal_system()
+            ag = gs.get("active_goal", {})
+            active_goal_txt = str(ag.get("name") or "").strip()[:200] if isinstance(ag, dict) else str(ag)[:200]
         except Exception:
             pass
-    score = max(0.0, min(1.0, score + session_quality * 0.035 - absence_decay))
-    profile["relationship_score"] = round(score, 4)
-    profile["interaction_count"] = interaction_count
-    return profile
+        reply = scrub_visible_reply(build_selfstate_reply(
+            globals(), user_input, image, active_profile,
+            active_goal=active_goal_txt or None
+        ))
+        return finalize_ava_turn(user_input, reply, {}, active_profile, [])
+    
+    # ... rest of existing run_ava ...
 ```
 
-**Call in `finalize_ava_turn()` after `log_chat()`:**
-```python
-active_profile = update_relationship_score(active_profile)
-save_profile(active_profile)
-```
-
-**Inject into `build_prompt()`** in the ACTIVE PERSON section:
-```python
-rel_score = float(active_profile.get("relationship_score", 0.3))
-if rel_score >= 0.7:
-    rel_hint = "Deep rapport — be natural, casual, fully familiar."
-elif rel_score >= 0.4:
-    rel_hint = "Good familiarity — be warm and engaged."
-else:
-    rel_hint = "Relatively new — be warm but don't over-assume familiarity."
-# Add rel_hint to the prompt ACTIVE PERSON block
-```
+Then **remove** the selfstate logic from the Stage 3, 4, and 6 wrappers (they can still wrap for their other functionality — scrubbing, live frame, etc.).
 
 ---
 
-### FEATURE-09 — Circadian Tone Shifts
+### REFACTOR-02 — Consolidate camera_tick_fn Wrappers
 
-**File to edit:** `avaagent.py`
+Three overlays (Stage 3, 4, 6) all wrap `camera_tick_fn`. Merge into one clean `camera_tick_fn` that:
+1. Gets live frame via `brain.camera_live.read_live_frame()`
+2. Detects face-gone transition
+3. Fires autonomously if appropriate
+4. Scrubs all output
+
+---
+
+## SESSION 4 — Port Missing Features to github_avaagent.py (If Choosing PATH B)
+
+If you decide to make `github_avaagent.py` the primary build, here's what needs to be ported from `v2_avaagent.py`:
+
+### FEATURE-PORT-01 — v30 User State Model (7 states)
+
+Add `_derive_user_state()` which classifies the user into: `focused`, `stressed`, `relaxed`, `fatigued`, `drifting`, `socially_open`, `socially_closed`.
+Wire into `recalculate_operational_goals()`.
+
+### FEATURE-PORT-02 — v31–v34 MetaController
+
+Add:
+- `_compute_meta_control()` — produces `meta_control` dict with mode, initiative/silence biases
+- `_default_meta_state()` and `_default_meta_feedback()` tables
+- `_apply_meta_feedback()` — closed-loop success/failure tracking
+- `_decay_meta_state()` — time-based decay for mode persistence
+- `META_MODES` dict (5 named modes + custom)
+- `META_MODE` action block in `process_ava_action_blocks`
+
+### FEATURE-PORT-03 — v30 Outcome Learning
+
+Add:
+- `_record_outcome_learning()` per candidate kind, goal, person, state
+- `_outcome_bias()` applied to initiative scoring
+- `_record_distribution_win()` 
+
+### FEATURE-PORT-04 — Stage 7 Trust + Persona + Identity
+
+Already built in brain modules. The wiring from `v2_avaagent.py` Stage 7 overlay is a clean 180 lines. Port directly into `build_prompt()` and `run_ava()` in `github_avaagent.py`.
+
+### FEATURE-PORT-05 — Face-Gone Detection
+
+From Stage 6 overlay. Add a `_FACE_WAS_PRESENT = [False]` global and check `face_was and not face_now` in `camera_tick_fn`.
+
+---
+
+## SESSION 5 — New Features Worth Adding (Either File)
+
+### FEATURE-01 — Mood Decay Between Sessions
+
+Mood is currently saved/loaded as-is. Add a decay function in `load_mood()`:
+```python
+# On load, blend toward baseline based on elapsed time since last save
+elapsed = time.time() - datetime.fromisoformat(data.get("_saved_at", now_iso())).timestamp()
+decay_rate = min(0.85, elapsed / 3600 * 0.15)  # up to 15% per hour, max 85%
+if decay_rate > 0.01:
+    weights = data.get("emotion_weights", DEFAULT_EMOTIONS.copy())
+    for k in weights:
+        if k in DEFAULT_EMOTIONS:
+            weights[k] = weights[k] + (DEFAULT_EMOTIONS[k] - weights[k]) * decay_rate
+    data["emotion_weights"] = normalize_emotions(weights)
+```
+Add `data["_saved_at"] = now_iso()` in `save_mood()`.
+
+### FEATURE-02 — Curiosity Questions Into Initiative
+
+`self_model.json` accumulates up to 16 curiosity questions but they're never fed to `collect_initiative_candidates()`. Add them:
+
+```python
+# At the end of collect_initiative_candidates(), before return:
+questions = model.get("curiosity_questions", []) or []
+recent_text = " ".join(r.get("content","") for r in load_recent_chat(person_id=person_id)[-10:]).lower()
+for q in questions[-6:]:
+    q_text = str(q).strip()
+    if not q_text or q_text.lower() in seen:
+        continue
+    key_words = [w for w in q_text.lower().split()[:4] if len(w) > 4]
+    if sum(1 for w in key_words if w in recent_text) >= 2:
+        continue  # already being discussed
+    seen.add(q_text.lower())
+    candidates.append({
+        "kind": "genuine_curiosity",
+        "text": q_text,
+        "topic_key": _topic_key(q_text),
+        "base_score": 0.62,
+        "memory_importance": 0.60,
+    })
+```
+
+Add `"genuine_curiosity"` to `CAMERA_AUTONOMOUS_ALLOWED_KINDS`.
+
+### FEATURE-03 — Goal Deduplication
+
+Before `make_goal_entry()` in `add_structured_goal()`:
+```python
+for existing in [g for g in system.get("goals", []) if g.get("status","active") == "active"]:
+    a = set(re.findall(r"[a-z]+", goal_text.lower()))
+    b = set(re.findall(r"[a-z]+", existing.get("text","").lower()))
+    if a and b and len(a & b) / len(a | b) >= 0.52:
+        existing["importance"] = min(1.0, float(existing.get("importance", 0.6)) + 0.05)
+        existing["last_updated"] = now_iso()
+        return existing  # merge instead of add
+```
+
+### FEATURE-04 — Circadian Tone Shifts
 
 ```python
 def get_circadian_modifiers() -> dict:
     hour = datetime.now().hour
-    if 5 <= hour < 9:
-        return {"initiative_scale": 0.7, "tone_hint": "soft and unhurried — early morning"}
-    elif 9 <= hour < 12:
-        return {"initiative_scale": 1.1, "tone_hint": "focused and energized — morning"}
-    elif 12 <= hour < 17:
-        return {"initiative_scale": 1.0, "tone_hint": "steady and grounded — afternoon"}
-    elif 17 <= hour < 21:
-        return {"initiative_scale": 0.95, "tone_hint": "relaxed and conversational — evening"}
-    else:
-        return {"initiative_scale": 0.5, "tone_hint": "quiet and low-key — late night"}
+    if 5 <= hour < 9:    return {"initiative_scale": 0.7, "tone_hint": "soft and unhurried"}
+    elif 9 <= hour < 12: return {"initiative_scale": 1.1, "tone_hint": "focused and energized"}
+    elif 12 <= hour < 17: return {"initiative_scale": 1.0, "tone_hint": "steady and grounded"}
+    elif 17 <= hour < 21: return {"initiative_scale": 0.95, "tone_hint": "relaxed and conversational"}
+    else:                return {"initiative_scale": 0.5, "tone_hint": "quiet and low-key"}
 ```
 
-- Apply `initiative_scale` to the `INITIATIVE_INACTIVITY_SECONDS` comparison in `camera_tick_fn`
-- Add `tone_hint` to the TIME section of `build_prompt()`
-
----
-
-## SESSION 7 — Project File Self-Awareness
-
-Ava can read first 12,000 chars of avaagent.py. She can't read her brain modules or docs.
-
-### FEATURE-10 — Read Any Project File
-
-**File to edit:** `avaagent.py`
-
-```python
-PROJECT_READABLE_EXTENSIONS = {".py", ".md", ".txt", ".json", ".bat", ".ps1"}
-PROJECT_SKIP_DIRS = {".git", "__pycache__", "memory", "faces", "Ava workbench", "state", "logs"}
-
-def list_project_files(subdir: str = "", limit: int = 100) -> list[str]:
-    target = (BASE_DIR / subdir).resolve() if subdir else BASE_DIR.resolve()
-    if not str(target).startswith(str(BASE_DIR)):
-        return ["❌ Path escapes project."]
-    rows = []
-    for p in sorted(target.rglob("*")):
-        if any(part in PROJECT_SKIP_DIRS for part in p.parts):
-            continue
-        if p.is_file() and p.suffix in PROJECT_READABLE_EXTENSIONS:
-            try:
-                rows.append(p.relative_to(BASE_DIR).as_posix())
-            except Exception:
-                continue
-    return rows[:limit]
-
-def read_project_file(relative_path: str, max_chars: int = 15000) -> str:
-    try:
-        target = (BASE_DIR / relative_path).resolve()
-        if not str(target).startswith(str(BASE_DIR)):
-            return "❌ Access denied."
-        if any(part in PROJECT_SKIP_DIRS for part in target.parts):
-            return "❌ Private directory."
-        if not target.exists() or not target.is_file():
-            return "❌ File not found."
-        if target.suffix not in PROJECT_READABLE_EXTENSIONS:
-            return "❌ File type not allowed."
-        return target.read_text(encoding="utf-8", errors="ignore")[:max_chars]
-    except Exception as e:
-        return f"❌ Failed: {e}"
-```
-
-**Add to `SYSTEM_PROMPT`** (after WORKBENCH section):
-```
-To list project files:
-```PROJECT
-action: list
-subdir: brain
-```
-
-To read a project file:
-```PROJECT
-action: read
-path: brain/beliefs.py
-```
-```
-
-**Add `PROJECT_BLOCK_RE`** and wire `project_repl` into `process_ava_action_blocks()`.
+Apply `initiative_scale` to the idle time check in camera_tick_fn.
+Add `tone_hint` to the TIME section of `build_prompt()`.
 
 ---
 
 ## WHAT TO NEVER TOUCH
 
-These are working correctly — do not modify:
-- `brain/camera.py` — CameraManager
-- `brain/camera_live.py` — live frame capture
-- `brain/camera_truth.py` — camera identity reply
-- `brain/workspace.py` — WorkspaceState and tick wiring
-- `brain/beliefs.py` — self-narrative system
-- `brain/shared.py` — utilities
-- `brain/profile_manager.py` — profile key resolution
-- `brain/identity.py` — IdentityRegistry
-- `brain/memory.py` — decay_tick and recall_for_person
-- `brain/trust_manager.py` — trust levels (correct, just not wired)
-- `brain/health.py` — health checks (correct, just not wired)
-- 27-emotion / 7-style system in avaagent.py
-- The `choose_initiative_candidate` pipeline (400 lines, solid)
-- The reflection/self-model system in avaagent.py
-- The camera snapshot + trend analysis system in avaagent.py
+These are working correctly in both files:
+- The 27-emotion / 7-style system
+- `score_memory_candidate()` — 15-factor scoring
+- `build_reflection_record()` / `reflect_on_last_reply()`
+- `process_camera_snapshot()` — importance/trend/transition pipeline
+- The initiative scoring pipeline (`score_initiative_candidate`, `_hard_gate_candidate`, `_apply_soft_choice_penalties`, `_dynamic_top_band`)
+- `brain.trust_manager` — logic is correct
+- `brain.persona_switcher` — logic is correct
+- `brain.identity_loader` — logic is correct
+- `brain.output_guard` — logic is correct
+- v34 `META_MODES` and `_all_meta_modes()` — well-designed
 
 ---
 
-## PRIORITY SUMMARY
+## PRIORITY TABLE
 
-| Session | Fixes | Impact | Time |
+| Session | Change | Risk | Value |
 |---|---|---|---|
-| 1 | 4 bugs: selfstate crash, emotion blind, 5-min suppression, empty reflections | 🔴 Critical | ~30 min |
-| 2 | Commit 2 missing files to git | 🔴 Critical | 2 min |
-| 3 | Output trim + identity cleanup | 🟡 Polish | ~15 min |
-| 4 | Wire trust + health (already built) | 🟡 Medium | ~20 min |
-| 5 | Goal dedup + curiosity initiative + pruning | 🟡 Medium | ~30 min |
-| 6 | Mood decay + return greeting + relationship score + circadian | 🟢 Evolution | ~45 min |
-| 7 | Project file read self-awareness | 🟢 Nice | ~20 min |
+| 1, FIX-01 | BASE_DIR to AvaAgentv2 | 🔴 Low risk, high impact | Fixes all file paths |
+| 1, FIX-02 | DeepFace subprocess | 🔴 Low risk, high impact | Fixes expression sensing |
+| 1, FIX-03 | Pass latest_user_input through overlays | 🟡 Medium | Fixes save_latest_user_message action |
+| 1, FIX-04 | GATE_DEBUG_LOGGING = False | ✅ Zero risk | Reduces console spam |
+| 2, FIX-05 | Stage 7 learned_fact key | 🟡 Medium | Enables auto-profile-learning |
+| 2, FIX-06 | Identity files path | 🟡 Depends on FIX-01 | Ensures USER.md writes to right place |
+| 3 | Consolidate overlays | 🟠 High — careful | Maintainability |
+| 4 | Port to github_avaagent.py | 🟠 High — full migration | Clean architecture |
+| 5 | New features | ✅ Low risk | Genuine improvements |
