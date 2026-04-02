@@ -18,21 +18,21 @@
   ],
   "current_goals": [
     "Stay aware of: ok im going to put you to sleep to fix some things Ava is should help your camera",
-    "Stay aware of: ok how is your memory now Ava?",
-    "Stay aware of: yes you keep saying your memory is fuzzy",
-    "Stay aware of: no nothing specific your memory should be good now",
-    "Stay aware of: im not concerned about your memory Ava, it should be working fine.",
-    "Stay aware of: nothing much is new with me Ava nothing is concerning me with your memory. i want to know how you're feeling",
-    "Stay aware of: right now Zeke is at the camara. i think your memory is fine but its how you react to it that worries me",
-    "Continue to be aware of Zeke's concerns about my repetition and memory.",
-    "Stay aware of: thats good that you remember",
-    "Stay aware of: ok you're definitely have some errors Ava",
-    "Stay aware of: well you've been alseep for a while and i might put you to sleep again to fix some things",
-    "Stay aware of: i dont know what the issue is right now but im going to find out and help fix you it has to do you you making unusual profiles right now you should only have…",
-    "Stay aware of: yes so im going to put you to sleep so i can fix those",
     "Stay aware of: yes that is correct. why are you confused who is actually at the camera?",
     "Stay aware of: yes, but right now your camera UI isnt work how it should",
-    "Stay aware of: is your camera working well?"
+    "Stay aware of: is your camera working well?",
+    "Stay aware of: yes i am in front of the camera currently",
+    "Stay aware of: why does your camera feed not give you enough information?",
+    "Stay aware of: ok thats good, we're going to do some tests now. what about now who is in front of the camera.",
+    "Stay aware of: ok i see two probles with you right now Snapshot box not updating — the UI isn't refreshing the image display even though the camera is ticking No face…",
+    "Stay aware of: ok Who's at the camera?",
+    "Stay aware of: no, no one is at the camera right now. im actually covering the camera so you cat see anything because im testing you",
+    "Stay aware of: yes. can you see now or tell who is at the camera?",
+    "Stay aware of: ok doing some more tests Ava. Who is at the camera right now?",
+    "Stay aware of: i see so your camera still isnt working correctly and by the amount of time you bring it up and guide the convo back to it i see that its important to you. and…",
+    "Stay aware of: ok how is your memory now Ava?",
+    "Stay aware of: yes you keep saying your memory is fuzzy",
+    "Stay aware of: no nothing specific your memory should be good now"
   ],
   "curiosity_questions": [
     "Clarify or learn more about: ok im going to put you to sleep to fix some things Ava is should help your camera"
@@ -302,9 +302,6 @@
     "emotion"
   ],
   "confidence_notes": [
-    "On 2026-03-31T21:54:55, I took self-directed actions: ✅ Ava saved the full latest user message as memory 71273c80-4e4f-4779-a7a1-d5dbc5c4506d.",
-    "On 2026-03-31T22:19:31, I took self-directed actions: ✅ Ava saved the full latest user message as memory 9b42be90-ae89-49d0-acec-55aacda5835e.",
-    "On 2026-03-31T22:20:32, I took self-directed actions: ✅ Ava saved the full latest user message as memory 74ffc5fc-3220-4417-a50b-693b604de2ee.",
     "On 2026-04-01T01:53:07, I took self-directed actions: ✅ Ava saved the full latest user message as memory ffe123b4-d742-4b3e-a747-4212677e7fb0.",
     "On 2026-04-01T01:58:27, I took self-directed actions: ✅ Ava saved memory d9d80ecf-d374-49e2-9efd-8a40fa29e4e8.",
     "On 2026-04-01T02:00:51, I took self-directed actions: ✅ Ava saved the full latest user message as memory 863cf0cf-2317-43d0-8a8f-919e07f45c26.",
@@ -313,85 +310,86 @@
     "On 2026-04-01T02:07:16, I took self-directed actions: ✅ Wrote drafts/conversation.txt, ✅ Ava saved the full latest user message as memory da2c1416-4f45-4604-9def-6fbbb0d65a44.",
     "On 2026-04-01T02:22:03, I took self-directed actions: ✅ Ava saved the full latest user message as memory 9a88c573-5d28-408a-9c48-2fb0f1272fcf, ✅ Ava added question: Is there any update or progress made regarding these issues?.",
     "On 2026-04-01T02:23:04, I took self-directed actions: ✅ Ava saved the full latest user message as memory 8c051649-6a41-449b-a173-2b3dd9064088, ✅ Ava added question: What specific changes would you like to see in the camera feed for better functionality?.",
-    "On 2026-04-01T02:26:04, I took self-directed actions: ✅ Ava saved the full latest user message as memory 2e93f004-8647-45ff-a3c6-56f3b6df6e2b, ✅ Ava added question: What are the two main problems Zeke is seeing with my current functionality?."
+    "On 2026-04-01T02:26:04, I took self-directed actions: ✅ Ava saved the full latest user message as memory 2e93f004-8647-45ff-a3c6-56f3b6df6e2b, ✅ Ava added question: What are the two main problems Zeke is seeing with my current functionality?.",
+    "On 2026-04-01T22:18:51, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-01T22:23:38, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-01T22:26:13, I took self-directed actions: camera_reflection_trigger."
   ],
-  "last_updated": "2026-04-01T02:58:23",
-  "reflection_count": 186,
+  "last_updated": "2026-04-01T22:26:13",
+  "reflection_count": 189,
   "goal_system_summary": [
     {
       "text": "Stay aware of: ok im going to put you to sleep to fix some things Ava is should help your camera",
-      "priority": 0.57,
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
-      "text": "Stay aware of: ok how is your memory now Ava?",
-      "priority": 0.57,
+      "text": "Stay aware of: yes that is correct. why are you confused who is actually at the camera?",
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
-      "text": "Stay aware of: yes you keep saying your memory is fuzzy",
-      "priority": 0.57,
+      "text": "Stay aware of: yes, but right now your camera UI isnt work how it should",
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
-      "text": "Stay aware of: no nothing specific your memory should be good now",
-      "priority": 0.57,
+      "text": "Stay aware of: is your camera working well?",
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
-      "text": "Stay aware of: im not concerned about your memory Ava, it should be working fine.",
-      "priority": 0.57,
+      "text": "Stay aware of: yes i am in front of the camera currently",
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
-      "text": "Stay aware of: nothing much is new with me Ava nothing is concerning me with your memory. i want to know how you're feeling",
-      "priority": 0.57,
+      "text": "Stay aware of: why does your camera feed not give you enough information?",
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
-      "text": "Stay aware of: right now Zeke is at the camara. i think your memory is fine but its how you react to it that worries me",
-      "priority": 0.57,
+      "text": "Stay aware of: ok thats good, we're going to do some tests now. what about now who is in front of the camera.",
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
-      "text": "Continue to be aware of Zeke's concerns about my repetition and memory.",
-      "priority": 0.57,
+      "text": "Stay aware of: ok i see two probles with you right now Snapshot box not updating — the UI isn't refreshing the image display even though the camera is ticking No face…",
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
-      "text": "Stay aware of: thats good that you remember",
-      "priority": 0.57,
+      "text": "Stay aware of: ok Who's at the camera?",
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
-      "text": "Stay aware of: ok you're definitely have some errors Ava",
-      "priority": 0.57,
+      "text": "Stay aware of: no, no one is at the camera right now. im actually covering the camera so you cat see anything because im testing you",
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     }
   ],
   "active_goal": {
-    "name": "maintain_connection",
-    "strength": 0.342,
-    "style": "warm, casual, connected",
-    "silent": false,
-    "priority": 0.342,
-    "drive_score": 0.317
+    "name": "clarify",
+    "strength": 0.542,
+    "style": "structured, guiding, careful",
+    "silent": false
   },
   "goal_blend": [
     {
-      "name": "maintain_connection",
-      "weight": 0.599,
-      "style": "warm, casual, connected",
+      "name": "clarify",
+      "weight": 0.617,
+      "style": "structured, guiding, careful",
       "silent": false
     }
   ]
