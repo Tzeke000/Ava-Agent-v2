@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 from .attention import AttentionState
 from .shared import clamp01, safe_float, latest_user_text, normalize_history
 from .beliefs import build_belief_state
