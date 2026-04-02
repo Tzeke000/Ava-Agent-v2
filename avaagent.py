@@ -4,6 +4,7 @@ import cv2
 import warnings
 import random
 import re
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -27,7 +28,7 @@ from brain.workspace import Workspace
 from brain.identity import IdentityRegistry
 from brain.memory_bridge import MemoryBridge
 from brain.output_guard import scrub_visible_reply, scrub_chat_callback_result
-from brain.selfstate_router import is_selfstate_query, build_selfstate_reply
+from brain.selfstate import is_selfstate_query, build_selfstate_reply
 from brain.health_runtime import print_startup_selftest
 from brain.initiative_sanity import desaturate_candidate_scores, sanitize_candidate_result
 from brain.beliefs import (
@@ -4563,6 +4564,7 @@ def _camera_autonomy_should_speak(candidate: dict, state: dict, face_visible: bo
 
 
 _CANONICAL_CHAT_HISTORY: list[dict] = []
+_CANONICAL_HISTORY_LOCK = threading.Lock()
 
 def _extract_text_content(value):
     if value is None:
@@ -4627,22 +4629,25 @@ def _set_canonical_history(history):
     max_msgs = _CANONICAL_HISTORY_MAX_TURNS * 2
     if len(normalized) > max_msgs:
         normalized = normalized[-max_msgs:]
-    _CANONICAL_CHAT_HISTORY = normalized
-    return list(_CANONICAL_CHAT_HISTORY)
+    with _CANONICAL_HISTORY_LOCK:
+        _CANONICAL_CHAT_HISTORY = normalized
+        return list(_CANONICAL_CHAT_HISTORY)
 
 def _get_canonical_history():
-    return list(_normalize_history(_CANONICAL_CHAT_HISTORY))
+    with _CANONICAL_HISTORY_LOCK:
+        return list(_normalize_history(_CANONICAL_CHAT_HISTORY))
 
 def _sync_canonical_history(history):
     global _CANONICAL_CHAT_HISTORY
     incoming = _normalize_history(history)
-    if not _CANONICAL_CHAT_HISTORY:
-        _CANONICAL_CHAT_HISTORY = list(incoming)
-        return list(_CANONICAL_CHAT_HISTORY)
-    if not incoming:
+    with _CANONICAL_HISTORY_LOCK:
+        if not _CANONICAL_CHAT_HISTORY:
+            _CANONICAL_CHAT_HISTORY = list(incoming)
+            return list(_CANONICAL_CHAT_HISTORY)
+        if not incoming:
+            return list(_normalize_history(_CANONICAL_CHAT_HISTORY))
+        _CANONICAL_CHAT_HISTORY = _merge_histories(_CANONICAL_CHAT_HISTORY, incoming)
         return list(_normalize_history(_CANONICAL_CHAT_HISTORY))
-    _CANONICAL_CHAT_HISTORY = _merge_histories(_CANONICAL_CHAT_HISTORY, incoming)
-    return list(_normalize_history(_CANONICAL_CHAT_HISTORY))
 
 
 # Initialize canonical chat history at startup.

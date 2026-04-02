@@ -1,5 +1,6 @@
 from typing import List, Dict, Any
 
+
 def desaturate_candidate_scores(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     adjusted = []
     seen_by_kind = {}
@@ -17,6 +18,20 @@ def desaturate_candidate_scores(candidates: List[Dict[str, Any]]) -> List[Dict[s
         adjusted.append(c)
         seen_by_kind[kind] = seen + 1
     return adjusted
+
+
+def maybe_desaturate_args(args, kwargs):
+    new_args = list(args)
+    desaturated = False
+    if new_args and isinstance(new_args[0], list):
+        new_args[0] = desaturate_candidate_scores(new_args[0])
+        desaturated = True
+    elif isinstance(kwargs.get("candidates"), list):
+        kwargs = dict(kwargs)
+        kwargs["candidates"] = desaturate_candidate_scores(kwargs["candidates"])
+        desaturated = True
+    return tuple(new_args), kwargs, desaturated
+
 
 def sanitize_candidate_result(result, g: dict | None = None):
     if not isinstance(result, tuple) or len(result) < 3:
@@ -36,5 +51,5 @@ def sanitize_candidate_result(result, g: dict | None = None):
             confidence = None
     if active_goal == "maintain_connection" and kind in {"current_goal", "recent_reflection"}:
         if score >= 0.99 and (confidence is None or confidence <= 0.45):
-            return (None, "v2_direct_holdback_saturated_maintain_connection", state)
+            return (None, "stage6_1_holdback_saturated_maintain_connection", state)
     return result
