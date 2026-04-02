@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .shared import now_ts
+from .vision import analyze_face_emotion
 
 
 @dataclass
@@ -62,17 +63,7 @@ def build_perception(camera_manager, image, g: dict, user_text: str = "") -> Per
 
     try:
         if state.face_detected:
-            from deepface import DeepFace
-
-            result = DeepFace.analyze(
-                frame, actions=["emotion"], enforce_detection=False, silent=True
-            )
-            if isinstance(result, list):
-                result = result[0] if result else {}
-            else:
-                result = result or {}
-            dom = result.get("dominant_emotion")
-            state.face_emotion = (str(dom).lower() if dom else "neutral")
+            state.face_emotion = analyze_face_emotion(frame)
     except Exception:
         state.face_emotion = "neutral"
 

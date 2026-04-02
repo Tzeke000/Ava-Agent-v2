@@ -54,7 +54,14 @@ class Workspace:
 
         try:
             seconds_idle = time.time() - self._last_user_message_ts
-            ws.attention = compute_attention(ws.perception, seconds_idle)
+            circ_fn = g.get("get_circadian_modifiers")
+            c_scale = 1.0
+            if callable(circ_fn):
+                try:
+                    c_scale = float(circ_fn().get("initiative_scale", 1.0))
+                except Exception:
+                    c_scale = 1.0
+            ws.attention = compute_attention(ws.perception, seconds_idle, circadian_initiative_scale=c_scale)
         except Exception as e:
             print(f"[workspace] attention failed: {e}")
 

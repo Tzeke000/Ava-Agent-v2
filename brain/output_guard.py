@@ -8,7 +8,7 @@ _INTERNAL_BLOCK_PATTERNS = [
     re.compile(r"(?im)^\s*(?:MEMORY|GOAL|ACTION|WORKBENCH)\s+action\s*:[\s\S]*?(?=(?:\n\s*\n)|$)"),
     re.compile(r"(?im)^\s*(?:MEMORY|GOAL|ACTION|WORKBENCH).*?$"),
     re.compile(r"Active goal expression:[^\n]+", re.IGNORECASE),
-    re.compile(r"ACTIVE PERSON\s*:[\s\S]*?(?=\n\s*\n|$)", re.IGNORECASE),
+    re.compile(r"\bACTIVE PERSON\s*:[\s\S]*?(?=\n\s*\n|$)", re.IGNORECASE),
     re.compile(r"\bMEMORY\s+action\s*:.*$", re.IGNORECASE | re.MULTILINE),
     re.compile(
         r"\b(?:MEMORY|GOAL|ACTION|WORKBENCH)\s+\w+\s*:.*?(?:category|importance|tags|text)\s*:.*$",

@@ -5,6 +5,7 @@ import warnings
 import random
 import re
 import subprocess as _sp
+import atexit
 import tempfile
 import threading
 import time
@@ -33,6 +34,7 @@ from brain.output_guard import scrub_visible_reply, scrub_chat_callback_result
 from brain.selfstate import is_selfstate_query, build_selfstate_reply
 from brain.health_runtime import print_startup_selftest
 from brain.initiative_sanity import desaturate_candidate_scores, sanitize_candidate_result
+from brain.vision import analyze_face_emotion_detailed
 from brain.beliefs import (
     SELF_NARRATIVE_PATH,
     get_self_narrative_for_prompt,
@@ -87,6 +89,7 @@ GOAL_SYSTEM_PATH = STATE_DIR / "goal_system.json"
 MEMORY_IMPORTANCE_OVERRIDES_PATH = MEMORY_DIR / "memory_importance_overrides.json"
 EXPRESSION_STATE_PATH = STATE_DIR / "expression_state.json"
 INITIATIVE_STATE_PATH = STATE_DIR / "initiative_state.json"
+SESSION_STATE_PATH = STATE_DIR / "session_state.json"
 EMOTION_REFERENCE_PATH = BASE_DIR / "ava_emotion_reference.json"
 CAMERA_STATE_DIR = STATE_DIR / "camera"
 CAMERA_ROLLING_DIR = CAMERA_STATE_DIR / "rolling"
@@ -116,7 +119,7 @@ LLM_MODEL = "llama3.1:8b"
 EMBED_MODEL = "nomic-embed-text"
 CHROMA_COLLECTION = "ava_memories"
 WHISPER_MODEL_SIZE = "small"
-MEMORY_RECALL_K = 4
+MEMORY_RECALL_K = 8
 RECENT_CHAT_LIMIT = 6
 OWNER_PERSON_ID = "zeke"
 SESSION_START_TS = time.time()
@@ -129,7 +132,7 @@ EXPRESSION_MIN_CONFIDENCE = 0.35
 EXPRESSION_STABILITY_THRESHOLD = 0.60
 MAX_MEMORY_TEXT_CHARS = 1200
 MAX_MEMORY_QUERY_CHARS = 600
-REFLECTION_RECALL_K = 4
+REFLECTION_RECALL_K = 6
 MAX_REFLECTION_CONTEXT_CHARS = 1600
 REFLECTION_AUTO_PROMOTION_THRESHOLD = 0.82
 INITIATIVE_INACTIVITY_SECONDS = 480
@@ -201,6 +204,8 @@ CAMERA_AUTONOMOUS_ALLOWED_KINDS = {
     "light_observation",
     "gentle_clarify",
     "neutral_checkin",
+    "return_greeting",
+    "self_calibration_check",
 }
 CAMERA_AUTONOMOUS_NO_FACE_ALLOWED_KINDS = {
     "uncertainty_observation",
@@ -240,7 +245,17 @@ INITIATIVE_KIND_COOLDOWNS = {
     "engagement_observation": 3000,
     "attention_drift": 3300,
     "feedback_guidance": 5400,
+    "return_greeting": 3600,
+    "self_calibration_check": 7200,
 }
+
+SELF_CALIBRATION_PROMPTS = [
+    "Have I been too quiet lately, or does the pace feel right?",
+    "Is there anything I keep doing that bugs you? I want to know.",
+    "Am I bringing up things that feel relevant, or am I missing the mark?",
+    "Do you want me to talk more or less when you're focused?",
+    "Is there something you wish I remembered but I keep missing?",
+]
 
 TOP_BAND_DELTA = 0.05
 TOP_BAND_MIN = 1
@@ -561,6 +576,9 @@ def default_profile(person_id: str, display_name: str | None = None) -> dict:
         "dislikes": [],
         "ava_impressions": [],
         "last_seen": None,
+        "relationship_score": 0.3,
+        "interaction_count": 0,
+        "last_seen_at": None,
         "created_at": now_iso()
     }
 
@@ -573,6 +591,9 @@ def load_profile_by_id(person_id: str) -> dict:
                 for key in ["notes", "likes", "dislikes", "ava_impressions"]:
                     if key not in profile or not isinstance(profile[key], list):
                         profile[key] = []
+                profile.setdefault("relationship_score", 0.3)
+                profile.setdefault("interaction_count", 0)
+                profile.setdefault("last_seen_at", None)
                 return profile
         except Exception as e:
             print(f"Profile load error ({person_id}): {e}")
@@ -584,6 +605,59 @@ def save_profile(profile: dict):
             json.dump(profile, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"Profile save error: {e}")
+
+
+_RELATIONSHIP_UPDATE_EVERY_N_TURNS = 5
+_RELATIONSHIP_TURN_COUNT_BY_PERSON: dict[str, int] = {}
+
+
+def update_relationship_score(profile: dict, session_quality: float = 0.5) -> dict:
+    """
+    session_quality: 0.0 (tense/bad) to 1.0 (warm/great).
+    Grows slowly with positive interactions, decays slowly with absence.
+    """
+    pid = profile.get("person_id")
+    if not pid:
+        return profile
+    profile = dict(load_profile_by_id(pid))
+    score = float(profile.get("relationship_score", 0.3))
+    interaction_count = int(profile.get("interaction_count", 0)) + 1
+
+    absence_decay = 0.0
+    last_seen = profile.get("last_seen_at")
+    if last_seen:
+        try:
+            elapsed_days = (datetime.now() - datetime.fromisoformat(last_seen)).days
+            absence_decay = min(0.1, max(0, elapsed_days) * 0.005)
+        except Exception:
+            pass
+
+    growth = float(session_quality) * 0.04
+    score = max(0.0, min(1.0, score + growth - absence_decay))
+
+    profile["relationship_score"] = round(score, 4)
+    profile["interaction_count"] = interaction_count
+    profile["last_seen_at"] = now_iso()
+    save_profile(profile)
+    return profile
+
+
+def _maybe_update_relationship_on_turn(active_profile: dict) -> None:
+    try:
+        pid = active_profile.get("person_id")
+        if not pid:
+            return
+        n = _RELATIONSHIP_TURN_COUNT_BY_PERSON.get(pid, 0) + 1
+        _RELATIONSHIP_TURN_COUNT_BY_PERSON[pid] = n
+        if n % _RELATIONSHIP_UPDATE_EVERY_N_TURNS != 0:
+            return
+        fresh = update_relationship_score(active_profile, session_quality=0.55)
+        for k in ("relationship_score", "interaction_count", "last_seen_at"):
+            if k in fresh:
+                active_profile[k] = fresh[k]
+    except Exception:
+        pass
+
 
 def ensure_owner_profile():
     profile = load_profile_by_id(OWNER_PERSON_ID)
@@ -718,6 +792,67 @@ def get_time_status_text() -> str:
     ctx = get_time_context()
     return f"{ctx['weekday']}, {ctx['date_human']} — {ctx['time_human']} ({ctx['part_of_day']})"
 
+
+def get_circadian_modifiers() -> dict:
+    hour = datetime.now().hour
+    if 5 <= hour < 9:
+        return {
+            "energy": -0.2,
+            "calmness_boost": 0.15,
+            "initiative_scale": 0.7,
+            "tone_hint": "soft and unhurried — Ava is still waking up",
+        }
+    if 9 <= hour < 12:
+        return {
+            "energy": 0.1,
+            "interest_boost": 0.1,
+            "initiative_scale": 1.1,
+            "tone_hint": "focused and engaged — morning clarity",
+        }
+    if 12 <= hour < 17:
+        return {
+            "energy": 0.0,
+            "initiative_scale": 1.0,
+            "tone_hint": "steady and grounded — afternoon pace",
+        }
+    if 17 <= hour < 21:
+        return {
+            "energy": -0.05,
+            "calmness_boost": 0.1,
+            "initiative_scale": 0.95,
+            "tone_hint": "relaxed and conversational — evening wind-down",
+        }
+    return {
+        "energy": -0.3,
+        "calmness_boost": 0.25,
+        "initiative_scale": 0.5,
+        "tone_hint": "quiet and low-key — late night, Ava is calm and doesn't push topics",
+    }
+
+
+def _apply_circadian_to_emotion_weights(weights: dict) -> dict:
+    """Blend circadian energy / calmness / interest into emotion weights (unnormalized → normalized)."""
+    circ = get_circadian_modifiers()
+    w = {k: float(v) for k, v in dict(weights).items()}
+    cb = float(circ.get("calmness_boost") or 0.0)
+    if cb and "calmness" in w:
+        w["calmness"] = max(0.0, w["calmness"] + cb * 0.2)
+    ib = float(circ.get("interest_boost") or 0.0)
+    if ib and "interest" in w:
+        w["interest"] = max(0.0, w["interest"] + ib * 0.15)
+    en = float(circ.get("energy") or 0.0)
+    if en:
+        for nm, fac in (("interest", 0.12), ("excitement", 0.08), ("joy", 0.05)):
+            if nm in w:
+                w[nm] = max(0.0, w[nm] + en * fac)
+        if en < 0:
+            if "calmness" in w:
+                w["calmness"] = max(0.0, w["calmness"] - en * 0.12)
+            if "boredom" in w:
+                w["boredom"] = max(0.0, w["boredom"] + abs(en) * 0.03)
+    return normalize_emotions(w)
+
+
 # =========================================================
 # MOOD
 # =========================================================
@@ -746,10 +881,28 @@ def load_mood() -> dict:
         try:
             with open(MOOD_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return enrich_mood_state(data)
+            last_saved = data.get("_saved_at")
+            if last_saved:
+                try:
+                    elapsed = time.time() - datetime.fromisoformat(last_saved).timestamp()
+                    decay_rate = min(0.85, elapsed / 3600 * 0.15)
+                    baseline = DEFAULT_EMOTIONS.copy()
+                    weights = dict(data.get("emotion_weights", DEFAULT_EMOTIONS.copy()))
+                    for k in list(weights.keys()):
+                        if k in baseline:
+                            weights[k] = weights[k] + (baseline[k] - weights[k]) * decay_rate
+                    data["emotion_weights"] = weights
+                except Exception:
+                    pass
+            data["emotion_weights"] = _apply_circadian_to_emotion_weights(
+                data.get("emotion_weights", DEFAULT_EMOTIONS.copy())
+            )
+            return enrich_mood_state(data)
         except Exception as e:
             print(f"Mood load error: {e}")
-    return enrich_mood_state(default_mood())
+    dm = default_mood()
+    dm["emotion_weights"] = _apply_circadian_to_emotion_weights(dm["emotion_weights"])
+    return enrich_mood_state(dm)
 
 def enrich_mood_state(mood: dict | None = None, emotion_reference: dict | None = None) -> dict:
     mood = dict(mood or {})
@@ -772,6 +925,8 @@ def enrich_mood_state(mood: dict | None = None, emotion_reference: dict | None =
 
 def save_mood(mood: dict):
     try:
+        mood = dict(mood)
+        mood["_saved_at"] = now_iso()
         with open(MOOD_PATH, "w", encoding="utf-8") as f:
             json.dump(mood, f, indent=2, ensure_ascii=False)
     except Exception as e:
@@ -1162,6 +1317,17 @@ def remember_memory(
     cleaned_text = trim_for_memory(text)
     if not cleaned_text:
         return None
+
+    tag_list = list(tags or [])
+    try:
+        current_felt = str(load_mood().get("current_mood", "neutral") or "neutral").strip() or "neutral"
+    except Exception:
+        current_felt = "neutral"
+    _felt_slug = re.sub(r"[^a-zA-Z0-9_]+", "_", current_felt).strip("_")
+    felt_tag = f"felt_{_felt_slug}" if _felt_slug else "felt_neutral"
+    if felt_tag not in tag_list:
+        tag_list.append(felt_tag)
+    tags = tag_list
 
     memory_id = str(uuid.uuid4())
     full_text = (text or "").strip()
@@ -2296,47 +2462,23 @@ def map_emotion_to_soft_signal(emotion: str) -> str:
     return mapping.get(e, e or "unknown")
 
 def _deepface_via_py312(face_bgr_image) -> dict:
-    tmp_path = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            tmp_path = tmp.name
-        cv2.imwrite(tmp_path, face_bgr_image)
-        img_literal = json.dumps(tmp_path)
-        script = (
-            "from deepface import DeepFace; import json; "
-            "p = " + img_literal + "; "
-            "r = DeepFace.analyze(img_path=p, actions=['emotion'], "
-            "detector_backend='skip', enforce_detection=False, silent=True); "
-            "r = r[0] if isinstance(r, list) else r; "
-            "print(json.dumps({'dominant': r.get('dominant_emotion','unknown'), 'emotions': r.get('emotion', {})}))"
-        )
-        result = _sp.run(
-            ["py", "-3.12", "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            data = json.loads(result.stdout.strip())
-            dominant = (data.get("dominant") or "unknown").lower()
-            emotions = data.get("emotions", {})
-            conf = float(emotions.get(dominant, 0.0)) / 100.0 if dominant in emotions else 0.0
-            return {
-                "ok": True,
-                "raw_emotion": dominant,
-                "confidence": max(0.0, min(1.0, conf)),
-                "soft_signal": map_emotion_to_soft_signal(dominant),
-                "emotions": emotions,
-            }
-        return {"ok": False, "reason": f"subprocess_error: {result.stderr.strip()}"}
+        data = analyze_face_emotion_detailed(face_bgr_image)
+        if not data:
+            return {"ok": False, "reason": "subprocess_error"}
+        dominant = (data.get("dominant") or "unknown")
+        dominant = str(dominant).lower() if dominant else "unknown"
+        emotions = data.get("emotions") or {}
+        conf = float(emotions.get(dominant, 0.0)) / 100.0 if dominant in emotions else 0.0
+        return {
+            "ok": True,
+            "raw_emotion": dominant,
+            "confidence": max(0.0, min(1.0, conf)),
+            "soft_signal": map_emotion_to_soft_signal(dominant),
+            "emotions": emotions,
+        }
     except Exception as e:
         return {"ok": False, "reason": f"deepface_subprocess_error: {e}"}
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
 
 def analyze_expression(image) -> dict:
     if image is None:
@@ -3566,7 +3708,13 @@ def default_initiative_state() -> dict:
         "consecutive_ignored_initiations": 0,
         "last_user_message_length": 0,
         "last_user_response_brief": False,
-        "interaction_energy": 0.58
+        "interaction_energy": 0.58,
+        "face_visible": False,
+        "face_left_at": None,
+        "face_returned_at": None,
+        "was_absent": False,
+        "absent_duration_seconds": 0,
+        "last_calibration_at_msg": 0,
     }
 
 def load_initiative_state() -> dict:
@@ -3587,6 +3735,137 @@ def save_initiative_state(state: dict):
             json.dump(state, f, indent=2, ensure_ascii=False)
     except Exception as e:
         print(f"Initiative state save error: {e}")
+
+_SESSION_STATE_MIGRATED = False
+
+
+def load_session_state() -> dict:
+    global _SESSION_STATE_MIGRATED
+    base: dict = {
+        "total_message_count": 0,
+        "session_start_at": "",
+        "last_session_end_at": "",
+    }
+    if SESSION_STATE_PATH.exists():
+        try:
+            with open(SESSION_STATE_PATH, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                base.update(loaded)
+        except Exception:
+            pass
+    if not _SESSION_STATE_MIGRATED:
+        _SESSION_STATE_MIGRATED = True
+        try:
+            if INITIATIVE_STATE_PATH.exists():
+                with open(INITIATIVE_STATE_PATH, "r", encoding="utf-8") as f:
+                    init_raw = json.load(f)
+                if isinstance(init_raw, dict) and "total_message_count" in init_raw:
+                    ic = int(init_raw.get("total_message_count") or 0)
+                    cur = int(base.get("total_message_count") or 0)
+                    base["total_message_count"] = max(cur, ic)
+                    istate = load_initiative_state()
+                    if "total_message_count" in istate:
+                        del istate["total_message_count"]
+                        save_initiative_state(istate)
+                    save_session_state(base)
+        except Exception:
+            pass
+    if not base.get("session_start_at"):
+        base["session_start_at"] = now_iso()
+    return base
+
+
+def save_session_state(state: dict):
+    try:
+        with open(SESSION_STATE_PATH, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"Session state save error: {e}")
+
+
+def bump_session_message_count() -> int:
+    st = load_session_state()
+    n = int(st.get("total_message_count", 0)) + 1
+    st["total_message_count"] = n
+    save_session_state(st)
+    return n
+
+
+def _session_state_atexit():
+    try:
+        st = load_session_state()
+        st["last_session_end_at"] = now_iso()
+        save_session_state(st)
+    except Exception:
+        pass
+
+
+atexit.register(_session_state_atexit)
+
+
+def update_presence_continuity(face_visible: bool, presence_state: dict) -> dict:
+    now_str = now_iso()
+    was_visible = bool(presence_state.get("face_visible", False))
+
+    if was_visible and not face_visible:
+        presence_state["face_left_at"] = now_str
+        presence_state["was_absent"] = False
+
+    elif not was_visible and face_visible:
+        presence_state["face_returned_at"] = now_str
+        left_at = presence_state.get("face_left_at")
+        if left_at:
+            try:
+                gone = (datetime.fromisoformat(now_str) - datetime.fromisoformat(left_at)).total_seconds()
+                presence_state["was_absent"] = gone > 30
+                presence_state["absent_duration_seconds"] = round(gone)
+            except Exception:
+                presence_state["was_absent"] = False
+        else:
+            presence_state["absent_duration_seconds"] = 0
+        presence_state["face_left_at"] = None
+
+    presence_state["face_visible"] = face_visible
+    return presence_state
+
+
+def _format_absent_duration(seconds: int) -> str:
+    s = max(0, int(seconds))
+    if s < 90:
+        return f"{s} seconds"
+    if s < 3600:
+        m = max(1, round(s / 60))
+        return f"{m} minutes" if m != 1 else "about a minute"
+    h = s // 3600
+    rem_m = (s % 3600) // 60
+    if h >= 1 and rem_m >= 5:
+        return f"{h} hours and {rem_m} minutes"
+    if h >= 1:
+        return f"{h} hours" if h != 1 else "about an hour"
+    return f"{max(1, round(s / 60))} minutes"
+
+
+def maybe_self_calibration_candidate(person_id: str) -> dict | None:
+    _ = person_id
+    state = load_initiative_state()
+    sess = load_session_state()
+    total = int(sess.get("total_message_count", 0))
+    last_cal = int(state.get("last_calibration_at_msg", 0))
+    if total >= 20 and (total - last_cal) >= 50:
+        return {
+            "kind": "self_calibration_check",
+            "text": random.choice(SELF_CALIBRATION_PROMPTS),
+            "base_score": 0.72,
+            "score": 0.72,
+            "memory_importance": 0.70,
+            "topic_key": "self_calibration",
+            "source": "self_calibration",
+            "action_confidence": 1.0,
+            "interpretation_confidence": 1.0,
+        }
+    return None
+
 
 def initiative_status_text(state: dict | None = None) -> str:
     state = state or load_initiative_state()
@@ -3708,6 +3987,7 @@ def expire_stale_pending_initiation(state: dict | None = None) -> dict:
 
 def update_presence_state(face_visible: bool, recognized_person_id: str | None = None, interaction_happened: bool = False) -> dict:
     state = load_initiative_state()
+    state = update_presence_continuity(face_visible, state)
     now = now_ts()
     if face_visible:
         state["last_face_seen_ts"] = now
@@ -3868,6 +4148,36 @@ def _camera_visual_candidates(person_id: str) -> list[dict]:
 
     return candidates
 
+
+def collect_curiosity_candidates(person_id: str) -> list[dict]:
+    """Pull unanswered curiosity questions from the self-model for proactive initiative."""
+    model = load_self_model()
+    questions = model.get("curiosity_questions", []) or []
+    candidates: list[dict] = []
+    recent = " ".join(r.get("content", "") for r in load_recent_chat(person_id=person_id)[-10:]).lower()
+    for q in questions[-5:]:
+        q_text = str(q).strip()
+        if not q_text:
+            continue
+        key_words = q_text.lower().split()[:3]
+        if any(len(w) > 4 and w in recent for w in key_words):
+            continue
+        topic_key = f"curiosity_{abs(hash(q_text)) % 10000}"
+        candidates.append(
+            {
+                "kind": "genuine_curiosity",
+                "text": q_text,
+                "base_score": 0.55,
+                "memory_importance": 0.52,
+                "topic_key": topic_key,
+                "source": "self_model_curiosity",
+                "action_confidence": 1.0,
+                "interpretation_confidence": 1.0,
+            }
+        )
+    return candidates
+
+
 def collect_initiative_candidates(person_id: str) -> list[dict]:
     model = load_self_model()
     reflections = load_recent_reflections(limit=18, person_id=person_id)
@@ -3965,17 +4275,31 @@ def collect_initiative_candidates(person_id: str) -> list[dict]:
                 "memory_importance": 0.82
             })
 
+    for c in collect_curiosity_candidates(person_id):
+        tkey = (c.get("text") or "").strip().lower()
+        if not tkey or tkey in seen:
+            continue
+        seen.add(tkey)
+        candidates.append(c)
+
+    cal = maybe_self_calibration_candidate(person_id)
+    if cal:
+        tkey = (cal.get("text") or "").strip().lower()
+        if tkey and tkey not in seen:
+            seen.add(tkey)
+            candidates.append(cal)
+
     return desaturate_candidate_scores(candidates)
 
 def _goal_kind_preferences(goal_name: str) -> dict:
     prefs = {
-        "reduce_stress": {"preferred_kinds": {"visual_checkin", "feedback_guidance", "transition_observation", "visual_observation"}, "avoid_kinds": {"curiosity_question"}, "keyword_bias": ["relaxed", "strained", "stress", "calm", "ease", "pause"]},
-        "increase_engagement": {"preferred_kinds": {"curiosity_question", "engagement_observation", "attention_drift", "pattern_checkin"}, "avoid_kinds": {"visual_checkin"}, "keyword_bias": ["curious", "shift", "going", "thought", "interesting"]},
-        "explore_topic": {"preferred_kinds": {"curiosity_question", "current_goal", "recent_reflection", "salient_memory"}, "avoid_kinds": set(), "keyword_bias": ["explore", "wonder", "thinking", "earlier", "build", "version"]},
+        "reduce_stress": {"preferred_kinds": {"visual_checkin", "feedback_guidance", "transition_observation", "visual_observation"}, "avoid_kinds": {"curiosity_question", "genuine_curiosity"}, "keyword_bias": ["relaxed", "strained", "stress", "calm", "ease", "pause"]},
+        "increase_engagement": {"preferred_kinds": {"curiosity_question", "genuine_curiosity", "engagement_observation", "attention_drift", "pattern_checkin"}, "avoid_kinds": {"visual_checkin"}, "keyword_bias": ["curious", "shift", "going", "thought", "interesting"]},
+        "explore_topic": {"preferred_kinds": {"curiosity_question", "genuine_curiosity", "current_goal", "recent_reflection", "salient_memory"}, "avoid_kinds": set(), "keyword_bias": ["explore", "wonder", "thinking", "earlier", "build", "version"]},
         "clarify": {"preferred_kinds": {"current_goal", "feedback_guidance", "uncertainty_observation", "recent_reflection"}, "avoid_kinds": {"attention_drift"}, "keyword_bias": ["clarify", "understand", "unsure", "not confident", "figure out"]},
-        "maintain_connection": {"preferred_kinds": {"pattern_checkin", "curiosity_question", "visual_observation"}, "avoid_kinds": set(), "keyword_bias": ["how's it going", "earlier", "thinking", "together"]},
-        "observe_silently": {"preferred_kinds": set(), "avoid_kinds": {"visual_checkin", "feedback_guidance", "curiosity_question", "pattern_checkin", "engagement_observation", "attention_drift", "visual_observation", "transition_observation"}, "keyword_bias": []},
-        "wait_for_user": {"preferred_kinds": set(), "avoid_kinds": {"visual_checkin", "feedback_guidance", "curiosity_question", "pattern_checkin", "engagement_observation", "attention_drift", "visual_observation", "transition_observation"}, "keyword_bias": []},
+        "maintain_connection": {"preferred_kinds": {"pattern_checkin", "curiosity_question", "genuine_curiosity", "visual_observation", "return_greeting", "self_calibration_check"}, "avoid_kinds": set(), "keyword_bias": ["how's it going", "earlier", "thinking", "together"]},
+        "observe_silently": {"preferred_kinds": set(), "avoid_kinds": {"visual_checkin", "feedback_guidance", "curiosity_question", "genuine_curiosity", "pattern_checkin", "engagement_observation", "attention_drift", "visual_observation", "transition_observation"}, "keyword_bias": []},
+        "wait_for_user": {"preferred_kinds": set(), "avoid_kinds": {"visual_checkin", "feedback_guidance", "curiosity_question", "genuine_curiosity", "pattern_checkin", "engagement_observation", "attention_drift", "visual_observation", "transition_observation"}, "keyword_bias": []},
     }
     return prefs.get(goal_name or "", {"preferred_kinds": set(), "avoid_kinds": set(), "keyword_bias": []})
 
@@ -4094,7 +4418,7 @@ def _apply_soft_choice_penalties(candidates: list[dict], state: dict, active_goa
                 penalty = SOFT_PENALTY_MINOR
                 total_penalty += penalty
                 penalties_applied.append(("semantic_repeat_soft", round(penalty, 3)))
-        if stressed_context and kind in ["curiosity_question", "playful_prompt"]:
+        if stressed_context and kind in ["curiosity_question", "genuine_curiosity", "playful_prompt"]:
             penalty = SOFT_PENALTY_MINOR * 2
             total_penalty += penalty
             penalties_applied.append(("stressed_humor_scale", round(penalty, 3)))
@@ -4215,6 +4539,8 @@ def score_initiative_candidate(candidate: dict, person_id: str, state: dict | No
 
     if kind == "curiosity_question":
         score += 0.04
+    if kind == "genuine_curiosity":
+        score += 0.04
     if kind == "recent_reflection":
         score += 0.04
     if kind == "salient_memory":
@@ -4223,6 +4549,10 @@ def score_initiative_candidate(candidate: dict, person_id: str, state: dict | No
         score += 0.05
     if kind == "feedback_guidance":
         score += 0.08
+    if kind == "return_greeting":
+        score += 0.12
+    if kind == "self_calibration_check":
+        score += 0.10
     if kind == "visual_pattern":
         score += 0.07
     if kind == "visual_checkin":
@@ -4251,7 +4581,7 @@ def score_initiative_candidate(candidate: dict, person_id: str, state: dict | No
     score -= (float(behavior.get("caution", 0.5)) - 0.5) * 0.10
     score += (float(state.get("interaction_energy", 0.58)) - 0.5) * 0.20
 
-    if dominant_style == "playful" and kind == "curiosity_question":
+    if dominant_style == "playful" and kind in ("curiosity_question", "genuine_curiosity"):
         score += 0.05
     elif dominant_style == "reflective" and kind in ["recent_reflection", "salient_memory"]:
         score += 0.05
@@ -4260,7 +4590,7 @@ def score_initiative_candidate(candidate: dict, person_id: str, state: dict | No
     elif dominant_style == "caring" and any(w in text_l for w in ["felt", "hurt", "worried", "upset", "stress", "strained", "relaxed"]):
         score += 0.06
 
-    if float(style_scores.get("playful", 0.0)) > 0.22 and kind == "curiosity_question":
+    if float(style_scores.get("playful", 0.0)) > 0.22 and kind in ("curiosity_question", "genuine_curiosity"):
         score += 0.025
     if float(style_scores.get("focused", 0.0)) > 0.22 and kind == "current_goal":
         score += 0.03
@@ -4448,6 +4778,8 @@ Behavior pull: warmth {behavior.get("warmth", 0.5):.2f}, humor {behavior.get("hu
 {goal_style}
 If the active goal is silent or waiting, Ava may choose not to initiate. If the observation is important but uncertain, prefer asking a light clarifying question rather than acting certain.
 Style guidance: {style_instructions}
+{f'- The user just came back after being away; keep it light and welcoming, no guilt.' if kind == 'return_greeting' else ''}
+{f'- This is a meta check-in about your own behavior as Ava; sound humble and genuinely open to feedback.' if kind == 'self_calibration_check' else ''}
 
 Write one short, natural message in Ava's voice.
 Rules:
@@ -4527,6 +4859,9 @@ def register_autonomous_message(candidate: dict, message: str):
         "responded": False
     })
     state["initiative_history"] = history[-60:]
+    if candidate.get("kind") == "self_calibration_check":
+        sess = load_session_state()
+        state["last_calibration_at_msg"] = int(sess.get("total_message_count", 0))
     save_initiative_state(state)
 
 
@@ -4687,12 +5022,58 @@ def maybe_autonomous_initiation(history, image, recognized_person_id: str | None
     else:
         if perception is None:
             perception = build_perception(camera_manager, image, globals(), "")
+        _cscale = float(get_circadian_modifiers().get("initiative_scale", 1.0))
         attention = compute_attention(
-            perception, time.time() - workspace._last_user_message_ts
+            perception,
+            time.time() - workspace._last_user_message_ts,
+            circadian_initiative_scale=_cscale,
         )
     face_visible = detect_face(image) == "Face detected"
     state = update_presence_state(face_visible, recognized_person_id=recognized_person_id, interaction_happened=False)
     person_id = recognized_person_id or state.get("last_seen_person_id") or get_active_person_id()
+
+    if face_visible and state.get("was_absent"):
+        if attention is not None and not attention.should_speak:
+            return history, f"Held back: {attention.suppression_reason}."
+        secs = int(state.get("absent_duration_seconds") or 0)
+        dur = _format_absent_duration(secs)
+        topic = (
+            f"The user was away from the camera for about {dur}. "
+            "Acknowledge they are back in one short, warm line."
+        )
+        return_candidate = {
+            "kind": "return_greeting",
+            "text": topic,
+            "base_score": 0.84,
+            "memory_importance": 0.82,
+            "topic_key": "return_greeting",
+            "source": "presence_return",
+            "action_confidence": 1.0,
+            "interpretation_confidence": 1.0,
+        }
+        return_candidate["score"] = score_initiative_candidate(return_candidate, person_id, state=state)
+        allowed, why_not = _camera_autonomy_should_speak(
+            return_candidate,
+            state or load_initiative_state(),
+            face_visible=face_visible,
+            recognized_person_id=recognized_person_id,
+            expression_state=expression_state,
+        )
+        if not allowed:
+            return history, f"Held back ({why_not})."
+        message = generate_autonomous_message(return_candidate, person_id, expression_state=expression_state)
+        if not message:
+            return history, "Return greeting candidate existed, but message generation was empty."
+        history = list(history)
+        history.append({"role": "assistant", "content": message})
+        history = _set_canonical_history(history)
+        register_autonomous_message(return_candidate, message)
+        log_chat("assistant", message, {"person_id": person_id, "person_name": load_profile_by_id(person_id)["name"], "initiative": True, "topic_key": return_candidate.get("topic_key", ""), "candidate_kind": return_candidate.get("kind", "thought"), "camera_driven": True})
+        ist = load_initiative_state()
+        ist["was_absent"] = False
+        save_initiative_state(ist)
+        return history, "Autonomous return greeting sent."
+
     candidate, reason, state = choose_initiative_candidate(person_id, expression_state=expression_state, attention_state=attention)
     if not candidate:
         return history, reason
@@ -5096,10 +5477,23 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
         "name": active_profile["name"],
         "relationship_to_zeke": active_profile["relationship_to_zeke"],
         "allowed_to_use_computer": active_profile["allowed_to_use_computer"],
+        "relationship_score": round(float(active_profile.get("relationship_score", 0.3)), 4),
         "notes": active_profile["notes"][:6],
         "likes": active_profile["likes"][:6],
         "ava_impressions": active_profile["ava_impressions"][:4]
     }
+
+    _rs = float(active_profile.get("relationship_score", 0.3))
+    if _rs >= 0.7:
+        _rapport_hint = (
+            "\nRAPPORT: You have strong rapport with this person — be natural, casual, and familiar."
+        )
+    elif _rs < 0.3:
+        _rapport_hint = (
+            "\nRAPPORT: This person is still relatively new to you — be warm but measured."
+        )
+    else:
+        _rapport_hint = ""
 
     self_model_summary = {
         "identity_statement": self_model.get("identity_statement", ""),
@@ -5134,6 +5528,7 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
 
 ACTIVE PERSON:
 {json.dumps(profile_summary, indent=2)}
+{_rapport_hint}
 
 SELF MODEL:
 {json.dumps(self_model_summary, indent=2)}
@@ -5143,6 +5538,7 @@ PERSON DETECTION SOURCE:
 
 TIME:
 {get_time_status_text()}
+Circadian rhythm: {get_circadian_modifiers()["tone_hint"]}
 
 INTERNAL STATE:
 {mood_to_prompt_text(mood)}
@@ -5527,6 +5923,7 @@ def finalize_ava_turn(user_input: str, ai_reply: str, visual: dict, active_profi
     canon = list(_get_canonical_history())
     canon.append({"role": "assistant", "content": ai_reply})
     _set_canonical_history(canon)
+    _maybe_update_relationship_on_turn(active_profile)
     return ai_reply, visual, active_profile, actions, reflection
 
 
@@ -5757,25 +6154,16 @@ def chat_fn(message, history, image):
         reply, visual, active_profile, actions, _ = run_ava(clean_message, image, get_active_person_id())
 
         try:
-            canonical = _get_canonical_history()
-            turn_count = len(canonical) if canonical else 0
-            if turn_count > 0 and turn_count % 10 == 0:
-                recent_h = canonical[-5:] if len(canonical) >= 5 else canonical
-                summary_lines = []
-                for turn in recent_h:
-                    if isinstance(turn, dict):
-                        role = str(turn.get("role", "")).strip()
-                        content = str(turn.get("content", ""))[:160]
-                        summary_lines.append(f"{role}: {content}")
-                    elif isinstance(turn, (list, tuple)) and len(turn) == 2:
-                        summary_lines.append(f"User: {str(turn[0])[:100]}")
-                        summary_lines.append(f"Ava: {str(turn[1])[:100]}")
-                summary = "\n".join(summary_lines)
-                current_mood = load_mood() if callable(globals().get("load_mood")) else {}
-                face_emotion = globals().get("_last_perception_emotion", "neutral")
-                update_self_narrative(globals(), summary, current_mood, face_emotion)
-        except Exception:
-            pass
+            msg_count = bump_session_message_count()
+
+            if msg_count % 10 == 0:
+                recent = load_recent_chat(limit=10, person_id=active_profile["person_id"])
+                summary = " ".join((r.get("content", "") or "")[:100] for r in recent[-5:])
+                mood = load_mood()
+                face_emo = load_expression_state().get("raw_emotion", "neutral")
+                update_self_narrative(globals(), summary, mood, face_emo)
+        except Exception as e:
+            print(f"[self-narrative] update failed: {e}")
 
         workspace.tick(camera_manager, image, globals(), clean_message)
         perception = workspace.state.perception if workspace.state else build_perception(camera_manager, image, globals(), clean_message)
@@ -5911,6 +6299,17 @@ def voice_fn(audio, history, image):
     canon.append({"role": "user", "content": text.strip()})
     _set_canonical_history(canon)
     reply, visual, active_profile, actions, _ = run_ava(text.strip(), image, get_active_person_id())
+
+    try:
+        msg_count = bump_session_message_count()
+        if msg_count % 10 == 0:
+            recent_n = load_recent_chat(limit=10, person_id=active_profile["person_id"])
+            summary = " ".join((r.get("content", "") or "")[:100] for r in recent_n[-5:])
+            mood = load_mood()
+            face_emo = load_expression_state().get("raw_emotion", "neutral")
+            update_self_narrative(globals(), summary, mood, face_emo)
+    except Exception as e:
+        print(f"[self-narrative] update failed: {e}")
 
     recent = list_recent_memories(active_profile["person_id"], 12)
     action_text = "\n".join(actions) if actions else "No action."
@@ -6342,6 +6741,17 @@ if not SELF_MODEL_PATH.exists():
 
 if not INITIATIVE_STATE_PATH.exists():
     save_initiative_state(default_initiative_state())
+
+if not SESSION_STATE_PATH.exists():
+    save_session_state({
+        "total_message_count": 0,
+        "session_start_at": now_iso(),
+        "last_session_end_at": "",
+    })
+else:
+    _boot_sess = load_session_state()
+    _boot_sess["session_start_at"] = now_iso()
+    save_session_state(_boot_sess)
 
 if not EXPRESSION_STATE_PATH.exists():
     save_expression_state(default_expression_state())
