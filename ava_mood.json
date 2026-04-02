@@ -70,7 +70,7 @@
     "humor": 0.15,
     "assertiveness": 0.336,
     "caution": 0.233,
-    "initiative": 0.72,
+    "initiative": 1.0,
     "memory_sensitivity": 0.497,
     "depth": 0.351
   },
@@ -458,6 +458,6 @@
   ],
   "speakable_emotions": [],
   "askable_emotions": [],
-  "loneliness": 0.15000000000000002,
-  "engagement": 0.7200000000000002
+  "loneliness": 0.0,
+  "engagement": 1.0
 }

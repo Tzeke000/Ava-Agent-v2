@@ -1,10 +1,10 @@
 {
-  "snapshot_id": "cam_20260401_214303_854244",
-  "timestamp": "2026-04-01T21:43:03",
-  "face_visible": false,
-  "recognized_person_id": null,
-  "recognized_name": "unknown",
-  "recognition_text": "No face detected",
+  "snapshot_id": "cam_20260401_215025_649639",
+  "timestamp": "2026-04-01T21:50:25",
+  "face_visible": true,
+  "recognized_person_id": "zeke",
+  "recognized_name": "Zeke",
+  "recognition_text": "Recognized: Zeke (38.3)",
   "expression_label": "unknown",
   "expression_confidence": 0.0,
   "expression_stability": 0.0,
@@ -30,10 +30,10 @@
     "memory_sensitivity": 0.497,
     "depth": 0.351
   },
-  "importance": 0.33135000000000003,
-  "kept_permanently": false,
-  "reason_saved": "",
-  "reason_not_saved": "no_face_visible, no_meaningful_change",
+  "importance": 0.6697500000000001,
+  "kept_permanently": true,
+  "reason_saved": "face_visible, known_person_visible, novel_view, goal_relevance, owner_present",
+  "reason_not_saved": "",
   "comparison_summary": "Something about the scene looks more active than earlier.",
   "comparison_tags": [
     "activity_change"
@@ -49,13 +49,15 @@
   "trend_family": "unknown",
   "trend_persisting": false,
   "stacked_state": "",
-  "pattern_summary": "",
-  "pattern_tags": [],
-  "interpretation_confidence": 0.2649,
-  "transition_strength": 0.1269,
-  "action_confidence": 0.2189,
-  "change_reason": "scene_meaningfully_changed",
+  "pattern_summary": "The same visible person has remained at the screen for a sustained stretch.",
+  "pattern_tags": [
+    "sustained_presence"
+  ],
+  "interpretation_confidence": 0.5678,
+  "transition_strength": 0.0969,
+  "action_confidence": 0.4376,
+  "change_reason": "face_visible, known_person_visible, novel_view, goal_relevance, owner_present",
   "rolling_saved": true,
-  "rolling_reason": "scene_meaningfully_changed",
-  "scene_similarity": 0.492
+  "rolling_reason": "important_event",
+  "scene_similarity": 0.613
 }

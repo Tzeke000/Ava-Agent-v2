@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import cv2
@@ -44,6 +45,21 @@ try:
 except Exception:
     DeepFace = None
     DEEPFACE_AVAILABLE = False
+
+
+def _safe_float(val, default: float = 0.0) -> float:
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return default
+
+
+def _deepcopy_jsonable(obj):
+    try:
+        return copy.deepcopy(obj)
+    except Exception:
+        return json.loads(json.dumps(obj, default=str))
+
 
 # =========================================================
 # PATHS
@@ -246,7 +262,7 @@ STRONG_GOAL_ALIGNMENT_BOOST = 0.12
 MODERATE_GOAL_ALIGNMENT_BOOST = 0.06
 DIVERSITY_BONUS = 0.05
 CONTROLLED_IMPERFECTION_CHANCE = 0.05
-GATE_DEBUG_LOGGING = True
+GATE_DEBUG = False  # set to True to enable verbose [gate-debug] logging on initiative scoring
 
 
 
@@ -4154,7 +4170,7 @@ def _apply_soft_choice_penalties(candidates: list[dict], state: dict, active_goa
         cand["total_soft_penalty"] = round(total_penalty, 3)
         cand["total_soft_boost"] = round(total_boost, 3)
         cand["score"] = max(0.0, min(1.0, round(final_score, 3)))
-        if GATE_DEBUG_LOGGING:
+        if GATE_DEBUG:
             print(f"[gate-debug] kind={kind} goal={active_goal_name or 'none'} base={round(score,3)} boosts={boosts_applied} penalties={penalties_applied} final={cand['score']}")
     return candidates
 
