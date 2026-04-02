@@ -3,24 +3,15 @@ cd /d D:\AvaAgentv2
 
 echo.
 echo ================================
-echo   Ava Agent v2 - Fix & Clean
+echo   Ava Agent v2 - Fix and Clean
 echo ================================
 echo.
 
 echo [1/3] Stripping BOM from phase 2 files...
-python -c "
-files = ['brain/emotion.py','brain/attention.py','brain/initiative.py']
-for f in files:
-    try:
-        txt = open(f, encoding='utf-8-sig').read()
-        open(f, 'w', encoding='utf-8').write(txt)
-        print('  stripped BOM:', f)
-    except Exception as e:
-        print('  error on', f, ':', e)
-"
+python fix_bom.py
 
 echo.
-echo [2/3] Removing nested brain/brain/ ghost directory...
+echo [2/3] Removing nested brain\brain ghost directory...
 if exist brain\brain (
     rmdir /s /q brain\brain
     echo   removed brain\brain\
@@ -38,5 +29,5 @@ if %errorlevel% equ 0 (
 )
 
 echo.
-echo Done! Run push_to_github.bat to commit the cleanup.
+echo All done! Run push_to_github.bat to commit the cleanup.
 pause
