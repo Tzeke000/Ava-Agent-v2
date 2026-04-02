@@ -1,4 +1,4 @@
 @echo off
-cd /d "D:\AvaAgent"
+cd /d "D:\AvaAgentv2"
 python avaagent.py
 pause
