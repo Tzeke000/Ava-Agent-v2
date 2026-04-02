@@ -4,6 +4,8 @@ import cv2
 import warnings
 import random
 import re
+import subprocess as _sp
+import tempfile
 import threading
 import time
 import uuid
@@ -40,11 +42,15 @@ from brain.beliefs import (
 )
 
 try:
-    from deepface import DeepFace
-    DEEPFACE_AVAILABLE = True
+    _check = _sp.run(
+        ["py", "-3.12", "-c", "from deepface import DeepFace"],
+        capture_output=True,
+        timeout=15,
+    )
+    DEEPFACE_AVAILABLE = _check.returncode == 0
 except Exception:
-    DeepFace = None
     DEEPFACE_AVAILABLE = False
+DeepFace = None  # not imported in this interpreter — handled via Python 3.12 subprocess
 
 
 def _safe_float(v, d=0.0) -> float:
@@ -2289,6 +2295,50 @@ def map_emotion_to_soft_signal(emotion: str) -> str:
     }
     return mapping.get(e, e or "unknown")
 
+def _deepface_via_py312(face_bgr_image) -> dict:
+    """Run DeepFace in a Python 3.12 subprocess to bypass TF/3.14 incompatibility."""
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            tmp_path = tmp.name
+        cv2.imwrite(tmp_path, face_bgr_image)
+        img_literal = json.dumps(tmp_path)
+        script = (
+            "from deepface import DeepFace; import json; "
+            "p = " + img_literal + "; "
+            "r = DeepFace.analyze(img_path=p, actions=['emotion'], "
+            "detector_backend='skip', enforce_detection=False, silent=True); "
+            "r = r[0] if isinstance(r, list) else r; "
+            "print(json.dumps({'dominant': r.get('dominant_emotion','unknown'), 'emotions': r.get('emotion', {})}))"
+        )
+        result = _sp.run(
+            ["py", "-3.12", "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout.strip())
+            dominant = (data.get("dominant") or "unknown").lower()
+            emotions = data.get("emotions", {})
+            conf = float(emotions.get(dominant, 0.0)) / 100.0 if dominant in emotions else 0.0
+            return {
+                "ok": True,
+                "raw_emotion": dominant,
+                "confidence": max(0.0, min(1.0, conf)),
+                "soft_signal": map_emotion_to_soft_signal(dominant),
+                "emotions": emotions,
+            }
+        return {"ok": False, "reason": f"subprocess_error: {result.stderr.strip()}"}
+    except Exception as e:
+        return {"ok": False, "reason": f"deepface_subprocess_error: {e}"}
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
 def analyze_expression(image) -> dict:
     if image is None:
         return {"ok": False, "reason": "no_image"}
@@ -2299,30 +2349,7 @@ def analyze_expression(image) -> dict:
         return {"ok": False, "reason": "deepface_unavailable"}
     try:
         face_bgr = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
-        result = DeepFace.analyze(
-            img_path=face_bgr,
-            actions=["emotion"],
-            detector_backend="skip",
-            enforce_detection=False,
-            silent=True
-        )
-        if isinstance(result, list):
-            result = result[0] if result else {}
-        emotions = result.get("emotion", {}) or {}
-        dominant = (result.get("dominant_emotion") or "unknown").lower()
-        conf = 0.0
-        if dominant and dominant in emotions:
-            try:
-                conf = float(emotions.get(dominant, 0.0)) / 100.0
-            except Exception:
-                conf = 0.0
-        return {
-            "ok": True,
-            "raw_emotion": dominant or "unknown",
-            "confidence": max(0.0, min(1.0, conf)),
-            "soft_signal": map_emotion_to_soft_signal(dominant),
-            "emotions": emotions
-        }
+        return _deepface_via_py312(face_bgr)
     except Exception as e:
         return {"ok": False, "reason": f"analysis_error: {e}"}
 
@@ -6074,7 +6101,6 @@ def recognize_face_now_fn(image):
 
 # === v37 persistence guard: atomic goal-system I/O + recursion-safe loaders ===
 from datetime import datetime
-import tempfile
 
 _GOAL_SYSTEM_LOADING_GUARD = False
 _GOAL_SYSTEM_SAVING_GUARD = False
