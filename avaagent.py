@@ -20,6 +20,8 @@ from langchain_chroma import Chroma
 from langchain_core.messages import HumanMessage, SystemMessage
 from brain.camera import CameraManager
 from brain.perception import build_perception
+from brain.attention import compute_attention
+from brain.emotion import process_visual_emotion
 from brain.identity import IdentityRegistry
 from brain.memory_bridge import MemoryBridge
 from brain.output_guard import scrub_visible_reply, scrub_chat_callback_result
@@ -131,6 +133,8 @@ SETTINGS = {"owner_person_id": OWNER_PERSON_ID}
 camera_manager = CameraManager()
 identity_registry = IdentityRegistry(PROFILES_DIR, settings=SETTINGS)
 memory_bridge = MemoryBridge(MEMORY_DIR, settings=SETTINGS)
+
+_last_user_message_ts = time.time()
 
 # User-reply priority guards
 USER_REPLY_PRIORITY_SECONDS = 8.0
@@ -4328,8 +4332,10 @@ def score_initiative_candidate(candidate: dict, person_id: str, state: dict | No
 
     return max(0.0, min(1.0, round(score, 3)))
 
-def choose_initiative_candidate(person_id: str, expression_state: dict | None = None) -> tuple[dict | None, str, dict]:
+def choose_initiative_candidate(person_id: str, expression_state: dict | None = None, attention_state=None) -> tuple[dict | None, str, dict]:
     state = expire_stale_pending_initiation(load_initiative_state())
+    if attention_state is not None and not attention_state.should_speak:
+        return None, f"Held back: {attention_state.suppression_reason}.", state
     now = now_ts()
     mood = load_mood()
     initiative_drive = float((mood.get("behavior_modifiers", {}) or {}).get("initiative", 0.5))
@@ -4705,12 +4711,16 @@ def _sync_canonical_history(history):
 # Initialize canonical chat history at startup.
 _set_canonical_history([])
 
-def maybe_autonomous_initiation(history, image, recognized_person_id: str | None = None, expression_state: dict | None = None):
+def maybe_autonomous_initiation(history, image, recognized_person_id: str | None = None, expression_state: dict | None = None, perception=None):
     history = _sync_canonical_history(history)
+    if perception is None:
+        perception = build_perception(camera_manager, image, globals(), "")
     face_visible = detect_face(image) == "Face detected"
     state = update_presence_state(face_visible, recognized_person_id=recognized_person_id, interaction_happened=False)
     person_id = recognized_person_id or state.get("last_seen_person_id") or get_active_person_id()
-    candidate, reason, state = choose_initiative_candidate(person_id, expression_state=expression_state)
+    seconds_since = time.time() - _last_user_message_ts
+    attention = compute_attention(perception, seconds_since)
+    candidate, reason, state = choose_initiative_candidate(person_id, expression_state=expression_state, attention_state=attention)
     if not candidate:
         return history, reason
     if candidate.get("kind") == "do_nothing":
@@ -5579,12 +5589,23 @@ def camera_tick_fn(image, history):
         )
     except Exception:
         pass
+    try:
+        current_mood = load_mood()
+        updated_mood = process_visual_emotion(perception, current_mood)
+        save_mood(updated_mood)
+    except Exception:
+        pass
     frame = perception.frame
     face_status = perception.face_status
     recognized_text = perception.recognized_text
     recognized_person_id = perception.face_identity
     expression_state = update_expression_state(frame, recognized_person_id=recognized_person_id)
     process_camera_snapshot(frame, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expression_state)
+    if recognized_person_id is not None:
+        try:
+            identity_registry.update_emotional_association(recognized_person_id, perception.face_emotion or "neutral", globals())
+        except Exception:
+            pass
 
     if recognized_person_id is not None:
         profile = set_active_person(recognized_person_id, source="camera_timer")
@@ -5602,7 +5623,7 @@ def camera_tick_fn(image, history):
                 get_camera_memory_status_text(),
                 recent_camera_events_text(limit=8)
             )
-        updated_history, initiative_note = maybe_autonomous_initiation(history, image, recognized_person_id=recognized_person_id, expression_state=expression_state)
+        updated_history, initiative_note = maybe_autonomous_initiation(history, image, recognized_person_id=recognized_person_id, expression_state=expression_state, perception=perception)
         return (
             updated_history,
             face_status,
@@ -5632,7 +5653,7 @@ def camera_tick_fn(image, history):
             recent_camera_events_text(limit=8)
         )
 
-    updated_history, initiative_note = maybe_autonomous_initiation(history, image, recognized_person_id=None, expression_state=expression_state)
+    updated_history, initiative_note = maybe_autonomous_initiation(history, image, recognized_person_id=None, expression_state=expression_state, perception=perception)
     return (
         updated_history,
         face_status,
@@ -5648,9 +5669,11 @@ def camera_tick_fn(image, history):
     )
 
 def chat_fn(message, history, image):
+    global _last_user_message_ts
     history = _sync_canonical_history(history)
     clean_message = _extract_text_content(message).strip()
     if clean_message:
+        _last_user_message_ts = time.time()
         note_user_interaction_for_initiative(clean_message, interaction_kind="text")
 
     if not clean_message:

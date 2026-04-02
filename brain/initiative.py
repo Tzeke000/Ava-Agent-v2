@@ -1,4 +1,5 @@
-from __future__ import annotations
+﻿from __future__ import annotations
+from .attention import AttentionState
 from .shared import clamp01, safe_float, latest_user_text, normalize_history
 from .beliefs import build_belief_state
 from .goals import load_goal_system, recalculate_operational_goals
@@ -17,7 +18,9 @@ def _health(host):
         except Exception: return {}
     return {}
 
-def choose_initiative_candidate(host, person_id: str, expression_state=None):
+def choose_initiative_candidate(host, person_id: str, expression_state=None, attention_state: AttentionState | None = None):
+    if attention_state is not None and not attention_state.should_speak:
+        return None, attention_state.suppression_reason, {}
     history = _history(host)
     belief_state = build_belief_state(host, history=history, expression_state=expression_state)
     system = recalculate_operational_goals(host, load_goal_system(host))

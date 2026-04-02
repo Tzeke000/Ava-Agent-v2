@@ -56,3 +56,31 @@ class IdentityRegistry:
             except Exception:
                 pass
         return profile or {'person_id': person_id, 'name': person_id}
+
+    def update_emotional_association(self, person_id: str, face_emotion: str, g: dict):
+        """
+        After each recognized interaction, log what emotion the person showed.
+        Stores a rolling list (max 10) and derives a dominant association.
+        """
+        from collections import Counter
+
+        profile_path = self.profiles_dir / f"{person_id}.json"
+        if not profile_path.exists():
+            return
+        try:
+            profile = json.loads(profile_path.read_text(encoding="utf-8"))
+            history = profile.get("emotion_history", [])
+            if not isinstance(history, list):
+                history = []
+            history.append((face_emotion or "neutral").lower())
+            history = history[-10:]
+
+            dominant = Counter(history).most_common(1)[0][0]
+
+            profile["emotion_history"] = history
+            profile["dominant_emotion"] = dominant
+            profile_path.write_text(
+                json.dumps(profile, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+        except Exception:
+            pass
