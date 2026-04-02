@@ -44,9 +44,8 @@ def scrub_chat_callback_result(result):
     if not isinstance(result, tuple):
         return result
     items = list(result)
+    # Only scrub chat transcript (index 0). Status strings and the cleared input (index 1)
+    # are not model replies — scrub_visible_reply would mangle or replace them with "I'm here."
     if items and isinstance(items[0], list):
         items[0] = scrub_history(items[0])
-    for i, item in enumerate(items):
-        if isinstance(item, str):
-            items[i] = scrub_visible_reply(item)
     return tuple(items)

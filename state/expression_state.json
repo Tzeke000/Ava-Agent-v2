@@ -4,9 +4,9 @@
   "raw_emotion": "unknown",
   "confidence": 0.0,
   "stability": 0.0,
-  "visible_face": true,
+  "visible_face": false,
   "recognized_person_id": null,
   "history": [],
-  "last_updated": "2026-04-01T21:28:14",
-  "note": "DeepFace unavailable"
+  "last_updated": "2026-04-01T21:43:03",
+  "note": "No face visible"
 }
