@@ -1,0 +1,63 @@
+{
+  "snapshot_id": "cam_20260402_170652_784054",
+  "timestamp": "2026-04-02T17:06:52",
+  "face_visible": true,
+  "recognized_person_id": null,
+  "recognized_name": "unknown",
+  "recognition_text": "Unknown face (70.3)",
+  "expression_label": "unknown",
+  "expression_confidence": 0.0,
+  "expression_stability": 0.0,
+  "raw_emotion": "unknown",
+  "ava_mood": "interest",
+  "ava_primary_emotions": [
+    {
+      "name": "calmness",
+      "percent": 77
+    },
+    {
+      "name": "adoration",
+      "percent": 23
+    }
+  ],
+  "ava_dominant_style": "focused",
+  "ava_behavior_modifiers": {
+    "warmth": 0.418,
+    "humor": 0.102,
+    "assertiveness": 0.326,
+    "caution": 0.222,
+    "initiative": 0.315,
+    "memory_sensitivity": 0.467,
+    "depth": 0.346
+  },
+  "importance": 0.6839500000000001,
+  "kept_permanently": true,
+  "reason_saved": "face_visible, unknown_face_visible, visibility_changed, novel_view, goal_relevance",
+  "reason_not_saved": "",
+  "comparison_summary": "Something about the scene looks more active than earlier.",
+  "comparison_tags": [
+    "activity_change"
+  ],
+  "transition_summary": "You just came back into view.",
+  "transition_tags": [
+    "returned_to_view"
+  ],
+  "trend_summary": "",
+  "trend_tags": [],
+  "trend_tension_delta": 0.0,
+  "trend_calm_delta": 0.0,
+  "trend_engagement_delta": 0.0,
+  "trend_strength": 0.0,
+  "trend_family": "unknown",
+  "trend_persisting": false,
+  "stacked_state": "",
+  "pattern_summary": "",
+  "pattern_tags": [],
+  "interpretation_confidence": 0.6177,
+  "transition_strength": 0.279,
+  "action_confidence": 0.5073,
+  "change_reason": "face_visible, unknown_face_visible, visibility_changed, novel_view, goal_relevance",
+  "rolling_saved": true,
+  "rolling_reason": "important_event",
+  "scene_similarity": 0.422
+}

@@ -1,0 +1,185 @@
+{
+  "overall": "error",
+  "last_startup_check": "2026-04-02T17:02:28",
+  "last_runtime_check": "",
+  "last_light_check": "2026-04-02T17:14:02",
+  "subsystems": {
+    "camera": {
+      "age_seconds": 1775164442.4,
+      "status": "error",
+      "detail": "very stale frame 1775164442.4s ago"
+    },
+    "memory": {
+      "status": "healthy",
+      "detail": "✅ Vector memory ready using nomic-embed-text"
+    },
+    "mood": {
+      "status": "healthy",
+      "detail": "mood loaded"
+    },
+    "initiative": {
+      "status": "healthy",
+      "detail": "initiative available"
+    },
+    "models": {
+      "status": "healthy",
+      "detail": "deepface"
+    }
+  },
+  "issues": [
+    {
+      "severity": "error",
+      "subsystem": "camera",
+      "message": "very stale frame 1775164442.4s ago",
+      "ts": "2026-04-02T17:14:02"
+    }
+  ],
+  "history": [
+    {
+      "kind": "startup",
+      "ts": "2026-04-02T17:02:28",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1775163749.0s ago",
+          "ts": "2026-04-02T17:02:28"
+        }
+      ]
+    },
+    {
+      "kind": "light",
+      "ts": "2026-04-02T17:04:02",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1775163842.4s ago",
+          "ts": "2026-04-02T17:04:02"
+        }
+      ]
+    },
+    {
+      "kind": "light",
+      "ts": "2026-04-02T17:07:02",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1775164022.4s ago",
+          "ts": "2026-04-02T17:07:02"
+        }
+      ]
+    },
+    {
+      "kind": "light",
+      "ts": "2026-04-02T17:08:02",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1775164082.4s ago",
+          "ts": "2026-04-02T17:08:02"
+        }
+      ]
+    },
+    {
+      "kind": "light",
+      "ts": "2026-04-02T17:09:02",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1775164142.4s ago",
+          "ts": "2026-04-02T17:09:02"
+        }
+      ]
+    },
+    {
+      "kind": "light",
+      "ts": "2026-04-02T17:10:02",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1775164202.4s ago",
+          "ts": "2026-04-02T17:10:02"
+        }
+      ]
+    },
+    {
+      "kind": "light",
+      "ts": "2026-04-02T17:11:02",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1775164262.4s ago",
+          "ts": "2026-04-02T17:11:02"
+        }
+      ]
+    },
+    {
+      "kind": "light",
+      "ts": "2026-04-02T17:12:02",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1775164322.4s ago",
+          "ts": "2026-04-02T17:12:02"
+        }
+      ]
+    },
+    {
+      "kind": "light",
+      "ts": "2026-04-02T17:13:02",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1775164382.4s ago",
+          "ts": "2026-04-02T17:13:02"
+        }
+      ]
+    },
+    {
+      "kind": "light",
+      "ts": "2026-04-02T17:14:02",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1775164442.4s ago",
+          "ts": "2026-04-02T17:14:02"
+        }
+      ]
+    }
+  ],
+  "startup_summary": "ERROR | camera:error, memory:healthy, mood:healthy, initiative:healthy, models:healthy",
+  "signals": {
+    "instability": 0.8044016736203972,
+    "overload": 0.0,
+    "error_load": 0.95,
+    "stress": 0.4574398892682479,
+    "recovery": 0.050000000000000044
+  },
+  "behavior_modifiers": {
+    "initiative_scale": 0.1925,
+    "confidence_scale": 0.47750000000000004,
+    "support_bias": 0.6246205027183249,
+    "silence_bias": 0.38,
+    "tone_caution": 0.855
+  },
+  "degraded_mode": "support_only"
+}

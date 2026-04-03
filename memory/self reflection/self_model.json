@@ -302,93 +302,93 @@
     "emotion"
   ],
   "confidence_notes": [
-    "On 2026-04-01T22:48:06, I took self-directed actions: camera_reflection_trigger.",
-    "On 2026-04-01T22:48:31, I took self-directed actions: ✅ Ava saved the full latest user message as memory f99e196a-f862-4bd1-870b-39191ed0784b.",
-    "On 2026-04-01T22:48:32, I took self-directed actions: camera_reflection_trigger.",
-    "On 2026-04-01T22:48:46, I took self-directed actions: camera_reflection_trigger.",
-    "On 2026-04-01T22:49:32, I took self-directed actions: camera_reflection_trigger.",
-    "On 2026-04-01T22:50:36, I took self-directed actions: camera_reflection_trigger.",
-    "On 2026-04-01T22:50:45, I took self-directed actions: ✅ Ava saved the full latest user message as memory 2ccd5658-a85f-4c0e-9e05-82c6f38ffe32.",
     "On 2026-04-01T22:51:21, I took self-directed actions: camera_reflection_trigger.",
     "On 2026-04-01T22:54:26, I took self-directed actions: camera_reflection_trigger.",
     "On 2026-04-01T22:54:46, I took self-directed actions: camera_reflection_trigger.",
     "On 2026-04-01T22:58:56, I took self-directed actions: camera_reflection_trigger.",
-    "On 2026-04-01T22:59:07, I took self-directed actions: camera_reflection_trigger."
+    "On 2026-04-01T22:59:07, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-02T17:05:32, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-02T17:05:55, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-02T17:08:53, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-02T17:10:28, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-02T17:10:53, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-02T17:11:43, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-02T17:14:27, I took self-directed actions: camera_reflection_trigger."
   ],
-  "last_updated": "2026-04-01T22:59:39",
-  "reflection_count": 212,
+  "last_updated": "2026-04-02T17:14:27",
+  "reflection_count": 219,
   "goal_system_summary": [
     {
       "text": "Stay aware of: ok im going to put you to sleep to fix some things Ava is should help your camera",
-      "priority": 0.56,
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: yes that is correct. why are you confused who is actually at the camera?",
-      "priority": 0.55,
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: yes, but right now your camera UI isnt work how it should",
-      "priority": 0.55,
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: is your camera working well?",
-      "priority": 0.55,
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: yes i am in front of the camera currently",
-      "priority": 0.55,
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: why does your camera feed not give you enough information?",
-      "priority": 0.55,
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: ok thats good, we're going to do some tests now. what about now who is in front of the camera.",
-      "priority": 0.55,
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: ok i see two probles with you right now Snapshot box not updating — the UI isn't refreshing the image display even though the camera is ticking No face…",
-      "priority": 0.55,
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: ok Who's at the camera?",
-      "priority": 0.55,
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     },
     {
       "text": "Stay aware of: no, no one is at the camera right now. im actually covering the camera so you cat see anything because im testing you",
-      "priority": 0.55,
+      "priority": 0.58,
       "horizon": "medium_term",
       "kind": "goal"
     }
   ],
   "active_goal": {
     "name": "clarify",
-    "strength": 0.48,
+    "strength": 0.525,
     "style": "structured, guiding, careful",
     "silent": false
   },
   "goal_blend": [
     {
       "name": "clarify",
-      "weight": 0.672,
+      "weight": 0.691,
       "style": "structured, guiding, careful",
       "silent": false
     }

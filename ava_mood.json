@@ -7,75 +7,75 @@
   "last_updated": "2026-04-01T22:59:31",
   "reason": "updated from input: ok im going to fix some bugs i see. so im going to put you…",
   "emotion_weights": {
-    "admiration": 0.1870127506092503,
-    "adoration": 0.1876518314770081,
-    "aesthetic appreciation": 0.04332626521610462,
-    "amusement": 0.0048667663209056005,
-    "anxiety": 0.0067693736029303805,
-    "awe": 0.0136080450780037,
-    "awkwardness": 0.01793039710157287,
-    "boredom": 0.005510848722403727,
-    "calmness": 0.016299019293942698,
-    "confusion": 0.012551835254902863,
-    "craving": 0.003547175541083284,
-    "disgust": 0.004468451440327834,
-    "empathetic pain": 0.0005763954142477466,
-    "entrancement": 0.07904462887800627,
-    "envy": 0.002261567144287471,
-    "excitement": 0.01083729619600767,
-    "fear": 0.0080689875881987,
-    "horror": 0.004458311581518573,
-    "interest": 0.21554461477212253,
-    "joy": 0.05937348389499291,
-    "nostalgia": 0.0037626087663734653,
-    "relief": 0.006527699613199724,
-    "romance": 0.0016228778983008122,
-    "sadness": 0.007723172362637683,
-    "satisfaction": 0.08846566559914629,
+    "admiration": 0.01712602785603802,
+    "adoration": 0.01718388787004046,
+    "aesthetic appreciation": 0.004117185820162758,
+    "amusement": 0.0007324984254407182,
+    "anxiety": 0.0008074602950572315,
+    "awe": 0.0014266082734565868,
+    "awkwardness": 0.0018179380115610944,
+    "boredom": 0.051317308075656605,
+    "calmness": 0.8821977836228433,
+    "confusion": 0.0013309829492803864,
+    "craving": 0.0004184412760005567,
+    "disgust": 0.00040455703800642277,
+    "empathetic pain": 0.0003440641391728372,
+    "entrancement": 0.007350994131266388,
+    "envy": 0.00020475391024467668,
+    "excitement": 0.0,
+    "fear": 0.0007305362410188249,
+    "horror": 0.0004036390127575282,
+    "interest": 0.0,
+    "joy": 0.0,
+    "nostalgia": 0.0005352389466766194,
+    "relief": 0.0007855800274176981,
+    "romance": 0.00014692935222643838,
+    "sadness": 0.0007965205563537373,
+    "satisfaction": 0.008787698759272834,
     "sexual desire": 0.0,
-    "surprise": 0.008189930632524167
+    "surprise": 0.0010333654100483493
   },
   "primary_emotions": [
     {
-      "name": "interest",
-      "percent": 53
+      "name": "calmness",
+      "percent": 95
     },
     {
-      "name": "adoration",
-      "percent": 47
+      "name": "boredom",
+      "percent": 5
     }
   ],
   "style_scores": {
-    "playful": 0.0767,
-    "caring": 0.2443,
-    "focused": 0.3427,
-    "reflective": 0.2079,
-    "cautious": 0.0481,
-    "neutral": 0.07,
-    "low_energy": 0.0103
+    "playful": 0.001,
+    "caring": 0.0156,
+    "focused": 0.3032,
+    "reflective": 0.1995,
+    "cautious": 0.0036,
+    "neutral": 0.4399,
+    "low_energy": 0.0372
   },
   "style_blend": [
     {
-      "name": "focused",
-      "percent": 58
+      "name": "neutral",
+      "percent": 59
     },
     {
-      "name": "caring",
-      "percent": 42
+      "name": "focused",
+      "percent": 41
     }
   ],
-  "dominant_style": "focused",
+  "dominant_style": "neutral",
   "behavior_modifiers": {
     "warmth": 0.6,
-    "humor": 0.147,
-    "assertiveness": 0.334,
-    "caution": 0.235,
-    "initiative": 0.88,
-    "memory_sensitivity": 0.501,
-    "depth": 0.351
+    "humor": 0.1,
+    "assertiveness": 0.33,
+    "caution": 0.203,
+    "initiative": 0.06,
+    "memory_sensitivity": 0.429,
+    "depth": 0.338
   },
-  "emotion_interpretation": "interest (22% of current blend): active desire to explore or understand | adoration (19% of current blend): deep affectionate fondness | admiration (19% of current blend): respect for something impressive or admirable",
-  "outward_tone": "focused with some caring",
+  "emotion_interpretation": "calmness (88% of current blend): steadiness and low internal turbulence | boredom (5% of current blend): lack of stimulation or meaningful engagement | adoration (2% of current blend): deep affectionate fondness",
+  "outward_tone": "neutral with some focused",
   "rich_emotions": [
     {
       "name": "adoration",
@@ -458,6 +458,7 @@
   ],
   "speakable_emotions": [],
   "askable_emotions": [],
-  "loneliness": 0.0,
-  "engagement": 0.8800000000000003
+  "loneliness": 0.95,
+  "engagement": 0.06,
+  "_saved_at": "2026-04-02T17:14:24"
 }
