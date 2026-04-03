@@ -7502,7 +7502,11 @@ with gr.Blocks(title="Ava — v2") as demo:
 
     with gr.Row():
         with gr.Column(scale=2):
-            chatbot = gr.Chatbot(label="Conversation with Ava", height=500, type="messages")
+            try:
+                chatbot = gr.Chatbot(label="Conversation with Ava", height=500, type="messages")
+            except TypeError:
+                # Gradio < 4.x does not support type="messages"; upgrade with: pip install "gradio>=4.0"
+                chatbot = gr.Chatbot(label="Conversation with Ava", height=500)
             msg = gr.Textbox(label="Type a message", placeholder="Hey Ava...")
             voice_input = gr.Audio(sources=["microphone"], type="filepath", label="🎤 Speak to Ava")
         with gr.Column(scale=1):
