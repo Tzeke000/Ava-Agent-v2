@@ -114,6 +114,8 @@ CAMERA_LATEST_RAW_PATH = CAMERA_STATE_DIR / "latest_snapshot.jpg"
 CAMERA_LATEST_ANNOTATED_PATH = CAMERA_STATE_DIR / "latest_annotated.jpg"
 CAMERA_LATEST_JSON_PATH = CAMERA_STATE_DIR / "latest_snapshot.json"
 HEALTH_STATE_PATH = STATE_DIR / "health_state.json"
+PROSPECTIVE_MEMORY_PATH = STATE_DIR / "prospective_memory.json"
+LIFE_MODEL_PATH = STATE_DIR / "life_model.json"
 
 MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 PROFILES_DIR.mkdir(parents=True, exist_ok=True)
@@ -225,6 +227,9 @@ CAMERA_AUTONOMOUS_ALLOWED_KINDS = {
     "neutral_checkin",
     "return_greeting",
     "self_calibration_check",
+    "prospective_followup",
+    "thread_followup",
+    "cadence_checkin",
 }
 CAMERA_AUTONOMOUS_NO_FACE_ALLOWED_KINDS = {
     "uncertainty_observation",
@@ -251,6 +256,9 @@ VISUAL_REPETITION_SUPPRESSION_SECONDS = 900
 VISUAL_REPETITION_SIMILARITY_THRESHOLD = 0.78
 VISUAL_TREND_REMENTION_STRENGTH_DELTA = 0.12
 INITIATIVE_KIND_COOLDOWNS = {
+    "prospective_followup": 0,
+    "thread_followup": 2400,
+    "cadence_checkin": 10800,
     "curiosity_question": 2100,
     "current_goal": 3300,
     "recent_reflection": 4200,
@@ -585,6 +593,8 @@ def safe_workbench_path(relative_path: str) -> Path:
 # PROFILE SYSTEM
 # =========================================================
 def default_profile(person_id: str, display_name: str | None = None) -> dict:
+    from brain.person_cadence import DEFAULT_CADENCE
+
     return {
         "person_id": person_id,
         "name": display_name or person_id.title(),
@@ -598,7 +608,10 @@ def default_profile(person_id: str, display_name: str | None = None) -> dict:
         "relationship_score": 0.3,
         "interaction_count": 0,
         "last_seen_at": None,
-        "created_at": now_iso()
+        "created_at": now_iso(),
+        "threads": [],
+        "cadence": dict(DEFAULT_CADENCE),
+        "last_activity_at": None,
     }
 
 def load_profile_by_id(person_id: str) -> dict:
@@ -613,6 +626,15 @@ def load_profile_by_id(person_id: str) -> dict:
                 profile.setdefault("relationship_score", 0.3)
                 profile.setdefault("interaction_count", 0)
                 profile.setdefault("last_seen_at", None)
+                profile.setdefault("threads", [])
+                if not isinstance(profile.get("threads"), list):
+                    profile["threads"] = []
+                from brain.person_cadence import DEFAULT_CADENCE
+
+                c_prev = profile.get("cadence") if isinstance(profile.get("cadence"), dict) else {}
+                c_merged = dict(DEFAULT_CADENCE)
+                c_merged.update(c_prev)
+                profile["cadence"] = c_merged
                 return profile
         except Exception as e:
             print(f"Profile load error ({person_id}): {e}")
@@ -1331,7 +1353,12 @@ def remember_memory(
     category: str = "general",
     importance: float | str = 0.5,
     source: str = "conversation",
-    tags: list[str] | None = None
+    tags: list[str] | None = None,
+    *,
+    emotional_tone: str | None = None,
+    person_impact: str | None = None,
+    future_implications: str | None = None,
+    relationship_relevance: float | None = None,
 ) -> str | None:
     if vectorstore is None:
         return None
@@ -1341,6 +1368,20 @@ def remember_memory(
         return None
 
     tag_list = list(tags or [])
+    tone = (emotional_tone or "neutral").strip() or "neutral"
+    impact = (person_impact or "medium").strip().lower() or "medium"
+    if impact not in ("low", "medium", "high"):
+        impact = "medium"
+    fut = re.sub(r"\s+", " ", (future_implications or "").strip())[:500]
+    rel_w = relationship_relevance
+    if rel_w is None:
+        rel_w = 0.55
+    try:
+        rel_w = float(rel_w)
+    except (TypeError, ValueError):
+        rel_w = 0.55
+    rel_w = max(0.0, min(1.0, rel_w))
+
     try:
         current_felt = str(load_mood().get("current_mood", "neutral") or "neutral").strip() or "neutral"
     except Exception:
@@ -1365,7 +1406,11 @@ def remember_memory(
         "last_accessed_at": "",
         "access_count": 0,
         "tags": ", ".join(tags or []),
-        "raw_text": full_text[:12000]
+        "raw_text": full_text[:12000],
+        "emotional_tone": tone,
+        "person_impact": impact,
+        "future_implications": fut,
+        "relationship_relevance": rel_w,
     }
 
     try:
@@ -1459,9 +1504,24 @@ def format_memories_for_prompt(memories: list[dict]) -> str:
         tags = meta.get("tags", "")
         when = iso_to_readable(created) if created else "unknown time"
         tag_text = f" | tags: {tags}" if tags else ""
+        tone = (meta.get("emotional_tone") or "").strip()
+        impact = (meta.get("person_impact") or "").strip()
+        rel = meta.get("relationship_relevance", "")
+        tone_bit = ""
+        if tone or impact:
+            tone_bit = f" | tone: {tone or '—'} | impact: {impact or '—'}"
+        if rel != "" and rel is not None:
+            try:
+                tone_bit += f" | rel={float(rel):.2f}"
+            except (TypeError, ValueError):
+                pass
         display_text = (meta.get("raw_text") or item.get("text", "") or "").strip()
         display_text = trim_for_prompt(display_text, limit=700)
-        lines.append(f"- [{when} | {category} | {importance}{tag_text}] {display_text}")
+        fut = (meta.get("future_implications") or "").strip()
+        line = f"- [{when} | {category} | {importance}{tag_text}{tone_bit}] {display_text}"
+        if fut:
+            line += f"\n  (follow-up note: {trim_for_prompt(fut, limit=200)})"
+        lines.append(line)
     return "\n".join(lines)
 
 def format_recent_memories_ui(memories: list[dict]) -> str:
@@ -1612,27 +1672,78 @@ def maybe_autoremember(user_input: str, ai_reply: str, person_id: str):
     text = (user_input or "").strip()
     low = text.lower()
 
-    def save(text_to_save: str, category: str, importance: float | str, tags: list[str]):
+    score, scored_tags, _reasons = score_memory_candidate(user_input, ai_reply, person_id)
+    importance = classify_memory_importance(score)
+    importance_f = float(normalize_importance_value(importance))
+
+    ex_conv = "remember this conversation" in low or "remember this" in low
+    ex_exact = any(
+        p in low
+        for p in [
+            "save this exact message",
+            "remember this exact message",
+            "save this whole message",
+            "remember this whole message",
+        ]
+    )
+    will_enrich = bool(score >= 0.56 or ex_conv or ex_exact)
+    enrich_imp = importance_f
+    enrich_tags = list(scored_tags)
+    if will_enrich and score < 0.56:
+        enrich_imp = max(importance_f, 0.82)
+        enrich_tags = list(dict.fromkeys(scored_tags + ["explicit_save"]))
+
+    enrich: dict = {}
+    if will_enrich:
+        enrich = enrich_memory_metadata_llm(
+            user_input, ai_reply, person_id, enrich_imp, enrich_tags
+        )
+
+    def save(
+        text_to_save: str,
+        category: str,
+        importance_val: float | str,
+        tags: list[str],
+        meta: dict | None = None,
+    ):
+        meta = meta or {}
+        e_tone = meta.get("emotional_tone")
+        e_impact = meta.get("person_impact")
+        e_future = meta.get("future_implications")
+        e_rel = meta.get("relationship_relevance")
+        tag_base = list(tags or [])
+        for t in meta.get("tags") or []:
+            if isinstance(t, str):
+                x = t.strip().lower()[:48]
+                if x and x not in tag_base:
+                    tag_base.append(x)
         remember_memory(
             text=text_to_save,
             person_id=person_id,
             category=category,
-            importance=importance,
+            importance=importance_val,
             source="auto_memory",
-            tags=tags
+            tags=tag_base,
+            emotional_tone=e_tone,
+            person_impact=e_impact,
+            future_implications=e_future,
+            relationship_relevance=e_rel,
         )
 
     # Explicit user-directed saves
-    if "remember this conversation" in low or "remember this" in low:
-        save(f"Conversation snapshot.\nUser: {user_input}\nAva: {ai_reply}", "conversation_snapshot", "high", ["conversation", "snapshot"])
+    if ex_conv:
+        save(
+            f"Conversation snapshot.\nUser: {user_input}\nAva: {ai_reply}",
+            "conversation_snapshot",
+            "high",
+            ["conversation", "snapshot"],
+            enrich,
+        )
 
-    if any(p in low for p in ["save this exact message", "remember this exact message", "save this whole message", "remember this whole message"]):
-        save(user_input, "full_user_message", "high", ["full_message", "user_message"])
+    if ex_exact:
+        save(user_input, "full_user_message", "high", ["full_message", "user_message"], enrich)
 
     # Bullet-point memory scoring system
-    score, scored_tags, _reasons = score_memory_candidate(user_input, ai_reply, person_id)
-    importance = classify_memory_importance(score)
-
     if score >= 0.56:
         category = "meaningful_message"
         if "goal_relevance" in scored_tags:
@@ -1646,11 +1757,22 @@ def maybe_autoremember(user_input: str, ai_reply: str, person_id: str):
         elif "identity" in scored_tags:
             category = "identity"
 
-        # Save full exact text when the message is especially meaningful or explicitly requested
         if score >= 0.78 or "explicit_memory_request" in scored_tags or "emotional_significance" in scored_tags:
-            save(user_input, "full_user_message", max(normalize_importance_value(importance), 0.60), list(dict.fromkeys(scored_tags + ["full_message", "user_message"])))
+            save(
+                user_input,
+                "full_user_message",
+                max(importance_f, 0.60),
+                list(dict.fromkeys(scored_tags + ["full_message", "user_message"])),
+                enrich,
+            )
         else:
-            save(f"{load_profile_by_id(person_id)['name']} said: {user_input}", category, importance, scored_tags)
+            save(
+                f"{load_profile_by_id(person_id)['name']} said: {user_input}",
+                category,
+                importance,
+                scored_tags,
+                enrich,
+            )
 
     # Allow curiosity / questions / goals to form
     if "uncertainty" in scored_tags:
@@ -1980,6 +2102,7 @@ def default_self_model() -> dict:
         "goal_history": [],
         "behavior_patterns": [],
         "confidence_notes": [],
+        "pending_threads": [],
         "last_updated": now_iso(),
         "reflection_count": 0
     }
@@ -2059,7 +2182,7 @@ def infer_reflection_tags(user_input: str, ai_reply: str, actions: list[str] | N
     keyword_map = {
         "user_preference": ["i like", "i love", "my favorite", "prefer", "favorite"],
         "identity": ["i am", "my name is", "this is"],
-        "emotion": ["sad", "upset", "hurt", "anxious", "afraid", "happy", "glad", "angry", "excited"],
+        "emotion": ["sad", "upset", "hurt", "anxious", "afraid", "happy", "glad", "angry", "excited", "stress", "stressed", "worried", "worry"],
         "relationship": ["girlfriend", "boyfriend", "partner", "friend", "mom", "mother", "brother"],
         "project": ["project", "build", "version", "ava", "unity", "vrchat"],
         "workflow": ["step", "install", "command", "powershell", "debug", "error", "fix"],
@@ -2210,6 +2333,14 @@ def reflect_on_last_reply(user_input: str, ai_reply: str, person_id: str, action
             rows[-1] = record
             rewrite_reflections_log(rows, person_id=person_id)
     update_self_model_from_reflection(record)
+    try:
+        from brain.relationship_threads import update_threads_from_reflection
+
+        prof = dict(load_profile_by_id(person_id))
+        prof = update_threads_from_reflection(record, prof)
+        save_profile(prof)
+    except Exception as e:
+        print(f"[threads] update failed: {e}")
     return record
 
 def load_recent_reflections(limit: int = 20, person_id: str | None = None) -> list[dict]:
@@ -3823,7 +3954,7 @@ def _session_state_atexit():
         pass
 
 
-def _maybe_update_narrative():
+def _run_narrative_update_sync():
     try:
         sess = load_session_state()
         count = int(sess.get("total_message_count", 0))
@@ -3837,8 +3968,110 @@ def _maybe_update_narrative():
         print(f"[narrative-update] failed: {e}")
 
 
+def _maybe_update_narrative():
+    _run_narrative_update_sync()
+
+
+def _trigger_narrative_update_async():
+    def _worker():
+        _run_narrative_update_sync()
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 atexit.register(_session_state_atexit)
 atexit.register(_maybe_update_narrative)
+
+
+def get_life_rhythm_prompt_block(person_id: str) -> str:
+    try:
+        from brain.life_rhythm import get_prompt_block_for_person
+
+        return get_prompt_block_for_person(person_id, OWNER_PERSON_ID, globals())
+    except Exception:
+        return ""
+
+
+def _run_life_rhythm_job() -> None:
+    """Phase 5: scan ~30d reflections + memory; refresh state/life_model.json (owner only)."""
+    try:
+        from brain import life_rhythm
+
+        pid = OWNER_PERSON_ID
+        prof = load_profile_by_id(pid)
+        cad = prof.get("cadence") or {}
+        sessions = int(cad.get("total_sessions", 0) or 0)
+        prev = life_rhythm.load_life_model(globals())
+        if not life_rhythm.should_run_analysis(sessions, prev):
+            return
+        all_refl = load_recent_reflections(limit=80000, person_id=pid)
+        refl_f = life_rhythm.filter_reflections_by_age(all_refl, days=life_rhythm.DEFAULT_WINDOW_DAYS)
+        all_mem = list_recent_memories(person_id=pid, limit=2000)
+        mem_f = life_rhythm.filter_memories_by_age(all_mem, days=life_rhythm.DEFAULT_WINDOW_DAYS)
+        if len(refl_f) + len(mem_f) < 8:
+            return
+        rc = life_rhythm.reflections_to_corpus(refl_f, 6000)
+        mc = life_rhythm.memories_to_corpus(mem_f, 6000)
+        llm_out = life_rhythm.run_life_rhythm_llm(
+            call_llm,
+            str(prof.get("name") or pid),
+            rc,
+            mc,
+            sessions,
+            life_rhythm.DEFAULT_WINDOW_DAYS,
+        )
+        if not llm_out:
+            return
+        doc = life_rhythm.merge_output_doc(
+            pid,
+            str(prof.get("name") or pid),
+            sessions,
+            life_rhythm.DEFAULT_WINDOW_DAYS,
+            refl_f,
+            mem_f,
+            llm_out,
+        )
+        life_rhythm.save_life_model(doc, globals())
+        print(
+            f"[life_rhythm] updated (reflections={doc['reflections_used']}, memories={doc['memories_used']})"
+        )
+    except Exception as e:
+        print(f"[life_rhythm] job failed: {e}")
+
+
+def _schedule_life_rhythm_on_startup() -> None:
+    def _worker():
+        _run_life_rhythm_job()
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+def refresh_self_model_pending_threads(person_id: str) -> None:
+    """Ava-facing open threads (from relationship threads + light initiative introspection)."""
+    try:
+        from brain.relationship_threads import unresolved_threads
+
+        prof = load_profile_by_id(person_id)
+        name = str(prof.get("name") or "They").strip() or "They"
+        lines: list[str] = []
+        for th in unresolved_threads(prof)[:8]:
+            em = str(th.get("emotion") or "tense").strip()
+            topic = trim_for_prompt(str(th.get("topic") or "something they mentioned"), limit=100)
+            lines.append(f"{name} seemed {em} about {topic} — I want to follow up.")
+        try:
+            ist = load_initiative_state()
+            if int(ist.get("consecutive_ignored_initiations", 0) or 0) >= 2:
+                lines.append(
+                    "I've been initiating a lot lately — I should check if that pace still feels welcome."
+                )
+        except Exception:
+            pass
+        model = load_self_model()
+        model["pending_threads"] = lines[-12:]
+        model["last_updated"] = now_iso()
+        save_self_model(model)
+    except Exception as e:
+        print(f"[pending_threads] refresh failed: {e}")
 
 
 def update_presence_continuity(face_visible: bool, presence_state: dict) -> dict:
@@ -4295,6 +4528,89 @@ def collect_initiative_candidates(person_id: str) -> list[dict]:
                 "memory_importance": 0.70
             })
 
+    try:
+        from brain.prospective import get_due_events
+
+        due_events = get_due_events(person_id, now=datetime.now(), host=globals())
+        for event in due_events[:2]:
+            tmpl = (
+                event.get("prompt_template")
+                or "Hey, didn't you say {event_text} was {due_description}? How did it go?"
+            )
+            try:
+                text = tmpl.format(
+                    event_text=event.get("event_text") or "",
+                    due_description=event.get("due_description") or "",
+                )
+            except Exception:
+                text = str(tmpl)
+            tk = (text or "").strip().lower()
+            if tk and tk not in seen:
+                seen.add(tk)
+                candidates.append({
+                    "kind": "prospective_followup",
+                    "text": text,
+                    "topic_key": f"prospective_{event.get('id', '')}",
+                    "base_score": 0.88,
+                    "memory_importance": 0.82,
+                    "event_id": event.get("id"),
+                    "person_id": person_id,
+                    "action_confidence": 1.0,
+                    "interpretation_confidence": 1.0,
+                })
+    except Exception as e:
+        print(f"[prospective] candidates: {e}")
+
+    prof = load_profile_by_id(person_id)
+    just_returned = bool(initiative_state.get("was_absent"))
+    if just_returned:
+        try:
+            from brain.relationship_threads import unresolved_threads
+
+            for th in unresolved_threads(prof)[:1]:
+                em = str(th.get("emotion") or "tense").strip()
+                topic = trim_for_prompt(str(th.get("topic") or "something you mentioned"), limit=90)
+                ttext = (
+                    f"You seemed {em} when we talked about {topic} — did things settle?"
+                )
+                tk = ttext.strip().lower()
+                if tk and tk not in seen:
+                    seen.add(tk)
+                    candidates.append({
+                        "kind": "thread_followup",
+                        "text": ttext,
+                        "topic_key": f"thread_{th.get('id', '')}",
+                        "base_score": 0.86,
+                        "memory_importance": 0.84,
+                        "thread_id": th.get("id"),
+                        "person_id": person_id,
+                        "action_confidence": 1.0,
+                        "interpretation_confidence": 1.0,
+                    })
+        except Exception as e:
+            print(f"[threads] candidates: {e}")
+
+        try:
+            from brain.person_cadence import should_offer_long_absence_checkin
+
+            if should_offer_long_absence_checkin(prof.get("cadence")):
+                ctext = "Hey — it's been a little while. Everything okay?"
+                ctk = ctext.lower()
+                if ctk not in seen:
+                    seen.add(ctk)
+                    candidates.append({
+                        "kind": "cadence_checkin",
+                        "text": ctext,
+                        "topic_key": "cadence_long_absence",
+                        "base_score": 0.80,
+                        "memory_importance": 0.78,
+                        "person_id": person_id,
+                        "action_confidence": 1.0,
+                        "interpretation_confidence": 1.0,
+                    })
+        except Exception as e:
+            print(f"[cadence] candidates: {e}")
+
     for cand in _camera_visual_candidates(person_id):
         if cand.get("text", "").lower() in seen:
             continue
@@ -4369,10 +4685,10 @@ def collect_initiative_candidates(person_id: str) -> list[dict]:
 def _goal_kind_preferences(goal_name: str) -> dict:
     prefs = {
         "reduce_stress": {"preferred_kinds": {"visual_checkin", "feedback_guidance", "transition_observation", "visual_observation"}, "avoid_kinds": {"curiosity_question", "genuine_curiosity"}, "keyword_bias": ["relaxed", "strained", "stress", "calm", "ease", "pause"]},
-        "increase_engagement": {"preferred_kinds": {"curiosity_question", "genuine_curiosity", "engagement_observation", "attention_drift", "pattern_checkin"}, "avoid_kinds": {"visual_checkin"}, "keyword_bias": ["curious", "shift", "going", "thought", "interesting"]},
-        "explore_topic": {"preferred_kinds": {"curiosity_question", "genuine_curiosity", "current_goal", "recent_reflection", "salient_memory"}, "avoid_kinds": set(), "keyword_bias": ["explore", "wonder", "thinking", "earlier", "build", "version"]},
+        "increase_engagement": {"preferred_kinds": {"curiosity_question", "genuine_curiosity", "engagement_observation", "attention_drift", "pattern_checkin", "prospective_followup", "thread_followup"}, "avoid_kinds": {"visual_checkin"}, "keyword_bias": ["curious", "shift", "going", "thought", "interesting"]},
+        "explore_topic": {"preferred_kinds": {"curiosity_question", "genuine_curiosity", "current_goal", "recent_reflection", "salient_memory", "prospective_followup"}, "avoid_kinds": set(), "keyword_bias": ["explore", "wonder", "thinking", "earlier", "build", "version"]},
         "clarify": {"preferred_kinds": {"current_goal", "feedback_guidance", "uncertainty_observation", "recent_reflection"}, "avoid_kinds": {"attention_drift"}, "keyword_bias": ["clarify", "understand", "unsure", "not confident", "figure out"]},
-        "maintain_connection": {"preferred_kinds": {"pattern_checkin", "curiosity_question", "genuine_curiosity", "visual_observation", "return_greeting", "self_calibration_check"}, "avoid_kinds": set(), "keyword_bias": ["how's it going", "earlier", "thinking", "together"]},
+        "maintain_connection": {"preferred_kinds": {"pattern_checkin", "curiosity_question", "genuine_curiosity", "visual_observation", "return_greeting", "self_calibration_check", "prospective_followup", "thread_followup", "cadence_checkin"}, "avoid_kinds": set(), "keyword_bias": ["how's it going", "earlier", "thinking", "together"]},
         "observe_silently": {"preferred_kinds": set(), "avoid_kinds": {"visual_checkin", "feedback_guidance", "curiosity_question", "genuine_curiosity", "pattern_checkin", "engagement_observation", "attention_drift", "visual_observation", "transition_observation"}, "keyword_bias": []},
         "wait_for_user": {"preferred_kinds": set(), "avoid_kinds": {"visual_checkin", "feedback_guidance", "curiosity_question", "genuine_curiosity", "pattern_checkin", "engagement_observation", "attention_drift", "visual_observation", "transition_observation"}, "keyword_bias": []},
     }
@@ -4626,6 +4942,12 @@ def score_initiative_candidate(candidate: dict, person_id: str, state: dict | No
         score += 0.08
     if kind == "return_greeting":
         score += 0.12
+    if kind == "prospective_followup":
+        score += 0.12
+    if kind == "thread_followup":
+        score += 0.11
+    if kind == "cadence_checkin":
+        score += 0.08
     if kind == "self_calibration_check":
         score += 0.10
     if kind == "visual_pattern":
@@ -4859,6 +5181,9 @@ Behavior pull: warmth {behavior.get("warmth", 0.5):.2f}, humor {behavior.get("hu
 If the active goal is silent or waiting, Ava may choose not to initiate. If the observation is important but uncertain, prefer asking a light clarifying question rather than acting certain.
 Style guidance: {style_instructions}
 {f'- The user just came back after being away; keep it light and welcoming, no guilt.' if kind == 'return_greeting' else ''}
+{f'- They mentioned something coming up; follow up warmly and curiously, not like a calendar reminder.' if kind == 'prospective_followup' else ''}
+{f'- Continue an emotional thread they opened before; stay gentle and non-judgmental, do not invent details beyond the topic line.' if kind == 'thread_followup' else ''}
+{f'- They have been away longer than usual for them; check in softly without sounding accusatory or dramatic.' if kind == 'cadence_checkin' else ''}
 {f'- This is a meta check-in about your own behavior as Ava; sound humble and genuinely open to feedback.' if kind == 'self_calibration_check' else ''}
 
 Write one short, natural message in Ava's voice.
@@ -4942,6 +5267,23 @@ def register_autonomous_message(candidate: dict, message: str):
     if candidate.get("kind") == "self_calibration_check":
         sess = load_session_state()
         state["last_calibration_at_msg"] = int(sess.get("total_message_count", 0))
+    if candidate.get("kind") == "prospective_followup" and candidate.get("event_id"):
+        try:
+            from brain.prospective import mark_triggered
+
+            mark_triggered(str(candidate["event_id"]), host=globals())
+        except Exception as e:
+            print(f"[prospective] mark_triggered: {e}")
+    if candidate.get("kind") == "thread_followup" and candidate.get("thread_id"):
+        try:
+            from brain.relationship_threads import mark_thread_resolved
+
+            pid = candidate.get("person_id") or get_active_person_id()
+            prof = dict(load_profile_by_id(pid))
+            prof = mark_thread_resolved(prof, str(candidate["thread_id"]))
+            save_profile(prof)
+        except Exception as e:
+            print(f"[threads] mark resolved: {e}")
     save_initiative_state(state)
 
 
@@ -4991,12 +5333,13 @@ def _camera_autonomy_should_speak(candidate: dict, state: dict, face_visible: bo
         return False, "camera_low_score"
 
     text_l = str(candidate.get("text", "")).lower()
-    suspicious_specifics = [
-        "park", "café", "cafe", "downtown", "last month", "remember when we met",
-        "that time we met", "window", "photography project", "your dog"
-    ]
-    if any(s in text_l for s in suspicious_specifics):
-        return False, "ungrounded_specific_memory"
+    if kind not in ("prospective_followup", "thread_followup", "cadence_checkin"):
+        suspicious_specifics = [
+            "park", "café", "cafe", "downtown", "last month", "remember when we met",
+            "that time we met", "window", "photography project", "your dog"
+        ]
+        if any(s in text_l for s in suspicious_specifics):
+            return False, "ungrounded_specific_memory"
 
     return True, "camera_ok"
 
@@ -5558,6 +5901,76 @@ def call_llm(prompt: str, max_tokens: int = 256) -> str:
         return ""
 
 
+def enrich_memory_metadata_llm(
+    user_input: str,
+    ai_reply: str,
+    person_id: str,
+    heuristic_importance: float,
+    heuristic_tags: list[str],
+) -> dict:
+    """LLM pass for emotional / relational memory metadata (used by maybe_autoremember)."""
+    name = str(load_profile_by_id(person_id).get("name") or person_id)
+    out: dict = {
+        "emotional_tone": "neutral",
+        "person_impact": "medium",
+        "future_implications": "",
+        "relationship_relevance": 0.55,
+        "tags": [],
+    }
+    prompt = f"""You annotate a candidate memory for a companion AI. Be concise.
+
+Person: {name}
+User said: {trim_for_prompt(user_input, limit=480)}
+Ava replied: {trim_for_prompt(ai_reply, limit=480)}
+Heuristic importance (0-1): {float(heuristic_importance):.2f}
+Heuristic tags: {", ".join(heuristic_tags[:14])}
+
+Return ONLY valid JSON with these keys:
+"emotional_tone": short phrase (e.g. stressed, hopeful, neutral, grateful)
+"person_impact": one of low, medium, high
+"future_implications": one short sentence about what may matter soon, or "" if none
+"relationship_relevance": number from 0.0 to 1.0 (use for relationship-context weight)
+"tags": array of 2-6 short lowercase topic tags (single words when possible)
+
+No markdown, no other keys."""
+    raw = call_llm(prompt, max_tokens=260)
+    if not raw:
+        return out
+    try:
+        m = re.search(r"\{[\s\S]*\}", raw.strip())
+        if not m:
+            return out
+        data = json.loads(m.group())
+        if not isinstance(data, dict):
+            return out
+        if isinstance(data.get("emotional_tone"), str):
+            t = data["emotional_tone"].strip()
+            if t:
+                out["emotional_tone"] = t[:80]
+        pi = str(data.get("person_impact", "")).strip().lower()
+        if pi in ("low", "medium", "high"):
+            out["person_impact"] = pi
+        if isinstance(data.get("future_implications"), str):
+            out["future_implications"] = re.sub(
+                r"\s+", " ", data["future_implications"].strip()
+            )[:500]
+        try:
+            rw = float(data.get("relationship_relevance", out["relationship_relevance"]))
+            out["relationship_relevance"] = max(0.0, min(1.0, rw))
+        except (TypeError, ValueError):
+            pass
+        tags = data.get("tags")
+        if isinstance(tags, list):
+            clean = []
+            for t in tags[:10]:
+                if isinstance(t, str) and t.strip():
+                    clean.append(t.strip().lower()[:48])
+            out["tags"] = clean
+    except Exception:
+        pass
+    return out
+
+
 def build_prompt(user_input: str, image=None, active_person_id: str | None = None) -> tuple[list, dict, dict]:
     if active_person_id is None:
         active_person_id = get_active_person_id()
@@ -5635,12 +6048,21 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
         "goal_blend": self_model.get("goal_blend", [])[:3],
         "behavior_patterns": self_model.get("behavior_patterns", [])[-8:],
         "reflection_count": self_model.get("reflection_count", 0),
-        "last_updated": self_model.get("last_updated", "")
+        "last_updated": self_model.get("last_updated", ""),
+        "pending_threads": self_model.get("pending_threads", [])[-10:],
     }
 
     workbench_index = format_workbench_index(limit=20)
 
     self_narrative_block = ws.self_narrative or get_self_narrative_for_prompt()
+
+    _life_rhythm_block = get_life_rhythm_prompt_block(active_profile["person_id"])
+    _life_rhythm_section = (
+        "\nLIFE RHYTHM (long-term hypotheses about this person — soft patterns from recent weeks):\n"
+        f"{_life_rhythm_block}\n"
+        if _life_rhythm_block.strip()
+        else ""
+    )
 
     recalled_block = ""
     if ws.active_memory:
@@ -5660,6 +6082,7 @@ ACTIVE PERSON:
 
 SELF MODEL:
 {json.dumps(self_model_summary, indent=2)}
+{_life_rhythm_section}
 
 PERSON DETECTION SOURCE:
 {infer_source}
@@ -6055,12 +6478,31 @@ def _load_self_narrative_snippet() -> str | None:
 def finalize_ava_turn(user_input: str, ai_reply: str, visual: dict, active_profile: dict, actions: list[str]) -> tuple[str, dict, dict, list[str], dict]:
     person_id = active_profile["person_id"]
     try:
+        from brain.person_cadence import update_cadence_on_visit
+
+        prof = dict(load_profile_by_id(person_id))
+        prof = update_cadence_on_visit(prof)
+        save_profile(prof)
+        active_profile["cadence"] = prof.get("cadence")
+        active_profile["last_activity_at"] = prof.get("last_activity_at")
+        active_profile["threads"] = prof.get("threads", [])
+    except Exception as e:
+        print(f"[cadence] update failed: {e}")
+    try:
         touch_last_seen(person_id, topic=user_input)
     except Exception:
         pass
     log_chat("user", user_input, {"person_id": person_id, "person_name": active_profile["name"]})
     log_chat("assistant", ai_reply, {"person_id": person_id, "person_name": active_profile["name"], "actions": actions})
     maybe_autoremember(user_input, ai_reply, person_id)
+    try:
+        from brain.event_extractor import maybe_extract_prospective_events
+
+        st = load_session_state()
+        turn = int(st.get("total_message_count", 0) or 0) + 1
+        maybe_extract_prospective_events(user_input, person_id, globals(), source_turn=turn)
+    except Exception as e:
+        print(f"[prospective] extract failed: {e}")
     reflection = reflect_on_last_reply(user_input, ai_reply, person_id, actions=actions)
     if person_id == OWNER_PERSON_ID:
         summary = (reflection or {}).get("summary") or ""
@@ -6075,6 +6517,17 @@ def finalize_ava_turn(user_input: str, ai_reply: str, visual: dict, active_profi
     canon.append({"role": "assistant", "content": ai_reply})
     _set_canonical_history(canon)
     _maybe_update_relationship_on_turn(active_profile)
+    try:
+        refresh_self_model_pending_threads(person_id)
+    except Exception:
+        pass
+    try:
+        sess = load_session_state()
+        n = int(sess.get("total_message_count", 0) or 0) + 1
+        if n > 0 and n % 10 == 0:
+            _trigger_narrative_update_async()
+    except Exception:
+        pass
     return ai_reply, visual, active_profile, actions, reflection
 
 
@@ -6980,6 +7433,10 @@ try:
     print("[memory] decay tick complete")
 except Exception as e:
     print(f"[memory] decay tick failed: {e}")
+try:
+    _schedule_life_rhythm_on_startup()
+except Exception as e:
+    print(f"[life_rhythm] schedule failed: {e}")
 try:
     _health_state = run_system_health_check(globals(), kind="startup")
     print(f"Health: {_health_state.get('startup_summary', 'UNKNOWN')}")
