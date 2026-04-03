@@ -45,6 +45,35 @@ def scrub_history(history):
     return out
 
 
+def _coerce_chat_messages(history):
+    """Gradio Chatbot(type='messages') expects list[dict] with role + content; convert legacy tuples."""
+    if not isinstance(history, list):
+        return history
+    out = []
+    for item in history:
+        if isinstance(item, dict):
+            role = str(item.get("role") or "assistant")
+            raw = item.get("content", "")
+            if isinstance(raw, str):
+                content = raw
+            elif isinstance(raw, list):
+                content = " ".join(
+                    str((part or {}).get("text", part) if isinstance(part, dict) else part)
+                    for part in raw
+                ).strip()
+            else:
+                content = str(raw or "")
+            out.append({"role": role, "content": content})
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            out.append(
+                {
+                    "role": str(item[0] or "user"),
+                    "content": str(item[1] if item[1] is not None else ""),
+                }
+            )
+    return out
+
+
 def scrub_chat_callback_result(result):
     if not isinstance(result, tuple):
         return result
@@ -52,5 +81,5 @@ def scrub_chat_callback_result(result):
     # Only scrub chat transcript (index 0). Status strings and the cleared input (index 1)
     # are not model replies — scrub_visible_reply would mangle or replace them with "I'm here."
     if items and isinstance(items[0], list):
-        items[0] = scrub_history(items[0])
+        items[0] = scrub_history(_coerce_chat_messages(items[0]))
     return tuple(items)

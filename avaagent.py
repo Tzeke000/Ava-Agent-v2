@@ -5042,6 +5042,12 @@ def _normalize_history(history):
             out.append(norm)
     return out
 
+
+def _chatbot_messages_out() -> list[dict]:
+    """History as list[dict] with role/content for gr.Chatbot(type='messages')."""
+    return list(_normalize_history(_get_canonical_history()))
+
+
 def _history_key(entry):
     e = _normalize_history_entry(entry)
     if not e:
@@ -6219,7 +6225,7 @@ def camera_tick_fn(image, history):
         profile = set_active_person(recognized_person_id, source="camera_timer")
         if _camera_should_yield_to_user():
             return (
-                _get_canonical_history(),
+                _chatbot_messages_out(),
                 face_status,
                 recognized_text,
                 get_expression_status_text(expression_state),
@@ -6233,7 +6239,7 @@ def camera_tick_fn(image, history):
             )
         updated_history, initiative_note = maybe_autonomous_initiation(history, image, recognized_person_id=recognized_person_id, expression_state=expression_state, perception=perception)
         return (
-            updated_history,
+            list(_normalize_history(updated_history)),
             face_status,
             recognized_text,
             get_expression_status_text(expression_state),
@@ -6248,7 +6254,7 @@ def camera_tick_fn(image, history):
 
     if _camera_should_yield_to_user():
         return (
-            _get_canonical_history(),
+            _chatbot_messages_out(),
             face_status,
             recognized_text,
             get_expression_status_text(expression_state),
@@ -6263,7 +6269,7 @@ def camera_tick_fn(image, history):
 
     updated_history, initiative_note = maybe_autonomous_initiation(history, image, recognized_person_id=None, expression_state=expression_state, perception=perception)
     return (
-        updated_history,
+        list(_normalize_history(updated_history)),
         face_status,
         recognized_text,
         get_expression_status_text(expression_state),
@@ -6290,7 +6296,7 @@ def chat_fn(message, history, image):
         expr_state = update_expression_state(perception.frame, recognized_person_id=recognized_person_id)
         process_camera_snapshot(perception.frame, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expr_state)
         return scrub_chat_callback_result((
-            _get_canonical_history(), "", perception.face_status, get_memory_status(),
+            _chatbot_messages_out(), "", perception.face_status, get_memory_status(),
             get_mood_status_text(),
             recognized_text,
             get_expression_status_text(expr_state),
@@ -6332,7 +6338,7 @@ def chat_fn(message, history, image):
         process_camera_snapshot(perception.frame, recognized_text=perception.recognized_text, recognized_person_id=perception.face_identity, expression_state=expr_state)
         person_id = active_profile["person_id"]
         return scrub_chat_callback_result((
-            _get_canonical_history(),
+            _chatbot_messages_out(),
             "",
             visual.get("face_status", ""),
             get_memory_status(),
@@ -6361,13 +6367,18 @@ def chat_fn(message, history, image):
         perception = workspace.state.perception if workspace.state else build_perception(camera_manager, image, globals(), clean_message)
         recognized_text, recognized_person_id = perception.recognized_text, perception.face_identity
         expr_state = update_expression_state(perception.frame, recognized_person_id=recognized_person_id)
-        return (
-            _get_canonical_history(), clean_message, perception.face_status, get_memory_status(),
+        return scrub_chat_callback_result((
+            _chatbot_messages_out(),
+            clean_message,
+            perception.face_status,
+            get_memory_status(),
             get_mood_status_text(),
             recognized_text,
             get_expression_status_text(expr_state),
-            get_emotion_blend_text(), get_time_status_text(),
-            get_active_profile_text(), get_active_profile_summary(),
+            get_emotion_blend_text(),
+            get_time_status_text(),
+            get_active_profile_text(),
+            get_active_profile_summary(),
             format_recent_memories_ui(list_recent_memories(get_active_person_id(), 12)),
             f"Reply error: {e}",
             format_reflections_ui(load_recent_reflections(limit=15, person_id=get_active_person_id())),
@@ -6375,8 +6386,8 @@ def chat_fn(message, history, image):
             initiative_status_text(),
             get_latest_annotated_snapshot_for_ui(),
             get_camera_memory_status_text(),
-            recent_camera_events_text(limit=8)
-        )
+            recent_camera_events_text(limit=8),
+        ))
     finally:
         _mark_user_reply_finished()
 
@@ -6387,12 +6398,18 @@ def voice_fn(audio, history, image):
         recognized_text, recognized_person_id = recognize_face(image)
         expr_state = update_expression_state(image, recognized_person_id=recognized_person_id)
         process_camera_snapshot(image, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expr_state)
-        return (
-            _get_canonical_history(), None, detect_face(image), get_memory_status(),
+        return scrub_chat_callback_result((
+            _chatbot_messages_out(),
+            None,
+            detect_face(image),
+            get_memory_status(),
             get_mood_status_text(),
-            recognized_text, get_expression_status_text(expr_state), get_emotion_blend_text(),
+            recognized_text,
+            get_expression_status_text(expr_state),
+            get_emotion_blend_text(),
             get_time_status_text(),
-            get_active_profile_text(), get_active_profile_summary(),
+            get_active_profile_text(),
+            get_active_profile_summary(),
             format_recent_memories_ui(list_recent_memories(get_active_person_id(), 12)),
             "No action.",
             format_reflections_ui(load_recent_reflections(limit=15, person_id=get_active_person_id())),
@@ -6400,20 +6417,26 @@ def voice_fn(audio, history, image):
             initiative_status_text(),
             get_latest_annotated_snapshot_for_ui(),
             get_camera_memory_status_text(),
-            recent_camera_events_text(limit=8)
-        )
+            recent_camera_events_text(limit=8),
+        ))
 
     text = transcribe_audio(audio)
     if not text.strip():
         recognized_text, recognized_person_id = recognize_face(image)
         expr_state = update_expression_state(image, recognized_person_id=recognized_person_id)
         process_camera_snapshot(image, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expr_state)
-        return (
-            _get_canonical_history(), None, detect_face(image), get_memory_status(),
+        return scrub_chat_callback_result((
+            _chatbot_messages_out(),
+            None,
+            detect_face(image),
+            get_memory_status(),
             get_mood_status_text(),
-            recognized_text, get_expression_status_text(expr_state), get_emotion_blend_text(),
+            recognized_text,
+            get_expression_status_text(expr_state),
+            get_emotion_blend_text(),
             get_time_status_text(),
-            get_active_profile_text(), get_active_profile_summary(),
+            get_active_profile_text(),
+            get_active_profile_summary(),
             format_recent_memories_ui(list_recent_memories(get_active_person_id(), 12)),
             "No action.",
             format_reflections_ui(load_recent_reflections(limit=15, person_id=get_active_person_id())),
@@ -6421,8 +6444,8 @@ def voice_fn(audio, history, image):
             initiative_status_text(),
             get_latest_annotated_snapshot_for_ui(),
             get_camera_memory_status_text(),
-            recent_camera_events_text(limit=8)
-        )
+            recent_camera_events_text(limit=8),
+        ))
 
     note_user_interaction_for_initiative(text.strip(), interaction_kind="voice")
     workspace.record_user_message()
@@ -6440,12 +6463,18 @@ def voice_fn(audio, history, image):
         recognized_text, recognized_person_id = recognize_face(image)
         expr_state = update_expression_state(image, recognized_person_id=recognized_person_id)
         process_camera_snapshot(image, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expr_state)
-        return (
-            _get_canonical_history(), None, detect_face(image), get_memory_status(),
+        return scrub_chat_callback_result((
+            _chatbot_messages_out(),
+            None,
+            detect_face(image),
+            get_memory_status(),
             get_mood_status_text(),
-            recognized_text, get_expression_status_text(expr_state), get_emotion_blend_text(),
+            recognized_text,
+            get_expression_status_text(expr_state),
+            get_emotion_blend_text(),
             get_time_status_text(),
-            get_active_profile_text(), get_active_profile_summary(),
+            get_active_profile_text(),
+            get_active_profile_summary(),
             format_recent_memories_ui(list_recent_memories(current_person_id, 12)),
             "asked_identity_no_face",
             format_reflections_ui(load_recent_reflections(limit=15, person_id=current_person_id)),
@@ -6453,8 +6482,8 @@ def voice_fn(audio, history, image):
             initiative_status_text(),
             get_latest_annotated_snapshot_for_ui(),
             get_camera_memory_status_text(),
-            recent_camera_events_text(limit=8)
-        )
+            recent_camera_events_text(limit=8),
+        ))
 
     canon = list(_get_canonical_history())
     canon.append({"role": "user", "content": text.strip()})
@@ -6480,7 +6509,7 @@ def voice_fn(audio, history, image):
     expr_state = update_expression_state(image, recognized_person_id=recognized_person_id)
     process_camera_snapshot(image, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expr_state)
     return scrub_chat_callback_result((
-        _get_canonical_history(),
+        _chatbot_messages_out(),
         None,
         visual["face_status"],
         get_memory_status(),
@@ -6500,6 +6529,74 @@ def voice_fn(audio, history, image):
         get_camera_memory_status_text(),
         recent_camera_events_text(limit=8),
     ))
+
+def debug_panel_refresh_fn() -> tuple[str, str, str, str]:
+    try:
+        mood = load_mood()
+        bm = mood.get("behavior_modifiers", {}) or {}
+        meta_line = (
+            f"current_mood: {mood.get('current_mood', '?')} | dominant_style: {mood.get('dominant_style', '?')}\n"
+            f"outward_tone: {mood.get('outward_tone', '?')}\n"
+            f"behavior: initiative={float(bm.get('initiative', 0.0)):.2f} warmth={float(bm.get('warmth', 0.0)):.2f} "
+            f"caution={float(bm.get('caution', 0.0)):.2f} depth={float(bm.get('depth', 0.0)):.2f}"
+        )
+    except Exception as e:
+        meta_line = f"(mood error: {e})"
+
+    try:
+        gs = load_goal_system()
+        ag = gs.get("active_goal") or {}
+        if isinstance(ag, dict):
+            goal_line = (
+                f"name: {ag.get('name', '?')} | strength: {float(ag.get('score', ag.get('priority', 0)) or 0):.3f}\n"
+                f"reason: {trim_for_prompt(str(ag.get('reason', '')), limit=220)}"
+            )
+        else:
+            goal_line = f"active_goal: {ag!r}"
+    except Exception as e:
+        goal_line = f"(goal error: {e})"
+
+    try:
+        sn = load_self_narrative()
+        narrative_line = (
+            f"who_i_am: {trim_for_prompt(str(sn.get('who_i_am', '')), limit=240)}\n"
+            f"how_i_feel: {trim_for_prompt(str(sn.get('how_i_feel', '')), limit=240)}\n"
+            f"patterns: {trim_for_prompt(str(sn.get('patterns_i_notice', '')), limit=200)}"
+        )
+    except Exception as e:
+        narrative_line = f"(narrative error: {e})"
+
+    try:
+        pid = get_active_person_id()
+        refl = load_recent_reflections(limit=1, person_id=pid)
+        if refl:
+            r = refl[-1]
+            tail = (
+                f"Last reflection ({r.get('timestamp', '')}): importance {float(r.get('importance', 0.0)):.3f}\n"
+                f"{trim_for_prompt(str(r.get('summary', '')), limit=400)}\n"
+            )
+        else:
+            tail = "Last reflection: (none for active person)\n"
+    except Exception as e:
+        tail = f"(reflection error: {e})\n"
+
+    try:
+        h = load_health_state(globals())
+        tail += f"\nHealth: overall={h.get('overall', '?')} degraded_mode={h.get('degraded_mode', '?')}"
+    except Exception as e:
+        tail += f"\nHealth: (error {e})"
+
+    try:
+        prof = load_profile_by_id(get_active_person_id())
+        tail += (
+            f"\nrelationship_score: {float(prof.get('relationship_score', 0.3)):.4f} "
+            f"({prof.get('name', '?')} / {prof.get('person_id', '?')})"
+        )
+    except Exception as e:
+        tail += f"\nprofile: (error {e})"
+
+    return meta_line, goal_line, narrative_line, tail
+
 
 def refresh_profiles_fn():
     return gr.update(choices=get_profile_choices(), value=get_active_profile_text())
@@ -6948,7 +7045,7 @@ with gr.Blocks(title="Ava — v2") as demo:
 
     with gr.Row():
         with gr.Column(scale=2):
-            chatbot = gr.Chatbot(label="Conversation with Ava", height=500)
+            chatbot = gr.Chatbot(label="Conversation with Ava", height=500, type="messages")
             msg = gr.Textbox(label="Type a message", placeholder="Hey Ava...")
             voice_input = gr.Audio(sources=["microphone"], type="filepath", label="🎤 Speak to Ava")
         with gr.Column(scale=1):
@@ -7055,6 +7152,15 @@ with gr.Blocks(title="Ava — v2") as demo:
             reload_personality_btn = gr.Button("Reload Personality File")
             reload_personality_result = gr.Textbox(label="Personality Reload Status")
 
+    with gr.Accordion("Development debug panel", open=False):
+        dbg_refresh_btn = gr.Button("Refresh debug panel")
+        with gr.Row():
+            dbg_meta = gr.Textbox(label="Meta / mood state", lines=4)
+            dbg_goal = gr.Textbox(label="Active operational goal", lines=4)
+        with gr.Row():
+            dbg_narrative = gr.Textbox(label="Self-narrative snapshot", lines=5)
+            dbg_refl_health = gr.Textbox(label="Last reflection · health · relationship", lines=10)
+
     # --- Event wiring ---
     msg.submit(chat_fn, inputs=[msg, chatbot, camera], outputs=[chatbot, msg, face_status, memory_status, mood_status, recognition_status, expression_status, blend_status, time_status, active_person_status, active_profile_json, memory_view, action_status, reflection_view, self_model_view, initiative_status, latest_snapshot_image, camera_memory_status, recent_camera_events_box])
 
@@ -7084,5 +7190,6 @@ with gr.Blocks(title="Ava — v2") as demo:
     read_chatlog_btn.click(read_chatlog_fn, inputs=[], outputs=[readonly_view])
     read_code_btn.click(read_code_fn, inputs=[], outputs=[readonly_view])
     reload_personality_btn.click(reload_personality_fn, inputs=[], outputs=[reload_personality_result])
+    dbg_refresh_btn.click(debug_panel_refresh_fn, inputs=[], outputs=[dbg_meta, dbg_goal, dbg_narrative, dbg_refl_health])
 
 demo.launch()
