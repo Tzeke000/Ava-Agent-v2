@@ -25,9 +25,11 @@ def read_live_frame(max_age: float = 1.5):
     if _last["frame"] is not None and now - _last["ts"] <= max_age:
         return _last["frame"], float(_last["ts"])
     if cv2 is None:
+        print("[camera_live] cv2 unavailable (import failed)")
         return None, 0.0
     cap = cv2.VideoCapture(0)
     if not cap or not cap.isOpened():
+        print("[camera_live] VideoCapture(0) failed or not opened")
         return None, 0.0
     try:
         ok, frame = cap.read()
@@ -37,4 +39,5 @@ def read_live_frame(max_age: float = 1.5):
         _last["frame"] = frame
         _last["ts"] = now
         return frame, now
+    print("[camera_live] live read returned no frame (device read failed or empty)")
     return None, 0.0

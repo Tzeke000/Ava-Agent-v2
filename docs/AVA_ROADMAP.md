@@ -20,6 +20,7 @@ Ava's technical foundation is already strong. The gap between "impressive AI" an
 - ✅ Self-reflection + self-narrative (live via `atexit` + session milestones)
 - ✅ Vector memory (ChromaDB) + person profiles with trust levels
 - ✅ Camera + visual pattern detection + transition recognition
+- ✅ Better Eyes **E1** scaffolding: resolved-frame trust metadata, recovery/low-quality states, workspace logging (Phase 6)
 - ✅ Stage 7 trust gate + per-person persona tones
 - ✅ `ava_core/` identity files (IDENTITY.md, SOUL.md, USER.md) versioned and auto-updating
 - ✅ `append_to_user_file` wired — Ava learns facts about Zeke and writes them to USER.md
@@ -62,6 +63,13 @@ Add a collapsible row at the bottom of the Gradio UI showing:
 - Relationship score for active person
 
 This is a development-only quality-of-life feature that makes tuning the system dramatically easier. Four `gr.Textbox` components wired to a refresh button. Low effort, high payoff.
+
+### P1-04 — Stabilize `run_ava` return contract *(live)*
+
+- **`brain/turn_visual.py`**: `default_visual_payload()`, `normalize_visual_payload()` — every turn returns a **full visual dict** (face / recognition / expression / memory_preview + optional `turn_route`, `vision_status`, `visual_truth_trusted`) so empty `{}` never blanks Gradio columns.
+- **`run_ava`**: entry/exit logging, `turn_route` per branch (`blocked`, `deflect`, `selfstate`, `camera_identity`, `llm`, `error`), top-level exception fallback with explicit visual + `run_ava_error` action.
+- **`finalize_ava_turn`**: normalizes visual before return; logs finalize line.
+- **`build_prompt` / camera identity**: `[visual_pipeline]` / `[recognition]` logs; **`camera_live`**: log when a live read returns no frame.
 
 ### P1-03 — Untrack Legacy `.tmp` Files
 
@@ -299,6 +307,64 @@ This is the long-term payoff of everything built before it.
 
 ---
 
+## Phase 6 — Better Eyes / Human-Like Vision
+
+**Intent:** Make camera-backed behavior **trustworthy**, **stable across frames**, **honest about uncertainty**, and **continuous** before adding heavy detectors. This complements Phases 1–5 (memory, prospective, threads): continuity in *conversation* only lands if vision does not lie about the present.
+
+**Design rule:** Do **not** lead with YOLO / generic object detection. Trust, freshness, recovery, quality, and identity continuity come first. All later visual claims must pass through the same gates.
+
+### Implementation order (file targets)
+
+| Sub-phase | Focus | Primary files |
+|-----------|--------|---------------|
+| **E1** | Visual trust foundation: resolved-frame metadata, `vision_status`, trust flags, first-class workspace logging | `brain/camera.py`, `brain/camera_live.py` (timestamps), `brain/perception.py`, `brain/workspace.py`, `avaagent.py` (prompt guards / camera copy) |
+| **E2** | Recovery gating + confidence suppression after obstruction/stale/missing | `brain/camera.py`, `brain/perception.py`, `avaagent.py` |
+| **E3** | Frame quality subsystem (blur, light, exposure, optional motion/occlusion hints) | `brain/camera.py` or `brain/frame_quality.py`, `brain/perception.py` |
+| **E4** | Identity continuity (last confirmed, decay, same-person likelihood, hierarchy) | `brain/perception.py`, `brain/camera.py`, optional `brain/identity_continuity.py` |
+| **E5** | Short-term visual memory + compact scene summaries | `brain/workspace.py`, `brain/perception.py`, `avaagent.py`, initiative hooks |
+| **E6** | Attention / salience (centered face, sudden change, scene delta) | `brain/attention.py`, `brain/perception.py`, initiative |
+| **E7** | Show-and-tell / minimal object layer (still trust-gated) | new thin module + `avaagent.py`; **after** E1–E6 |
+| **E8** | Visual-to-memory linking (recurrence + relevance + confidence) | `brain/memory.py`, camera initiative, guards |
+
+### E1 — Visual trust foundation *(in progress in repo)*
+
+- Resolved frames carry: freshness age (from `camera_live` wall capture time + UI fingerprint aging), source, sequence, quality score/reasons (minimal OpenCV heuristic), `recovery_state`, streak, `last_stable_identity` snapshot.
+- States: `no_frame`, `stale_frame`, `recovering`, `stable`, `low_quality`.
+- Perception sets real `identity_confidence` / `continuity_confidence` (E1-level; E4 deepens continuity).
+- Face identity, emotion, and present-tense scene only when `visual_truth_trusted`.
+- Prompts: uncertainty wording; **no** invented UI/snapshot refresh diagnoses without an explicit `UI_HEALTH` signal.
+
+### E2 — Recovery gating and confidence suppression
+
+- After dropout/stale/low-quality, require consecutive fresh, good-quality frames before `stable`.
+- While `recovering`, treat identity/emotion as **provisional** (already suppressed until stable; E2 may add explicit “provisional” copy for post-stable soft landing).
+
+### E3 — Frame quality system
+
+- Expand heuristics: blur, darkness, overexposure, optional smear/occlusion; single `frame_quality` in `[0,1]` + reason strings; tie into initiative and autonomy thresholds.
+
+### E4 — Identity continuity
+
+- Track last confirmed identity, time since confirmation, decay; hierarchy: confirmed recognition → continuity likely → unknown face → no face; never instant amnesia when the same face likely persists.
+
+### E5 — Short-term visual memory
+
+- Rolling few-second buffer: who was present, what changed, entrants/exits, stable scene line; feed prompts, “what do you see?”, and initiative.
+
+### E6 — Attention / salience
+
+- Inputs: centered/nearest face, sudden change, held object (later), motion/scene change; drives summaries and initiative candidates.
+
+### E7 — Show-and-tell / object layer
+
+- Minimal object/spatial/color layer; **no** bypass of trust/quality/continuity; YOLO/MediaPipe only after E1–E6 are solid.
+
+### E8 — Visual-to-memory linking
+
+- Write visual memories only with sufficient salience, recurrence, relevance, and stable confidence.
+
+---
+
 ## What NOT to Touch
 
 These are working well — don't refactor:
@@ -332,3 +398,5 @@ These are working well — don't refactor:
 | 4, P4-02 | Mid-session narrative updates | 🟢 Low | Medium |
 | 4, P4-03 | Forward references in self-model | 🟢 Low | Medium |
 | 5, P5-01 | Life rhythm detector | 🔴 High effort | High (long-term) |
+| **6, E1** | **Better Eyes — visual trust foundation** | 🟢 Low–medium | **High** (honest vision) |
+| 6, E2–E8 | Recovery, quality, continuity, visual memory, salience, objects, memory link | 🟡→🔴 | High (staged) |

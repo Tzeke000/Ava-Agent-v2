@@ -27,6 +27,7 @@ from brain.perception import build_perception
 from brain.attention import compute_attention
 from brain.memory import decay_tick
 from brain.workspace import Workspace
+from brain.turn_visual import default_visual_payload, normalize_visual_payload
 from brain.identity import IdentityRegistry
 from brain.memory_bridge import MemoryBridge
 from brain.output_guard import scrub_visible_reply, scrub_chat_callback_result
@@ -3659,8 +3660,9 @@ def current_camera_memory_summary() -> str:
         if ws_st and ws_st.perception and not ws_st.perception.visual_truth_trusted:
             p = ws_st.perception
             prefix = (
-                f"VISION: {p.vision_status} (unstable; frame_age_ms≈{p.frame_age_ms:.0f}, "
-                f"source={p.frame_source}) — not a verified current view. | "
+                f"VISION: {p.vision_status} (unstable; recovery={getattr(p, 'recovery_state', '?')}, "
+                f"frame_age_ms≈{p.frame_age_ms:.0f}, source={p.frame_source}, "
+                f"quality≈{getattr(p, 'frame_quality', 0.0):.2f}) — not a verified current view. | "
             )
     except Exception:
         pass
@@ -6041,9 +6043,12 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
     face_status = perception.face_status
     _vision_guard = ""
     if not perception.visual_truth_trusted:
+        fq_r = ",".join(getattr(perception, "frame_quality_reasons", []) or []) or "-"
         _vision_guard = (
             f"VISION STABILITY: {perception.vision_status} "
-            f"(frame_age_ms≈{perception.frame_age_ms:.0f}, source={perception.frame_source}, "
+            f"(recovery={getattr(perception, 'recovery_state', '?')}, "
+            f"frame_age_ms≈{perception.frame_age_ms:.0f}, source={perception.frame_source}, "
+            f"frame_quality≈{getattr(perception, 'frame_quality', 0.0):.2f}, quality_flags={fq_r}, "
             f"fresh_streak={perception.fresh_frame_streak}). "
             "Do not describe the scene as a verified current view. "
             "Do not claim the UI, snapshot box, Gradio, or app is broken or not refreshing unless "
@@ -6203,8 +6208,19 @@ Respond as Ava.
         "face_status": face_status,
         "recognition_status": recognized_text,
         "expression_status": get_expression_status_text(expression_state),
-        "memory_preview": format_memories_for_prompt(memories)
+        "memory_preview": format_memories_for_prompt(memories),
+        "turn_route": "llm",
+        "visual_truth_trusted": perception.visual_truth_trusted,
+        "vision_status": perception.vision_status,
     }
+    try:
+        print(
+            f"[visual_pipeline] route=llm vision={perception.vision_status} "
+            f"trusted={perception.visual_truth_trusted} face={face_status!r} "
+            f"recog_preview={(recognized_text or '')[:140]!r}"
+        )
+    except Exception as _e:
+        print(f"[visual_pipeline] log failed: {_e}")
     return messages, visual, active_profile
 
 # =========================================================
@@ -6294,6 +6310,7 @@ def handle_camera_identity_turn(user_input: str, image, active_person_id: str | 
             "no_frame": "I don't have a fresh visual read right now, so I can't verify who's at the camera from vision alone.",
             "stale_frame": "The frame looks too old to trust as a current view — I don't have a stable visual read yet.",
             "recovering": "Vision is recovering — I don't have a stable read yet, so I can't confirm identity from the camera.",
+            "low_quality": "The image is too unclear right now — I don't have a stable visual read, so I can't confirm identity from the camera.",
         }
         reply = unsure.get(
             r.vision_status,
@@ -6304,11 +6321,22 @@ def handle_camera_identity_turn(user_input: str, image, active_person_id: str | 
             "recognition_status": "Held until vision stabilizes",
             "expression_status": "Held until vision stabilizes",
             "memory_preview": reply,
+            "turn_route": "camera_identity",
+            "visual_truth_trusted": False,
+            "vision_status": r.vision_status,
         }
+        print(
+            f"[recognition] route=camera_identity skipped: vision={r.vision_status} "
+            f"trusted=False src={r.source}"
+        )
         return reply, visual, prof, []
 
     face_status = detect_face(image)
     recognized_text, recognized_person_id = recognize_face(image)
+    print(
+        f"[recognition] route=camera_identity attempt face={face_status!r} "
+        f"person_hint={recognized_person_id!r} text_preview={(recognized_text or '')[:120]!r}"
+    )
     expression_state = update_expression_state(
         image, recognized_person_id=recognized_person_id, visual_truth_trusted=True
     )
@@ -6341,7 +6369,10 @@ def handle_camera_identity_turn(user_input: str, image, active_person_id: str | 
         "face_status": face_status,
         "recognition_status": recognized_text,
         "expression_status": get_expression_status_text(expression_state),
-        "memory_preview": "Camera identity grounding active."
+        "memory_preview": "Camera identity grounding active.",
+        "turn_route": "camera_identity",
+        "visual_truth_trusted": True,
+        "vision_status": "stable",
     }
     return reply, visual, profile, actions
 
@@ -6549,7 +6580,15 @@ def _load_self_narrative_snippet() -> str | None:
         return None
 
 
-def finalize_ava_turn(user_input: str, ai_reply: str, visual: dict, active_profile: dict, actions: list[str]) -> tuple[str, dict, dict, list[str], dict]:
+def finalize_ava_turn(
+    user_input: str,
+    ai_reply: str,
+    visual: dict,
+    active_profile: dict,
+    actions: list[str],
+    *,
+    turn_route: str | None = None,
+) -> tuple[str, dict, dict, list[str], dict]:
     person_id = active_profile["person_id"]
     try:
         from brain.person_cadence import update_cadence_on_visit
@@ -6602,66 +6641,159 @@ def finalize_ava_turn(user_input: str, ai_reply: str, visual: dict, active_profi
             _trigger_narrative_update_async()
     except Exception:
         pass
-    return ai_reply, visual, active_profile, actions, reflection
+    visual_out = normalize_visual_payload(visual, turn_route=turn_route)
+    try:
+        _fs = str(visual_out.get("face_status", ""))[:80]
+        print(
+            f"[run_ava] finalize route={visual_out.get('turn_route')} "
+            f"reply_len={len(ai_reply or '')} actions={len(actions)} face_line={_fs!r}"
+        )
+    except Exception:
+        pass
+    return ai_reply, visual_out, active_profile, actions, reflection
 
 
 def run_ava(user_input: str, image=None, active_person_id: str | None = None) -> tuple[str, dict, dict, list[str], dict]:
     active_person_id = active_person_id or get_active_person_id()
-    active_profile = load_profile_by_id(active_person_id)
-
-    if is_blocked(active_profile):
-        return get_blocked_reply(), {}, active_profile, [], {}
-    if should_deflect(active_profile, user_input):
-        return get_deflect_reply(active_profile, user_input), {}, active_profile, [], {}
-
-    if is_selfstate_query(user_input):
-        active_goal_txt = ""
-        try:
-            gs = load_goal_system()
-            ag = gs.get("active_goal")
-            if isinstance(ag, dict):
-                active_goal_txt = str(ag.get("name") or ag.get("title") or "").strip()[:200]
-            elif ag:
-                active_goal_txt = str(ag)[:200]
-        except Exception:
-            pass
-        narrative = _load_self_narrative_snippet()
-        reply = scrub_visible_reply(
-            build_selfstate_reply(
-                globals(),
-                user_input,
-                image,
-                active_profile,
-                active_goal=active_goal_txt or None,
-                narrative_snippet=narrative,
-            )
-        )
-        return finalize_ava_turn(user_input, reply, {}, active_profile, [])
-
-    if is_camera_identity_intent(user_input) or is_camera_visual_query(user_input):
-        ai_reply, visual, active_profile, actions = handle_camera_identity_turn(user_input, image, active_person_id=active_person_id)
-        ai_reply = _apply_reply_guardrails(ai_reply, user_input)
-        ai_reply = _apply_repetition_control(ai_reply, user_input, active_profile["person_id"], source="chat")
-        return finalize_ava_turn(user_input, ai_reply, visual, active_profile, actions)
-
-    messages, visual, active_profile = build_prompt(user_input, image=image, active_person_id=active_person_id)
-
+    _inp = (user_input or "").strip()
+    print(
+        f"[run_ava] enter person={active_person_id} has_image={image is not None} "
+        f"input_chars={len(_inp)}"
+    )
     try:
-        result = llm.invoke(messages)
-        raw_reply = getattr(result, "content", str(result)).strip()
-        if not raw_reply:
-            raw_reply = "I'm here."
-    except Exception as e:
-        raw_reply = f"I hit an internal error: {e}"
+        active_profile = load_profile_by_id(active_person_id)
 
-    person_id = active_profile["person_id"]
-    ai_reply, actions = process_ava_action_blocks(raw_reply, person_id, latest_user_input=user_input)
-    ai_reply = process_identity_actions(ai_reply)
-    ai_reply = _apply_reply_guardrails(ai_reply, user_input)
-    ai_reply = _apply_repetition_control(ai_reply, user_input, person_id, source="chat")
-    ai_reply = _scrub_internal_leakage(ai_reply)
-    ai_reply = scrub_visible_reply(ai_reply)
-    return finalize_ava_turn(user_input, ai_reply, visual, active_profile, actions)
+        if is_blocked(active_profile):
+            reply = get_blocked_reply()
+            vs = default_visual_payload(
+                face_status="Not evaluated (blocked)",
+                recognition_status="—",
+                expression_status="—",
+                memory_preview="",
+                turn_route="blocked",
+                visual_truth_trusted=False,
+                vision_status="blocked_policy",
+            )
+            print(f"[run_ava] exit route=blocked reply_chars={len(reply)} (no finalize)")
+            return reply, vs, active_profile, [], {}
+
+        if should_deflect(active_profile, user_input):
+            reply = get_deflect_reply(active_profile, user_input)
+            vs = default_visual_payload(
+                face_status="Not evaluated (deflect)",
+                recognition_status="—",
+                expression_status="—",
+                memory_preview="",
+                turn_route="deflect",
+                visual_truth_trusted=False,
+                vision_status="deflect",
+            )
+            print(f"[run_ava] exit route=deflect reply_chars={len(reply)} (no finalize)")
+            return reply, vs, active_profile, [], {}
+
+        if is_selfstate_query(user_input):
+            active_goal_txt = ""
+            try:
+                gs = load_goal_system()
+                ag = gs.get("active_goal")
+                if isinstance(ag, dict):
+                    active_goal_txt = str(ag.get("name") or ag.get("title") or "").strip()[:200]
+                elif ag:
+                    active_goal_txt = str(ag)[:200]
+            except Exception:
+                pass
+            narrative = _load_self_narrative_snippet()
+            reply = scrub_visible_reply(
+                build_selfstate_reply(
+                    globals(),
+                    user_input,
+                    image,
+                    active_profile,
+                    active_goal=active_goal_txt or None,
+                    narrative_snippet=narrative,
+                )
+            )
+            return finalize_ava_turn(
+                user_input, reply, {}, active_profile, [], turn_route="selfstate"
+            )
+
+        if is_camera_identity_intent(user_input) or is_camera_visual_query(user_input):
+            ai_reply, visual, active_profile, actions = handle_camera_identity_turn(
+                user_input, image, active_person_id=active_person_id
+            )
+            ai_reply = _apply_reply_guardrails(ai_reply, user_input)
+            ai_reply = _apply_repetition_control(
+                ai_reply, user_input, active_profile["person_id"], source="chat"
+            )
+            return finalize_ava_turn(
+                user_input, ai_reply, visual, active_profile, actions, turn_route="camera_identity"
+            )
+
+        messages, visual, active_profile = build_prompt(
+            user_input, image=image, active_person_id=active_person_id
+        )
+
+        try:
+            print("[run_ava] llm_invoke start")
+            result = llm.invoke(messages)
+            raw_reply = getattr(result, "content", str(result)).strip()
+            if not raw_reply:
+                raw_reply = "I'm here."
+            print(f"[run_ava] llm_invoke ok reply_raw_chars={len(raw_reply)}")
+        except Exception as e:
+            raw_reply = f"I hit an internal error: {e}"
+            print(f"[run_ava] llm_invoke failed: {e!r}")
+
+        person_id = active_profile["person_id"]
+        ai_reply, actions = process_ava_action_blocks(
+            raw_reply, person_id, latest_user_input=user_input
+        )
+        ai_reply = process_identity_actions(ai_reply)
+        ai_reply = _apply_reply_guardrails(ai_reply, user_input)
+        ai_reply = _apply_repetition_control(ai_reply, user_input, person_id, source="chat")
+        ai_reply = _scrub_internal_leakage(ai_reply)
+        ai_reply = scrub_visible_reply(ai_reply)
+        print(f"[run_ava] exit route=llm via finalize actions={len(actions)}")
+        return finalize_ava_turn(
+            user_input, ai_reply, visual, active_profile, actions, turn_route="llm"
+        )
+    except Exception as e:
+        import traceback
+
+        print(f"[run_ava] exception (fallback turn): {e!r}\n{traceback.format_exc()}")
+        try:
+            ap = load_profile_by_id(active_person_id)
+        except Exception:
+            try:
+                ensure_owner_profile()
+                ap = load_profile_by_id(OWNER_PERSON_ID)
+            except Exception:
+                ap = {
+                    "person_id": active_person_id,
+                    "name": active_person_id,
+                    "relationship_to_zeke": "unknown",
+                    "allowed_to_use_computer": False,
+                    "relationship_score": 0.3,
+                    "notes": [],
+                    "likes": [],
+                    "ava_impressions": [],
+                }
+        vs = default_visual_payload(
+            face_status="Pipeline error — vision not applied",
+            recognition_status="—",
+            expression_status="—",
+            memory_preview="",
+            turn_route="error",
+            visual_truth_trusted=False,
+            vision_status="error",
+        )
+        vs["error_detail"] = str(e)[:500]
+        vs["error_type"] = type(e).__name__
+        fallback = (
+            "Something went wrong on my side; I'm still here. Could you try that again?"
+        )
+        print(f"[run_ava] exit route=error reply=fallback (no finalize)")
+        return fallback, vs, ap, ["run_ava_error"], {"error": str(e), "error_type": type(e).__name__}
 
 
 # =========================================================
@@ -6712,6 +6844,13 @@ def get_camera_identity_context(user_input: str, image, perception=None) -> str:
                 "No reliable camera frame right now. Do not describe who is visible or the scene as current. "
                 "Do not blame the UI, snapshot box, or refresh behavior — there is no UI-health signal. "
                 "Prefer: you don't have a fresh visual read right now."
+            )
+        if perception.vision_status == "low_quality":
+            rsn = ", ".join(getattr(perception, "frame_quality_reasons", []) or []) or "weak image"
+            return (
+                f"Vision is not trustworthy right now due to image quality ({rsn}). "
+                "Do not assert identity, expression, or the scene as a verified current view. "
+                "Do not diagnose UI or refresh failures. Prefer: visual confidence is low until the image is clearer."
             )
         if not perception.visual_truth_trusted:
             return (
@@ -6883,6 +7022,10 @@ def chat_fn(message, history, image):
         canon.append({"role": "user", "content": clean_message})
         _set_canonical_history(canon)
         reply, visual, active_profile, actions, _ = run_ava(clean_message, image, get_active_person_id())
+        print(
+            f"[chat_fn] run_ava done route={visual.get('turn_route')} "
+            f"actions={len(actions)} reply_chars={len(reply or '')}"
+        )
 
         try:
             msg_count = bump_session_message_count()
@@ -7094,6 +7237,10 @@ def voice_fn(audio, history, image):
     canon.append({"role": "user", "content": text.strip()})
     _set_canonical_history(canon)
     reply, visual, active_profile, actions, _ = run_ava(text.strip(), image, get_active_person_id())
+    print(
+        f"[voice_fn] run_ava done route={visual.get('turn_route')} "
+        f"actions={len(actions)} reply_chars={len(reply or '')}"
+    )
 
     try:
         msg_count = bump_session_message_count()

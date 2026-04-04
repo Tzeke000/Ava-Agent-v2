@@ -8,11 +8,23 @@ Manual test plan matches brain/camera.py (obstruction → recovering → stable)
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from .shared import now_ts
 from .vision import analyze_face_emotion
+
+
+def _lbph_distance_to_identity_confidence(recognized_text: str, threshold: float = 80.0) -> float:
+    """Map LBPH distance in parentheses to [0,1]; higher = stronger match signal."""
+    m = re.search(r"\((\d+\.?\d*)\)\s*$", (recognized_text or "").strip())
+    if not m:
+        return 0.45
+    dist = float(m.group(1))
+    if dist <= threshold:
+        return max(0.35, min(1.0, 1.0 - (dist / (threshold * 2.2))))
+    return max(0.0, 0.25 * (1.0 - min(1.0, (dist - threshold) / 80.0)))
 
 
 @dataclass
@@ -28,7 +40,7 @@ class PerceptionState:
     timestamp: float = field(default_factory=now_ts)
     face_status: str = "No camera image"
     recognized_text: str = ""
-    # Freshness / recovery (Phase: stable vision gating)
+    # Better Eyes E1 — first-class vision / trust (see brain/camera.py)
     vision_status: str = "stable"
     frame_ts: float = 0.0
     frame_age_ms: float = -1.0
@@ -37,6 +49,12 @@ class PerceptionState:
     is_fresh: bool = False
     fresh_frame_streak: int = 0
     visual_truth_trusted: bool = True
+    frame_quality: float = 0.0
+    frame_quality_reasons: list[str] = field(default_factory=list)
+    recovery_state: str = "none"
+    last_stable_identity: str | None = None
+    identity_confidence: float = 0.0
+    continuity_confidence: float = 0.0
 
 
 def build_perception(camera_manager, image, g: dict, user_text: str = "") -> PerceptionState:
@@ -58,8 +76,14 @@ def build_perception(camera_manager, image, g: dict, user_text: str = "") -> Per
     state.frame_source = resolved.source
     state.frame_seq = resolved.frame_seq
     state.is_fresh = resolved.is_fresh
-    state.fresh_frame_streak = getattr(camera_manager, "_fresh_frame_streak", 0)
+    state.fresh_frame_streak = resolved.fresh_frame_streak
     state.visual_truth_trusted = resolved.visual_truth_trusted
+    state.frame_quality = resolved.frame_quality
+    state.frame_quality_reasons = list(resolved.frame_quality_reasons)
+    state.recovery_state = resolved.recovery_state
+    state.last_stable_identity = resolved.last_stable_identity
+    state.identity_confidence = 0.0
+    state.continuity_confidence = 0.0
 
     if resolved.frame is None:
         state.face_status = "No camera image"
@@ -68,7 +92,8 @@ def build_perception(camera_manager, image, g: dict, user_text: str = "") -> Per
         state.person_count = 0
         state.gaze_present = False
         print(
-            f"[perception] vision={state.vision_status} trusted=False "
+            f"[perception] vision={state.vision_status} fq={state.frame_quality:.2f} "
+            f"recovery={state.recovery_state} trusted=False id_conf=0.0 "
             f"(suppress identity/emotion/scene-as-current)"
         )
         return state
@@ -84,6 +109,12 @@ def build_perception(camera_manager, image, g: dict, user_text: str = "") -> Per
             state.recognized_text = (
                 "Vision is recovering after an interruption — identity and expression are not trusted as current yet."
             )
+        elif resolved.vision_status == "low_quality":
+            rsn = ", ".join(state.frame_quality_reasons) or "quality"
+            state.face_status = "Frame quality too low for a reliable read"
+            state.recognized_text = (
+                f"Image quality is weak ({rsn}) — not using identity or expression as ground truth yet."
+            )
         else:
             state.face_status = "Vision unavailable"
             state.recognized_text = "No reliable visual read right now."
@@ -92,10 +123,13 @@ def build_perception(camera_manager, image, g: dict, user_text: str = "") -> Per
         state.face_detected = False
         state.person_count = 0
         state.gaze_present = False
+        if state.last_stable_identity:
+            state.continuity_confidence = 0.12
         state.salience = _compute_salience(state)
         print(
             f"[perception] vision={state.vision_status} age_ms={state.frame_age_ms:.0f} "
-            f"src={state.frame_source} streak={state.fresh_frame_streak} trusted=False "
+            f"src={state.frame_source} fq={state.frame_quality:.2f} recovery={state.recovery_state} "
+            f"streak={state.fresh_frame_streak} trusted=False id_conf=0.0 cont={state.continuity_confidence:.2f} "
             f"(suppress identity/emotion/scene-as-current)"
         )
         return state
@@ -129,11 +163,27 @@ def build_perception(camera_manager, image, g: dict, user_text: str = "") -> Per
     except Exception:
         state.face_emotion = "neutral"
 
+    if state.face_identity:
+        state.identity_confidence = _lbph_distance_to_identity_confidence(state.recognized_text)
+        try:
+            camera_manager.note_trusted_identity(state.face_identity)
+        except Exception:
+            pass
+        state.last_stable_identity = state.face_identity
+        state.continuity_confidence = state.identity_confidence
+    elif state.face_detected:
+        state.identity_confidence = 0.22
+        state.continuity_confidence = 0.18 if state.last_stable_identity else 0.0
+    else:
+        state.identity_confidence = 0.0
+        state.continuity_confidence = 0.15 if state.last_stable_identity else 0.0
+
     state.salience = _compute_salience(state)
     print(
         f"[perception] vision={state.vision_status} age_ms={state.frame_age_ms:.0f} "
-        f"src={state.frame_source} streak={state.fresh_frame_streak} trusted=True "
-        f"(recognition/emotion allowed)"
+        f"src={state.frame_source} fq={state.frame_quality:.2f} recovery={state.recovery_state} "
+        f"streak={state.fresh_frame_streak} trusted=True id_conf={state.identity_confidence:.2f} "
+        f"cont={state.continuity_confidence:.2f} (recognition/emotion allowed)"
     )
     return state
 
