@@ -146,8 +146,12 @@ class Workspace:
             pv = ws.perception
             print(
                 f"[workspace] tick | vision={getattr(pv, 'vision_status', '?')} "
+                f"recovery={getattr(pv, 'recovery_state', '?')} "
                 f"trusted={getattr(pv, 'visual_truth_trusted', True)} "
+                f"fq={getattr(pv, 'frame_quality', 0.0):.2f} "
                 f"streak={getattr(pv, 'fresh_frame_streak', 0)} "
+                f"id_conf={getattr(pv, 'identity_confidence', 0.0):.2f} "
+                f"last_stable={getattr(pv, 'last_stable_identity', None) or '-'} "
                 f"face={pv.face_detected} emotion={pv.face_emotion} "
                 f"speak={ws.attention.should_speak} goal={goal_s!s} memories={len(ws.active_memory)}"
             )

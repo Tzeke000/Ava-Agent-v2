@@ -24,11 +24,43 @@ from .camera_live import read_live_frame
 STALE_FRAME_MS = 1000
 # After blockage/stale, require this many consecutive fresh frames before "stable".
 FRESH_STREAK_FOR_STABLE = 3
+# Below this aggregate quality score [0,1], vision is "low_quality" (E1 minimal heuristic; E3 expands).
+LOW_QUALITY_THRESHOLD = 0.28
+
+
+def assess_frame_quality_basic(frame: Any) -> tuple[float, list[str]]:
+    """
+    OpenCV-only lightweight quality hint for E1 (blur + luminance).
+    Returns (score in [0,1], human-readable reason flags). Higher score = more usable.
+    """
+    if frame is None:
+        return 0.0, ["no_frame"]
+    reasons: list[str] = []
+    try:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blur_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        if blur_var < 45.0:
+            reasons.append("blurry")
+        mean_lum = float(gray.mean()) / 255.0
+        if mean_lum < 0.07:
+            reasons.append("very_dark")
+        elif mean_lum < 0.12:
+            reasons.append("low_light")
+        if mean_lum > 0.93:
+            reasons.append("overexposed")
+        blur_score = min(1.0, blur_var / 180.0)
+        lum_score = 1.0 - min(1.0, abs(mean_lum - 0.42) * 2.0)
+        score = 0.55 * blur_score + 0.45 * max(0.0, lum_score)
+        if reasons:
+            score *= 0.82
+        return max(0.0, min(1.0, score)), reasons
+    except Exception:
+        return 0.5, ["quality_unavailable"]
 
 
 @dataclass
 class ResolvedFrame:
-    """Single resolved frame with freshness metadata for vision gating."""
+    """Single resolved frame with freshness + quality metadata for vision gating (Better Eyes E1)."""
 
     frame: Any
     frame_ts: float  # wall time when frame was captured (or UI submit time)
@@ -37,8 +69,13 @@ class ResolvedFrame:
     frame_seq: int
     frame_fp: int  # cheap content fingerprint (0 if no frame)
     is_fresh: bool
-    vision_status: str  # no_frame | stale_frame | recovering | stable
+    vision_status: str  # no_frame | stale_frame | recovering | stable | low_quality
     visual_truth_trusted: bool  # if True, perception may use identity/emotion as current
+    frame_quality: float  # [0, 1]
+    frame_quality_reasons: list[str]
+    recovery_state: str  # none | needs_fresh | clearing | quality_hold
+    fresh_frame_streak: int
+    last_stable_identity: str | None  # last trusted recognition person_id (continuity; E4 extends)
 
 
 @dataclass
@@ -59,6 +96,14 @@ class CameraManager:
         self._recovery_armed = False
         self._last_ui_fp: int | None = None
         self._last_ui_wall_ts = 0.0
+        self._last_stable_person_id: str | None = None
+        self._last_stable_wall_ts: float = 0.0
+
+    def note_trusted_identity(self, person_id: str | None) -> None:
+        """Call when a frame is visually trusted and recognition yields a known person."""
+        if person_id:
+            self._last_stable_person_id = person_id
+            self._last_stable_wall_ts = time.time()
 
     @staticmethod
     def _frame_fp(frame: Any) -> int:
@@ -112,6 +157,9 @@ class CameraManager:
 
         fp_val = self._frame_fp(frame) if frame is not None else 0
         is_fresh = frame is not None and frame_age_ms <= STALE_FRAME_MS
+        frame_quality, frame_quality_reasons = (
+            assess_frame_quality_basic(frame) if frame is not None else (0.0, ["no_frame"])
+        )
 
         if frame is None:
             vision_status = "no_frame"
@@ -119,6 +167,11 @@ class CameraManager:
             self._recovery_armed = True
         elif not is_fresh:
             vision_status = "stale_frame"
+            self._fresh_frame_streak = 0
+            self._recovery_armed = True
+        elif frame_quality < LOW_QUALITY_THRESHOLD:
+            # Fresh but unusable for confident vision — same recovery semantics as dropout.
+            vision_status = "low_quality"
             self._fresh_frame_streak = 0
             self._recovery_armed = True
         else:
@@ -135,6 +188,17 @@ class CameraManager:
 
         trusted = vision_status == "stable"
 
+        if vision_status == "stable" and trusted:
+            recovery_state = "none"
+        elif vision_status == "recovering":
+            recovery_state = "clearing"
+        elif vision_status == "low_quality":
+            recovery_state = "quality_hold"
+        elif vision_status in ("no_frame", "stale_frame"):
+            recovery_state = "needs_fresh"
+        else:
+            recovery_state = "needs_fresh"
+
         if frame is None:
             age_ms_out = -1.0
             ts_out = 0.0
@@ -144,9 +208,12 @@ class CameraManager:
                 frame_age_ms if frame_age_ms != float("inf") else 999999.0
             )
 
+        fq_s = f"{frame_quality:.2f}"
+        rsn = ",".join(frame_quality_reasons) if frame_quality_reasons else "-"
         print(
-            f"[camera] src={source} age_ms={age_ms_out:.0f} "
-            f"vision={vision_status} streak={self._fresh_frame_streak} trusted={trusted} seq={seq}"
+            f"[camera] src={source} age_ms={age_ms_out:.0f} fq={fq_s} fq_r={rsn} "
+            f"vision={vision_status} recovery={recovery_state} streak={self._fresh_frame_streak} "
+            f"trusted={trusted} seq={seq} last_id={self._last_stable_person_id or '-'}"
         )
 
         return ResolvedFrame(
@@ -159,6 +226,11 @@ class CameraManager:
             is_fresh=is_fresh,
             vision_status=vision_status,
             visual_truth_trusted=trusted,
+            frame_quality=frame_quality,
+            frame_quality_reasons=list(frame_quality_reasons),
+            recovery_state=recovery_state,
+            fresh_frame_streak=self._fresh_frame_streak,
+            last_stable_identity=self._last_stable_person_id,
         )
 
     def resolve_frame(self, image=None):
@@ -343,15 +415,17 @@ class CameraManager:
         if r.frame is None:
             return state
         if not r.visual_truth_trusted:
-            state.face_status = (
-                "No camera image"
-                if r.vision_status == "no_frame"
-                else (
-                    "Stale or outdated camera frame"
-                    if r.vision_status == "stale_frame"
-                    else "Vision stabilizing (not a current read yet)"
-                )
-            )
+            if r.vision_status == "no_frame":
+                msg = "No camera image"
+            elif r.vision_status == "stale_frame":
+                msg = "Stale or outdated camera frame"
+            elif r.vision_status == "low_quality":
+                msg = "Frame quality too low for a reliable read"
+            elif r.vision_status == "recovering":
+                msg = "Vision stabilizing (not a current read yet)"
+            else:
+                msg = "Vision unavailable"
+            state.face_status = msg
             state.recognized_text = "Recognition held — vision not stable"
             state.person_id = None
             return state
