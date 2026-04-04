@@ -18,7 +18,11 @@ from typing import Any
 
 import cv2
 
-from .camera_live import read_live_frame
+from .frame_store import (
+    LIVE_CACHE_MAX_AGE_SEC,
+    classify_acquisition_freshness,
+    read_live_frame_with_meta,
+)
 
 # Frames older than this (ms) are not treated as current evidence.
 STALE_FRAME_MS = 1000
@@ -76,6 +80,8 @@ class ResolvedFrame:
     recovery_state: str  # none | needs_fresh | clearing | quality_hold
     fresh_frame_streak: int
     last_stable_identity: str | None  # last trusted recognition person_id (continuity; E4 extends)
+    # Phase 2 acquisition layer: fresh | aging | stale | unavailable (live cache vs UI age)
+    acquisition_freshness: str = "unavailable"
 
 
 @dataclass
@@ -143,17 +149,32 @@ class CameraManager:
             cap_ts = t_wall
             source = "ui"
             live_used = False
+            acquisition_freshness = classify_acquisition_freshness(
+                True,
+                frame_age_ms / 1000.0,
+            )
         else:
-            frame, cap_ts = read_live_frame()
+            meta = read_live_frame_with_meta(
+                max_age=LIVE_CACHE_MAX_AGE_SEC,
+                device_index=self.device_index,
+            )
+            frame = meta.frame
+            cap_ts = float(meta.capture_ts) if meta.frame is not None else 0.0
             if frame is None:
                 source = "none"
                 live_used = False
                 frame_age_ms = float("inf")
                 cap_ts = 0.0
+                acquisition_freshness = "unavailable"
             else:
                 source = "live"
                 live_used = True
                 frame_age_ms = max(0.0, (t_wall - float(cap_ts)) * 1000.0)
+                # Prefer store classification; re-classify if wall age drifted vs meta.age_sec
+                acquisition_freshness = classify_acquisition_freshness(
+                    True,
+                    frame_age_ms / 1000.0,
+                )
 
         fp_val = self._frame_fp(frame) if frame is not None else 0
         is_fresh = frame is not None and frame_age_ms <= STALE_FRAME_MS
@@ -202,6 +223,7 @@ class CameraManager:
         if frame is None:
             age_ms_out = -1.0
             ts_out = 0.0
+            acquisition_freshness = "unavailable"
         else:
             ts_out = float(cap_ts) if cap_ts else t_wall
             age_ms_out = (
@@ -211,9 +233,10 @@ class CameraManager:
         fq_s = f"{frame_quality:.2f}"
         rsn = ",".join(frame_quality_reasons) if frame_quality_reasons else "-"
         print(
-            f"[camera] src={source} age_ms={age_ms_out:.0f} fq={fq_s} fq_r={rsn} "
-            f"vision={vision_status} recovery={recovery_state} streak={self._fresh_frame_streak} "
-            f"trusted={trusted} seq={seq} last_id={self._last_stable_person_id or '-'}"
+            f"[camera] src={source} age_ms={age_ms_out:.0f} acq={acquisition_freshness} "
+            f"fq={fq_s} fq_r={rsn} vision={vision_status} recovery={recovery_state} "
+            f"streak={self._fresh_frame_streak} trusted={trusted} seq={seq} "
+            f"last_id={self._last_stable_person_id or '-'}"
         )
 
         return ResolvedFrame(
@@ -231,6 +254,7 @@ class CameraManager:
             recovery_state=recovery_state,
             fresh_frame_streak=self._fresh_frame_streak,
             last_stable_identity=self._last_stable_person_id,
+            acquisition_freshness=acquisition_freshness,
         )
 
     def resolve_frame(self, image=None):

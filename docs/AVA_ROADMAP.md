@@ -71,6 +71,15 @@ This is a development-only quality-of-life feature that makes tuning the system 
 - **`finalize_ava_turn`**: normalizes visual before return; logs finalize line.
 - **`build_prompt` / camera identity**: `[visual_pipeline]` / `[recognition]` logs; **`camera_live`**: log when a live read returns no frame.
 
+### Camera / vision — Phase 2 — Frame acquisition & freshness *(live)*
+
+*(Distinct from the “Phase 2 — Prospective Memory” section below — this is the vision pipeline track.)*
+
+- **`brain/frame_store.py`**: Centralized **`FRESH_MAX_AGE_SEC`**, **`AGING_MAX_AGE_SEC`**, **`LIVE_CACHE_MAX_AGE_SEC`**; **`classify_acquisition_freshness()`** → `fresh` | `aging` | `stale` | `unavailable`; **`read_live_frame_with_meta()`** maintains the latest good buffer, capture timestamp, and explicit logs (cache vs device, open/read success/failure, stale cache warning, no frame).
+- **`brain/camera_live.py`**: Thin wrapper — still **`(frame, capture_ts)`**; optional **`device_index`** passed through to the store.
+- **`brain/camera.py` / `brain/perception.py`**: **`ResolvedFrame.acquisition_freshness`** and **`PerceptionState.acquisition_freshness`**; **`[camera]`** / **`[perception]`** / **`[workspace]`** logs include **`acq=`**.
+- Vision trust / **`STALE_FRAME_MS`** in `camera.py` is unchanged; acquisition labels are diagnostic and age-aware alongside it.
+
 ### P1-03 — Untrack Legacy `.tmp` Files
 
 Two `.tmp` files are still tracked in git from before `.gitignore` was updated:
