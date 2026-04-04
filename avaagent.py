@@ -2645,13 +2645,23 @@ def analyze_expression(image) -> dict:
     except Exception as e:
         return {"ok": False, "reason": f"analysis_error: {e}"}
 
-def update_expression_state(image, recognized_person_id=None) -> dict:
+def update_expression_state(image, recognized_person_id=None, visual_truth_trusted: bool = True) -> dict:
     state = load_expression_state()
     state["available"] = DEEPFACE_AVAILABLE
     state["recognized_person_id"] = recognized_person_id
     face_visible = extract_face_crop(image) is not None
     state["visible_face"] = face_visible
     state["last_updated"] = now_iso()
+
+    if not visual_truth_trusted:
+        state["current_expression"] = "unknown"
+        state["raw_emotion"] = "unknown"
+        state["confidence"] = 0.0
+        state["stability"] = 0.0
+        state["note"] = "Vision stabilizing — expression not treated as a current read"
+        state["history"] = (state.get("history", []) or [])[-EXPRESSION_WINDOW_SIZE:]
+        save_expression_state(state)
+        return state
 
     if not face_visible:
         state["current_expression"] = "unknown"
@@ -3643,9 +3653,20 @@ def recent_camera_events_text(limit: int = 8) -> str:
 
 
 def current_camera_memory_summary() -> str:
+    prefix = ""
+    try:
+        ws_st = workspace.state
+        if ws_st and ws_st.perception and not ws_st.perception.visual_truth_trusted:
+            p = ws_st.perception
+            prefix = (
+                f"VISION: {p.vision_status} (unstable; frame_age_ms≈{p.frame_age_ms:.0f}, "
+                f"source={p.frame_source}) — not a verified current view. | "
+            )
+    except Exception:
+        pass
     st = load_camera_state().get("current", {}) or {}
     if not st:
-        return "No camera memory yet."
+        return prefix + "No camera memory yet."
     ts = st.get("timestamp", "")
     ident = st.get("recognized_name") or "unknown"
     recog = st.get("recognition_text", "unknown")
@@ -3666,7 +3687,11 @@ def current_camera_memory_summary() -> str:
     tail += f" | Visual confidence: {conf}%"
     if st.get("transition_strength") is not None:
         tail += f" | Transition strength: {round(float(st.get('transition_strength',0.0) or 0.0)*100,1)}%"
-    return f"Last snapshot: {iso_to_readable(ts) if ts else 'unknown'} | Face visible: {st.get('face_visible', False)} | Recognition: {recog} | Identity: {ident} | Expression: {expr} | Style: {st.get('ava_dominant_style', 'neutral')} | Rolling: {st.get('rolling_saved', False)} | Memory: {keep_text} | Why: {why}{tail}"
+    return prefix + (
+        f"Last snapshot: {iso_to_readable(ts) if ts else 'unknown'} | Face visible: {st.get('face_visible', False)} | "
+        f"Recognition: {recog} | Identity: {ident} | Expression: {expr} | Style: {st.get('ava_dominant_style', 'neutral')} | "
+        f"Rolling: {st.get('rolling_saved', False)} | Memory: {keep_text} | Why: {why}{tail}"
+    )
 
 
 def get_camera_memory_status_text() -> str:
@@ -3826,8 +3851,15 @@ def process_camera_snapshot(image, recognized_text: str = "", recognized_person_
     save_camera_state(state)
     return current
 
-def expression_prompt_text(state: dict | None = None) -> str:
+def expression_prompt_text(state: dict | None = None, perception=None) -> str:
     state = state or load_expression_state()
+    if perception is not None and not getattr(perception, "visual_truth_trusted", True):
+        vs = getattr(perception, "vision_status", "unknown")
+        return (
+            f"Visual confidence is low (vision state: {vs}). "
+            "Do not describe facial expression or the scene as a verified current read. "
+            "If asked what you see, say you are waiting for a stable camera frame or that vision is recovering."
+        )
     if not state.get("visible_face"):
         return "No face is currently visible, so there is no usable expression signal."
     if not DEEPFACE_AVAILABLE:
@@ -5985,7 +6017,11 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
 
     recognized_text = perception.recognized_text
     recognized_person_id = perception.face_identity
-    expression_state = update_expression_state(frame, recognized_person_id=recognized_person_id)
+    expression_state = update_expression_state(
+        frame,
+        recognized_person_id=recognized_person_id,
+        visual_truth_trusted=perception.visual_truth_trusted,
+    )
     if recognized_person_id is not None and recognized_person_id != active_person_id:
         inferred_person_id = recognized_person_id
         infer_source = "facial_recognition"
@@ -6003,6 +6039,17 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
     recent_reflections = load_recent_reflections(limit=3, person_id=active_profile["person_id"])
     self_model = load_self_model()
     face_status = perception.face_status
+    _vision_guard = ""
+    if not perception.visual_truth_trusted:
+        _vision_guard = (
+            f"VISION STABILITY: {perception.vision_status} "
+            f"(frame_age_ms≈{perception.frame_age_ms:.0f}, source={perception.frame_source}, "
+            f"fresh_streak={perception.fresh_frame_streak}). "
+            "Do not describe the scene as a verified current view. "
+            "Do not claim the UI, snapshot box, Gradio, or app is broken or not refreshing unless "
+            "an explicit UI_HEALTH flag is present in this context (there is none). "
+            "Prefer honest uncertainty: no fresh visual read / vision recovering / visual confidence is low.\n"
+        )
     dynamic_memory_summary = memory_bridge.build_summary(globals(), user_input, active_profile)
 
     recent_text = "\n".join(
@@ -6098,12 +6145,12 @@ CURRENT GOAL EXPRESSION:
 Let Ava choose naturally, but allow the current operating goal to shape expression and priorities. Not every goal should produce speech; observe_silently and wait_for_user are valid choices.
 
 CAMERA:
-Face status: {face_status}
+{_vision_guard}Face status: {face_status}
 Recognition: {recognized_text}
-Expression: {expression_prompt_text(expression_state)}
+Expression: {expression_prompt_text(expression_state, perception=perception)}
 Current camera memory: {current_camera_memory_summary()}
 Recent camera events: {recent_camera_events_text(limit=4)}
-Identity context: {get_camera_identity_context(user_input, image) or "No special camera identity note."}
+Identity context: {get_camera_identity_context(user_input, image, perception=perception) or "No special camera identity note."}
 If the user is asking about the camera, face, who is visible, or recognition — answer ONLY from the current camera state. Do NOT rephrase or echo the user's question. Do NOT start your reply with their words. If no face is detected, say so plainly.
 If the user is asking about the camera, face, frame, what Ava sees, or who is present, answer that directly from the current camera state first and do not drift into unrelated time or memory topics.
 
@@ -6204,6 +6251,11 @@ def ensure_camera_identity_profile(person_id: str, display_name: str | None = No
 def maybe_record_camera_identity_confirmation(user_input: str, image, person_id: str, profile: dict) -> list[str]:
     actions: list[str] = []
     text = (user_input or "").lower()
+    try:
+        if not camera_manager.resolve_frame_detailed(image).visual_truth_trusted:
+            return actions
+    except Exception:
+        pass
     if detect_face(image) == "No face detected":
         return actions
     if not any(p in text for p in ["it's me", "its me", "that is me", "my face", "person in frame", "person in the frame", "that's my face", "thats my face"]):
@@ -6235,9 +6287,31 @@ def maybe_record_camera_identity_confirmation(user_input: str, image, person_id:
 
 
 def handle_camera_identity_turn(user_input: str, image, active_person_id: str | None = None) -> tuple[str, dict, dict, list[str]]:
+    r = camera_manager.resolve_frame_detailed(image)
+    if not r.visual_truth_trusted:
+        prof = load_profile_by_id(active_person_id or get_active_person_id())
+        unsure = {
+            "no_frame": "I don't have a fresh visual read right now, so I can't verify who's at the camera from vision alone.",
+            "stale_frame": "The frame looks too old to trust as a current view — I don't have a stable visual read yet.",
+            "recovering": "Vision is recovering — I don't have a stable read yet, so I can't confirm identity from the camera.",
+        }
+        reply = unsure.get(
+            r.vision_status,
+            "My visual confidence is low at the moment — I can't ground who's at the camera yet.",
+        )
+        visual = {
+            "face_status": "Vision not stable",
+            "recognition_status": "Held until vision stabilizes",
+            "expression_status": "Held until vision stabilizes",
+            "memory_preview": reply,
+        }
+        return reply, visual, prof, []
+
     face_status = detect_face(image)
     recognized_text, recognized_person_id = recognize_face(image)
-    expression_state = update_expression_state(image, recognized_person_id=recognized_person_id)
+    expression_state = update_expression_state(
+        image, recognized_person_id=recognized_person_id, visual_truth_trusted=True
+    )
     actions: list[str] = []
 
     explicit_person_id, explicit_name = infer_explicit_identity_from_text(user_input)
@@ -6628,12 +6702,29 @@ def no_face_identity_prompt() -> str:
     return "someone’s clearly talking to me, but I can’t see a face at the camera right now. who’s there?"
 
 
-def get_camera_identity_context(user_input: str, image) -> str:
+def get_camera_identity_context(user_input: str, image, perception=None) -> str:
     text = (user_input or "").strip()
     if not text:
         return ""
-    face_status = detect_face(image)
-    recognized_text, recognized_person_id = recognize_face(image)
+    if perception is not None:
+        if perception.vision_status == "no_frame":
+            return (
+                "No reliable camera frame right now. Do not describe who is visible or the scene as current. "
+                "Do not blame the UI, snapshot box, or refresh behavior — there is no UI-health signal. "
+                "Prefer: you don't have a fresh visual read right now."
+            )
+        if not perception.visual_truth_trusted:
+            return (
+                f"Vision state is {perception.vision_status} — not stable enough for confident identity or a current scene description. "
+                "Do not diagnose UI or Gradio refresh issues. "
+                "Prefer: vision is recovering or visual confidence is low until the feed is stable."
+            )
+        face_status = perception.face_status
+        recognized_text = perception.recognized_text
+        recognized_person_id = perception.face_identity
+    else:
+        face_status = detect_face(image)
+        recognized_text, recognized_person_id = recognize_face(image)
     if face_status == "No face detected":
         return (
             "No face is visible at the camera right now, but someone is actively speaking or typing. "
@@ -6662,8 +6753,18 @@ def camera_tick_fn(image, history):
     face_status = perception.face_status
     recognized_text = perception.recognized_text
     recognized_person_id = perception.face_identity
-    expression_state = update_expression_state(frame, recognized_person_id=recognized_person_id)
-    process_camera_snapshot(frame, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expression_state)
+    expression_state = update_expression_state(
+        frame,
+        recognized_person_id=recognized_person_id,
+        visual_truth_trusted=perception.visual_truth_trusted,
+    )
+    if perception.visual_truth_trusted:
+        process_camera_snapshot(
+            frame,
+            recognized_text=recognized_text,
+            recognized_person_id=recognized_person_id,
+            expression_state=expression_state,
+        )
     if recognized_person_id is not None:
         try:
             identity_registry.update_emotional_association(recognized_person_id, perception.face_emotion or "neutral", globals())
@@ -6746,8 +6847,18 @@ def chat_fn(message, history, image):
         workspace.tick(camera_manager, image, globals(), "")
         perception = workspace.state.perception if workspace.state else build_perception(camera_manager, image, globals(), "")
         recognized_text, recognized_person_id = perception.recognized_text, perception.face_identity
-        expr_state = update_expression_state(perception.frame, recognized_person_id=recognized_person_id)
-        process_camera_snapshot(perception.frame, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expr_state)
+        expr_state = update_expression_state(
+            perception.frame,
+            recognized_person_id=recognized_person_id,
+            visual_truth_trusted=perception.visual_truth_trusted,
+        )
+        if perception.visual_truth_trusted:
+            process_camera_snapshot(
+                perception.frame,
+                recognized_text=recognized_text,
+                recognized_person_id=recognized_person_id,
+                expression_state=expr_state,
+            )
         return scrub_chat_callback_result((
             _chatbot_messages_out(), "", perception.face_status, get_memory_status(),
             get_mood_status_text(),
@@ -6787,8 +6898,18 @@ def chat_fn(message, history, image):
 
         workspace.tick(camera_manager, image, globals(), clean_message)
         perception = workspace.state.perception if workspace.state else build_perception(camera_manager, image, globals(), clean_message)
-        expr_state = update_expression_state(perception.frame, recognized_person_id=perception.face_identity)
-        process_camera_snapshot(perception.frame, recognized_text=perception.recognized_text, recognized_person_id=perception.face_identity, expression_state=expr_state)
+        expr_state = update_expression_state(
+            perception.frame,
+            recognized_person_id=perception.face_identity,
+            visual_truth_trusted=perception.visual_truth_trusted,
+        )
+        if perception.visual_truth_trusted:
+            process_camera_snapshot(
+                perception.frame,
+                recognized_text=perception.recognized_text,
+                recognized_person_id=perception.face_identity,
+                expression_state=expr_state,
+            )
         person_id = active_profile["person_id"]
         return scrub_chat_callback_result((
             _chatbot_messages_out(),
@@ -6819,7 +6940,11 @@ def chat_fn(message, history, image):
         workspace.tick(camera_manager, image, globals(), clean_message)
         perception = workspace.state.perception if workspace.state else build_perception(camera_manager, image, globals(), clean_message)
         recognized_text, recognized_person_id = perception.recognized_text, perception.face_identity
-        expr_state = update_expression_state(perception.frame, recognized_person_id=recognized_person_id)
+        expr_state = update_expression_state(
+            perception.frame,
+            recognized_person_id=recognized_person_id,
+            visual_truth_trusted=perception.visual_truth_trusted,
+        )
         return scrub_chat_callback_result((
             _chatbot_messages_out(),
             clean_message,
@@ -6848,9 +6973,18 @@ def voice_fn(audio, history, image):
     history = _sync_canonical_history(history)
 
     if not audio:
+        perc = build_perception(camera_manager, image, globals(), "")
         recognized_text, recognized_person_id = recognize_face(image)
-        expr_state = update_expression_state(image, recognized_person_id=recognized_person_id)
-        process_camera_snapshot(image, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expr_state)
+        expr_state = update_expression_state(
+            image, recognized_person_id=recognized_person_id, visual_truth_trusted=perc.visual_truth_trusted
+        )
+        if perc.visual_truth_trusted:
+            process_camera_snapshot(
+                image,
+                recognized_text=recognized_text,
+                recognized_person_id=recognized_person_id,
+                expression_state=expr_state,
+            )
         return scrub_chat_callback_result((
             _chatbot_messages_out(),
             None,
@@ -6875,9 +7009,18 @@ def voice_fn(audio, history, image):
 
     text = transcribe_audio(audio)
     if not text.strip():
+        perc = build_perception(camera_manager, image, globals(), "")
         recognized_text, recognized_person_id = recognize_face(image)
-        expr_state = update_expression_state(image, recognized_person_id=recognized_person_id)
-        process_camera_snapshot(image, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expr_state)
+        expr_state = update_expression_state(
+            image, recognized_person_id=recognized_person_id, visual_truth_trusted=perc.visual_truth_trusted
+        )
+        if perc.visual_truth_trusted:
+            process_camera_snapshot(
+                image,
+                recognized_text=recognized_text,
+                recognized_person_id=recognized_person_id,
+                expression_state=expr_state,
+            )
         return scrub_chat_callback_result((
             _chatbot_messages_out(),
             None,
@@ -6913,9 +7056,18 @@ def voice_fn(audio, history, image):
         canon.append({"role": "user", "content": text.strip()})
         canon.append({"role": "assistant", "content": reply})
         _set_canonical_history(canon)
+        perc = build_perception(camera_manager, image, globals(), "")
         recognized_text, recognized_person_id = recognize_face(image)
-        expr_state = update_expression_state(image, recognized_person_id=recognized_person_id)
-        process_camera_snapshot(image, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expr_state)
+        expr_state = update_expression_state(
+            image, recognized_person_id=recognized_person_id, visual_truth_trusted=perc.visual_truth_trusted
+        )
+        if perc.visual_truth_trusted:
+            process_camera_snapshot(
+                image,
+                recognized_text=recognized_text,
+                recognized_person_id=recognized_person_id,
+                expression_state=expr_state,
+            )
         return scrub_chat_callback_result((
             _chatbot_messages_out(),
             None,
@@ -6958,17 +7110,28 @@ def voice_fn(audio, history, image):
     action_text = "\n".join(actions) if actions else "No action."
     reflections_text = format_reflections_ui(load_recent_reflections(limit=15, person_id=active_profile["person_id"]))
 
-    recognized_text, recognized_person_id = recognize_face(image)
-    expr_state = update_expression_state(image, recognized_person_id=recognized_person_id)
-    process_camera_snapshot(image, recognized_text=recognized_text, recognized_person_id=recognized_person_id, expression_state=expr_state)
+    perception_v = workspace.state.perception if workspace.state else build_perception(camera_manager, image, globals(), text.strip())
+    recognized_text, recognized_person_id = perception_v.recognized_text, perception_v.face_identity
+    expr_state = update_expression_state(
+        perception_v.frame,
+        recognized_person_id=recognized_person_id,
+        visual_truth_trusted=perception_v.visual_truth_trusted,
+    )
+    if perception_v.visual_truth_trusted:
+        process_camera_snapshot(
+            perception_v.frame,
+            recognized_text=recognized_text,
+            recognized_person_id=recognized_person_id,
+            expression_state=expr_state,
+        )
     return scrub_chat_callback_result((
         _chatbot_messages_out(),
         None,
-        visual["face_status"],
+        visual.get("face_status", perception_v.face_status),
         get_memory_status(),
         get_mood_status_text(),
-        visual["recognition_status"],
-        visual["expression_status"],
+        visual.get("recognition_status", perception_v.recognized_text),
+        visual.get("expression_status", get_expression_status_text(expr_state)),
         get_emotion_blend_text(),
         get_time_status_text(),
         f"{active_profile['name']} [{active_profile['person_id']}]",
@@ -7200,7 +7363,10 @@ def train_faces_fn():
 
 def recognize_face_now_fn(image):
     status, recognized_person_id = recognize_face(image)
-    expression_state = update_expression_state(image, recognized_person_id=recognized_person_id)
+    perc = build_perception(camera_manager, image, globals(), "")
+    expression_state = update_expression_state(
+        image, recognized_person_id=recognized_person_id, visual_truth_trusted=perc.visual_truth_trusted
+    )
     if recognized_person_id is not None:
         profile = set_active_person(recognized_person_id, source="facial_recognition_manual")
         return status, get_expression_status_text(expression_state), f"{profile['name']} [{profile['person_id']}]", json.dumps(profile, indent=2, ensure_ascii=False)

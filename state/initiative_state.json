@@ -1,22 +1,121 @@
 {
-  "last_face_seen_ts": 1775098796.8185518,
-  "last_interaction_ts": 1775098770.8268344,
-  "last_initiation_ts": 0.0,
-  "last_initiation_message": "",
-  "last_initiated_topic": "",
+  "last_face_seen_ts": 1775210579.673199,
+  "last_interaction_ts": 1775210511.3618479,
+  "last_initiation_ts": 1775208465.9840045,
+  "last_initiation_message": "Hey Zeke! Good to have you back. How's everything going?",
+  "last_initiated_topic": "return_greeting",
   "last_presence_reason": "face_and_recent_interaction",
   "presence_score": 1.0,
   "last_busy_score": 0.0,
-  "recent_initiated_topics": {},
-  "recent_initiated_texts": [],
-  "recent_candidate_kinds": [],
-  "recent_active_goals": [],
+  "recent_initiated_topics": {
+    "return_greeting": 1775208465.9840045
+  },
+  "recent_initiated_texts": [
+    {
+      "ts": 1775208044.5721898,
+      "topic_key": "return_greeting",
+      "text": "The user was away from the camera for about 2 minutes. Acknowledge they are back in one short, warm line.",
+      "kind": "return_greeting"
+    },
+    {
+      "ts": 1775208333.3906043,
+      "topic_key": "return_greeting",
+      "text": "The user was away from the camera for about 2 minutes. Acknowledge they are back in one short, warm line.",
+      "kind": "return_greeting"
+    },
+    {
+      "ts": 1775208465.9840045,
+      "topic_key": "return_greeting",
+      "text": "The user was away from the camera for about 56 seconds. Acknowledge they are back in one short, warm line.",
+      "kind": "return_greeting"
+    }
+  ],
+  "recent_candidate_kinds": [
+    {
+      "ts": 1775208044.5721898,
+      "kind": "return_greeting"
+    },
+    {
+      "ts": 1775208333.3906043,
+      "kind": "return_greeting"
+    },
+    {
+      "ts": 1775208465.9840045,
+      "kind": "return_greeting"
+    }
+  ],
+  "recent_active_goals": [
+    {
+      "ts": 1775208044.5721898,
+      "goal": "clarify"
+    },
+    {
+      "ts": 1775208333.3906043,
+      "goal": "clarify"
+    },
+    {
+      "ts": 1775208465.9840045,
+      "goal": "clarify"
+    }
+  ],
   "pending_initiation": null,
-  "initiative_history": [],
+  "initiative_history": [
+    {
+      "timestamp": "2026-04-03T05:20:44",
+      "topic_key": "return_greeting",
+      "text": "Hey Zeke, glad you're back! How was your break?",
+      "candidate_kind": "return_greeting",
+      "responded": false
+    },
+    {
+      "timestamp": "2026-04-03T05:23:05",
+      "topic_key": "return_greeting",
+      "text": "Hey Zeke, glad you're back! How was your break?",
+      "candidate_kind": "return_greeting",
+      "responded": true,
+      "response_kind": "text"
+    },
+    {
+      "timestamp": "2026-04-03T05:25:33",
+      "topic_key": "return_greeting",
+      "text": "Hey Zeke! Good to have you back! How was your break?",
+      "candidate_kind": "return_greeting",
+      "responded": false
+    },
+    {
+      "timestamp": "2026-04-03T05:25:51",
+      "topic_key": "return_greeting",
+      "text": "Hey Zeke! Good to have you back! How was your break?",
+      "candidate_kind": "return_greeting",
+      "responded": true,
+      "response_kind": "text"
+    },
+    {
+      "timestamp": "2026-04-03T05:27:45",
+      "topic_key": "return_greeting",
+      "text": "Hey Zeke! Good to have you back. How's everything going?",
+      "candidate_kind": "return_greeting",
+      "responded": false
+    },
+    {
+      "timestamp": "2026-04-03T05:28:03",
+      "topic_key": "return_greeting",
+      "text": "Hey Zeke! Good to have you back. How's everything going?",
+      "candidate_kind": "return_greeting",
+      "responded": true,
+      "response_kind": "text"
+    }
+  ],
   "consecutive_ignored_initiations": 0,
-  "last_user_message_length": 71,
+  "last_user_message_length": 89,
   "last_user_response_brief": false,
   "interaction_energy": 0.95,
+  "face_visible": true,
+  "face_left_at": null,
+  "face_returned_at": "2026-04-03T06:02:48",
+  "was_absent": true,
+  "absent_duration_seconds": 57,
+  "last_calibration_at_msg": 0,
   "last_decisiveness": 0.492,
   "last_choice_confidence": 0.35,
   "meta_control_snapshot": {

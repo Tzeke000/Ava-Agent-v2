@@ -10,7 +10,7 @@
   "likes": [],
   "dislikes": [],
   "ava_impressions": [],
-  "last_seen": "2026-04-02T17:14:27",
+  "last_seen": "2026-04-03T06:02:59",
   "created_at": "2026-04-01T20:47:21",
   "emotion_history": [
     "neutral",
@@ -25,8 +25,45 @@
     "neutral"
   ],
   "dominant_emotion": "neutral",
-  "relationship_score": 0.3,
-  "interaction_count": 0,
-  "last_seen_at": null,
-  "updated_at": "2026-04-02T17:14:27"
+  "relationship_score": 0.366,
+  "interaction_count": 3,
+  "last_seen_at": "2026-04-03T06:00:52",
+  "updated_at": "2026-04-03T06:02:59",
+  "threads": [
+    {
+      "id": "55989f1d-f428-440b-9197-e0775776ac8c",
+      "topic": "Hey Ava how are you feeling?",
+      "first_mentioned": "2026-04-03T05:15:09",
+      "last_mentioned": "2026-04-03T05:15:09",
+      "emotion": "concerned",
+      "resolved": false,
+      "notes": "Hey Ava how are you feeling?"
+    },
+    {
+      "id": "bfa55e62-7920-4b2c-850b-7f0d85114ec8",
+      "topic": "ok ive given you a lot of updates so a lot of things have happened to you im gla",
+      "first_mentioned": "2026-04-03T05:19:35",
+      "last_mentioned": "2026-04-03T05:19:35",
+      "emotion": "concerned",
+      "resolved": false,
+      "notes": "ok ive given you a lot of updates so a lot of things have happened to you im glad you're feeling good Ava. im going to do a few more tests before we have some r…"
+    },
+    {
+      "id": "f037b938-fac5-4287-b300-5b1a60c4af06",
+      "topic": "dont be worried Ava youll be better when you wake up",
+      "first_mentioned": "2026-04-03T05:53:49",
+      "last_mentioned": "2026-04-03T05:53:49",
+      "emotion": "anxious",
+      "resolved": false,
+      "notes": "dont be worried Ava youll be better when you wake up"
+    }
+  ],
+  "cadence": {
+    "avg_days_between_sessions": 0.0,
+    "longest_gap_days": 0.0,
+    "total_sessions": 1,
+    "last_gap_days": 0.0
+  },
+  "last_activity_at": "2026-04-03T06:02:13",
+  "last_topic": "thats good Ava. ok im putting you to sleep now do i can upgrade your eyes. sleep well Ava"
 }
