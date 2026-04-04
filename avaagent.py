@@ -6914,10 +6914,10 @@ def chat_fn(message, history, image):
         return scrub_chat_callback_result((
             _chatbot_messages_out(),
             "",
-            visual.get("face_status", ""),
+            visual.get("face_status", perception.face_status),
             get_memory_status(),
             get_mood_status_text(),
-            visual.get("recognition_status", ""),
+            visual.get("recognition_status", perception.recognized_text),
             get_expression_status_text(expr_state),
             get_emotion_blend_text(),
             get_time_status_text(),
