@@ -143,12 +143,13 @@ class Workspace:
         )
         if log_key != self._last_ws_tick_log_key:
             self._last_ws_tick_log_key = log_key
+            pv = ws.perception
             print(
-                f"[workspace] tick | face={ws.perception.face_detected} "
-                f"emotion={ws.perception.face_emotion} "
-                f"speak={ws.attention.should_speak} "
-                f"goal={goal_s!s} "
-                f"memories={len(ws.active_memory)}"
+                f"[workspace] tick | vision={getattr(pv, 'vision_status', '?')} "
+                f"trusted={getattr(pv, 'visual_truth_trusted', True)} "
+                f"streak={getattr(pv, 'fresh_frame_streak', 0)} "
+                f"face={pv.face_detected} emotion={pv.face_emotion} "
+                f"speak={ws.attention.should_speak} goal={goal_s!s} memories={len(ws.active_memory)}"
             )
 
         return ws
