@@ -146,6 +146,7 @@ class Workspace:
             pv = ws.perception
             print(
                 f"[workspace] tick | vision={getattr(pv, 'vision_status', '?')} "
+                f"acq={getattr(pv, 'acquisition_freshness', '?')} "
                 f"recovery={getattr(pv, 'recovery_state', '?')} "
                 f"trusted={getattr(pv, 'visual_truth_trusted', True)} "
                 f"fq={getattr(pv, 'frame_quality', 0.0):.2f} "

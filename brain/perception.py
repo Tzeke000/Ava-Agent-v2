@@ -55,6 +55,8 @@ class PerceptionState:
     last_stable_identity: str | None = None
     identity_confidence: float = 0.0
     continuity_confidence: float = 0.0
+    # Phase 2 — acquisition layer (see brain.frame_store)
+    acquisition_freshness: str = "unavailable"
 
 
 def build_perception(camera_manager, image, g: dict, user_text: str = "") -> PerceptionState:
@@ -84,6 +86,9 @@ def build_perception(camera_manager, image, g: dict, user_text: str = "") -> Per
     state.last_stable_identity = resolved.last_stable_identity
     state.identity_confidence = 0.0
     state.continuity_confidence = 0.0
+    state.acquisition_freshness = getattr(
+        resolved, "acquisition_freshness", "unavailable"
+    )
 
     if resolved.frame is None:
         state.face_status = "No camera image"
@@ -92,9 +97,9 @@ def build_perception(camera_manager, image, g: dict, user_text: str = "") -> Per
         state.person_count = 0
         state.gaze_present = False
         print(
-            f"[perception] vision={state.vision_status} fq={state.frame_quality:.2f} "
-            f"recovery={state.recovery_state} trusted=False id_conf=0.0 "
-            f"(suppress identity/emotion/scene-as-current)"
+            f"[perception] vision={state.vision_status} acq={state.acquisition_freshness} "
+            f"fq={state.frame_quality:.2f} recovery={state.recovery_state} trusted=False "
+            f"id_conf=0.0 (suppress identity/emotion/scene-as-current)"
         )
         return state
 
@@ -180,10 +185,11 @@ def build_perception(camera_manager, image, g: dict, user_text: str = "") -> Per
 
     state.salience = _compute_salience(state)
     print(
-        f"[perception] vision={state.vision_status} age_ms={state.frame_age_ms:.0f} "
-        f"src={state.frame_source} fq={state.frame_quality:.2f} recovery={state.recovery_state} "
-        f"streak={state.fresh_frame_streak} trusted=True id_conf={state.identity_confidence:.2f} "
-        f"cont={state.continuity_confidence:.2f} (recognition/emotion allowed)"
+        f"[perception] vision={state.vision_status} acq={state.acquisition_freshness} "
+        f"age_ms={state.frame_age_ms:.0f} src={state.frame_source} fq={state.frame_quality:.2f} "
+        f"recovery={state.recovery_state} streak={state.fresh_frame_streak} trusted=True "
+        f"id_conf={state.identity_confidence:.2f} cont={state.continuity_confidence:.2f} "
+        f"(recognition/emotion allowed)"
     )
     return state
 
