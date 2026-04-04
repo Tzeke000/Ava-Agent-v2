@@ -80,6 +80,13 @@ This is a development-only quality-of-life feature that makes tuning the system 
 - **`brain/camera.py` / `brain/perception.py`**: **`ResolvedFrame.acquisition_freshness`** and **`PerceptionState.acquisition_freshness`**; **`[camera]`** / **`[perception]`** / **`[workspace]`** logs include **`acq=`**.
 - Vision trust / **`STALE_FRAME_MS`** in `camera.py` is unchanged; acquisition labels are diagnostic and age-aware alongside it.
 
+### Perception — Phase 3 — Staged pipeline *(live)*
+
+- **`brain/perception_types.py`**: `StageResult`, stage outputs (`AcquisitionOutput`, `QualityOutput`, `DetectionOutput`, `RecognitionOutput`, `ContinuityOutput`, `InterpretationOutput`, `PackageOutput`), `PerceptionPipelineBundle`; module doc lists future hooks (quality scoring, salience, tracking, scene summaries, interpretation).
+- **`brain/perception_utils.py`**: `lbph_distance_to_identity_confidence`, `compute_salience` (shared, no pipeline import cycles).
+- **`brain/perception_pipeline.py`**: `run_perception_pipeline()` → staged flow with **`[perception_pipeline]`** logs (`acquisition`, `quality`, `detection`, `recognition`, `continuity`, `interpretation`, `package`); `bundle_to_perception_state()` adapts to legacy **`PerceptionState`**. Detection/recognition short-circuit when vision is untrusted (same as before). Stage failures log and continue with safe defaults.
+- **`brain/perception.py`**: `build_perception()` delegates to the pipeline; **`PerceptionState`** unchanged for workspace / `avaagent`.
+
 ### P1-03 — Untrack Legacy `.tmp` Files
 
 Two `.tmp` files are still tracked in git from before `.gitignore` was updated:
