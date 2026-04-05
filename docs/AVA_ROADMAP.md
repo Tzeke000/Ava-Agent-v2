@@ -87,6 +87,14 @@ This is a development-only quality-of-life feature that makes tuning the system 
 - **`brain/perception_pipeline.py`**: `run_perception_pipeline()` → staged flow with **`[perception_pipeline]`** logs (`acquisition`, `quality`, `detection`, `recognition`, `continuity`, `interpretation`, `package`); `bundle_to_perception_state()` adapts to legacy **`PerceptionState`**. Detection/recognition short-circuit when vision is untrusted (same as before). Stage failures log and continue with safe defaults.
 - **`brain/perception.py`**: `build_perception()` delegates to the pipeline; **`PerceptionState`** unchanged for workspace / `avaagent`.
 
+### Perception — Phase 4 — Frame quality scoring *(live)*
+
+- **`brain/frame_quality.py`**: `compute_frame_quality()`, `assess_frame_quality_basic()` (compat tuple API), centralized **`USABLE_MIN_OVERALL`** / **`WEAK_MIN_OVERALL`** (aligned with `camera.LOW_QUALITY_THRESHOLD`), per-metric scores (blur, darkness, overexposure; motion smear + occlusion **provisional**), **`[frame_quality]`** logs, labels **`usable` | `weak` | `unreliable`**.
+- **`brain/perception_types.py`**: **`FrameQualityAssessment`**; **`QualityOutput`** carries **`structured`**, **`recognition_confidence_scale`**, **`expression_confidence_scale`**.
+- **`brain/camera.py`**: Single `compute_frame_quality` pass per resolve; **`ResolvedFrame.quality_detail`**; **`[camera]`** includes **`qlabel=`**.
+- **`brain/perception_pipeline.py`**: Quality stage attaches structured output + scales; trusted-path **identity** / **salience** scaled **additively** from label.
+- **`brain/perception.py`**: **`PerceptionState`** extended with **`quality_label`**, metric scores, and scale fields (defaults safe for old code paths).
+
 ### P1-03 — Untrack Legacy `.tmp` Files
 
 Two `.tmp` files are still tracked in git from before `.gitignore` was updated:

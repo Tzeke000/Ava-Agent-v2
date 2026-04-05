@@ -23,6 +23,28 @@ from .perception_types import (
     StageResult,
 )
 from .perception_utils import compute_salience, lbph_distance_to_identity_confidence
+from .frame_quality import compute_frame_quality, confidence_scales_from_label
+
+
+def _apply_quality_fields_to_state(state: Any, q: QualityOutput) -> None:
+    """Copy structured quality + scales onto PerceptionState (Phase 4)."""
+    state.recognition_quality_scale = q.recognition_confidence_scale
+    state.expression_quality_scale = q.expression_confidence_scale
+    sq = q.structured
+    if sq is None:
+        state.quality_label = "unreliable"
+        state.blur_quality_score = 0.0
+        state.darkness_quality_score = 0.0
+        state.overexposure_quality_score = 0.0
+        state.motion_smear_quality_score = 1.0
+        state.occlusion_quality_score = 1.0
+        return
+    state.quality_label = sq.quality_label
+    state.blur_quality_score = sq.blur_score
+    state.darkness_quality_score = sq.darkness_score
+    state.overexposure_quality_score = sq.overexposure_score
+    state.motion_smear_quality_score = sq.motion_smear_score
+    state.occlusion_quality_score = sq.occlusion_score
 
 
 def _stage_acquisition(camera_manager: Any, image: Any) -> AcquisitionOutput:
@@ -48,15 +70,27 @@ def _stage_quality(resolved: Any) -> QualityOutput:
             stage=StageResult(ok=False, skipped=True, error="no_resolution"),
             visual_truth_trusted=False,
             vision_status="stable",
+            recognition_confidence_scale=1.0,
+            expression_confidence_scale=1.0,
         )
+    structured = getattr(resolved, "quality_detail", None)
+    if structured is None and resolved.frame is not None:
+        structured = compute_frame_quality(resolved.frame)
+    label = structured.quality_label if structured is not None else "unreliable"
+    rec_scale, expr_scale = confidence_scales_from_label(label)
     conf = 1.0 if resolved.visual_truth_trusted else 0.0
     print(
         f"[perception_pipeline] quality vision={resolved.vision_status} "
         f"trusted={resolved.visual_truth_trusted} fq={resolved.frame_quality:.2f} "
-        f"recovery={resolved.recovery_state}"
+        f"qlabel={label} recovery={resolved.recovery_state} "
+        f"rec_scale={rec_scale:.2f} expr_scale={expr_scale:.2f}"
     )
     return QualityOutput(
-        stage=StageResult(ok=True, confidence=conf, meta={"vision_status": resolved.vision_status}),
+        stage=StageResult(
+            ok=True,
+            confidence=conf,
+            meta={"vision_status": resolved.vision_status, "quality_label": label},
+        ),
         visual_truth_trusted=resolved.visual_truth_trusted,
         vision_status=resolved.vision_status,
         frame_quality=resolved.frame_quality,
@@ -64,6 +98,9 @@ def _stage_quality(resolved: Any) -> QualityOutput:
         is_fresh=resolved.is_fresh,
         recovery_state=resolved.recovery_state,
         fresh_frame_streak=resolved.fresh_frame_streak,
+        structured=structured,
+        recognition_confidence_scale=rec_scale,
+        expression_confidence_scale=expr_scale,
     )
 
 
@@ -306,6 +343,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
     state.identity_confidence = 0.0
     state.continuity_confidence = 0.0
     state.acquisition_freshness = getattr(resolved, "acquisition_freshness", "unavailable")
+    _apply_quality_fields_to_state(state, q)
 
     if resolved.frame is None:
         state.face_status = "No camera image"
@@ -315,8 +353,8 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
         state.gaze_present = False
         print(
             f"[perception] vision={state.vision_status} acq={state.acquisition_freshness} "
-            f"fq={state.frame_quality:.2f} recovery={state.recovery_state} trusted=False "
-            f"id_conf=0.0 (suppress identity/emotion/scene-as-current)"
+            f"qlabel={state.quality_label} fq={state.frame_quality:.2f} recovery={state.recovery_state} "
+            f"trusted=False id_conf=0.0 (suppress identity/emotion/scene-as-current)"
         )
         return state
 
@@ -349,9 +387,10 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
             state.continuity_confidence = 0.12
         state.salience = i.salience
         print(
-            f"[perception] vision={state.vision_status} age_ms={state.frame_age_ms:.0f} "
-            f"src={state.frame_source} fq={state.frame_quality:.2f} recovery={state.recovery_state} "
-            f"streak={state.fresh_frame_streak} trusted=False id_conf=0.0 cont={state.continuity_confidence:.2f} "
+            f"[perception] vision={state.vision_status} qlabel={state.quality_label} "
+            f"age_ms={state.frame_age_ms:.0f} src={state.frame_source} fq={state.frame_quality:.2f} "
+            f"recovery={state.recovery_state} streak={state.fresh_frame_streak} trusted=False "
+            f"id_conf=0.0 cont={state.continuity_confidence:.2f} "
             f"(suppress identity/emotion/scene-as-current)"
         )
         return state
@@ -365,24 +404,28 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
     state.face_emotion = i.face_emotion
 
     if state.face_identity:
-        state.identity_confidence = lbph_distance_to_identity_confidence(state.recognized_text)
+        state.identity_confidence = (
+            lbph_distance_to_identity_confidence(state.recognized_text)
+            * q.recognition_confidence_scale
+        )
         state.last_stable_identity = state.face_identity
         state.continuity_confidence = state.identity_confidence
     elif state.face_detected:
-        state.identity_confidence = 0.22
+        state.identity_confidence = 0.22 * q.recognition_confidence_scale
         state.continuity_confidence = 0.18 if state.last_stable_identity else 0.0
     else:
         state.identity_confidence = 0.0
         state.continuity_confidence = 0.15 if state.last_stable_identity else 0.0
 
-    state.salience = compute_salience(
-        state.face_detected, state.face_emotion, user_text or ""
+    state.salience = (
+        compute_salience(state.face_detected, state.face_emotion, user_text or "")
+        * q.expression_confidence_scale
     )
     print(
         f"[perception] vision={state.vision_status} acq={state.acquisition_freshness} "
-        f"age_ms={state.frame_age_ms:.0f} src={state.frame_source} fq={state.frame_quality:.2f} "
-        f"recovery={state.recovery_state} streak={state.fresh_frame_streak} trusted=True "
-        f"id_conf={state.identity_confidence:.2f} cont={state.continuity_confidence:.2f} "
+        f"qlabel={state.quality_label} age_ms={state.frame_age_ms:.0f} src={state.frame_source} "
+        f"fq={state.frame_quality:.2f} recovery={state.recovery_state} streak={state.fresh_frame_streak} "
+        f"trusted=True id_conf={state.identity_confidence:.2f} cont={state.continuity_confidence:.2f} "
         f"(recognition/emotion allowed)"
     )
     return state

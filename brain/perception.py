@@ -52,6 +52,15 @@ class PerceptionState:
     continuity_confidence: float = 0.0
     # Phase 2 — acquisition layer (see brain.frame_store)
     acquisition_freshness: str = "unavailable"
+    # Phase 4 — structured quality (brain.frame_quality + perception_pipeline quality stage)
+    quality_label: str = "unreliable"
+    blur_quality_score: float = 0.0
+    darkness_quality_score: float = 0.0
+    overexposure_quality_score: float = 0.0
+    motion_smear_quality_score: float = 1.0
+    occlusion_quality_score: float = 1.0
+    recognition_quality_scale: float = 1.0
+    expression_quality_scale: float = 1.0
 
 
 def _compute_salience(state: PerceptionState) -> float:

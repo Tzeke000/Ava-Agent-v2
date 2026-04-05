@@ -149,6 +149,7 @@ class Workspace:
                 f"acq={getattr(pv, 'acquisition_freshness', '?')} "
                 f"recovery={getattr(pv, 'recovery_state', '?')} "
                 f"trusted={getattr(pv, 'visual_truth_trusted', True)} "
+                f"ql={getattr(pv, 'quality_label', '?')} "
                 f"fq={getattr(pv, 'frame_quality', 0.0):.2f} "
                 f"streak={getattr(pv, 'fresh_frame_streak', 0)} "
                 f"id_conf={getattr(pv, 'identity_confidence', 0.0):.2f} "

@@ -14,10 +14,11 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import cv2
 
+from .frame_quality import assess_frame_quality_basic, compute_frame_quality
 from .frame_store import (
     LIVE_CACHE_MAX_AGE_SEC,
     classify_acquisition_freshness,
@@ -30,36 +31,6 @@ STALE_FRAME_MS = 1000
 FRESH_STREAK_FOR_STABLE = 3
 # Below this aggregate quality score [0,1], vision is "low_quality" (E1 minimal heuristic; E3 expands).
 LOW_QUALITY_THRESHOLD = 0.28
-
-
-def assess_frame_quality_basic(frame: Any) -> tuple[float, list[str]]:
-    """
-    OpenCV-only lightweight quality hint for E1 (blur + luminance).
-    Returns (score in [0,1], human-readable reason flags). Higher score = more usable.
-    """
-    if frame is None:
-        return 0.0, ["no_frame"]
-    reasons: list[str] = []
-    try:
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        blur_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-        if blur_var < 45.0:
-            reasons.append("blurry")
-        mean_lum = float(gray.mean()) / 255.0
-        if mean_lum < 0.07:
-            reasons.append("very_dark")
-        elif mean_lum < 0.12:
-            reasons.append("low_light")
-        if mean_lum > 0.93:
-            reasons.append("overexposed")
-        blur_score = min(1.0, blur_var / 180.0)
-        lum_score = 1.0 - min(1.0, abs(mean_lum - 0.42) * 2.0)
-        score = 0.55 * blur_score + 0.45 * max(0.0, lum_score)
-        if reasons:
-            score *= 0.82
-        return max(0.0, min(1.0, score)), reasons
-    except Exception:
-        return 0.5, ["quality_unavailable"]
 
 
 @dataclass
@@ -82,6 +53,8 @@ class ResolvedFrame:
     last_stable_identity: str | None  # last trusted recognition person_id (continuity; E4 extends)
     # Phase 2 acquisition layer: fresh | aging | stale | unavailable (live cache vs UI age)
     acquisition_freshness: str = "unavailable"
+    # Phase 4 structured quality (same overall as frame_quality; see brain.frame_quality)
+    quality_detail: Optional[Any] = None
 
 
 @dataclass
@@ -178,9 +151,13 @@ class CameraManager:
 
         fp_val = self._frame_fp(frame) if frame is not None else 0
         is_fresh = frame is not None and frame_age_ms <= STALE_FRAME_MS
-        frame_quality, frame_quality_reasons = (
-            assess_frame_quality_basic(frame) if frame is not None else (0.0, ["no_frame"])
-        )
+        if frame is not None:
+            fq_detail = compute_frame_quality(frame)
+            frame_quality = fq_detail.overall_quality_score
+            frame_quality_reasons = list(fq_detail.reason_flags)
+        else:
+            fq_detail = None
+            frame_quality, frame_quality_reasons = 0.0, ["no_frame"]
 
         if frame is None:
             vision_status = "no_frame"
@@ -232,9 +209,10 @@ class CameraManager:
 
         fq_s = f"{frame_quality:.2f}"
         rsn = ",".join(frame_quality_reasons) if frame_quality_reasons else "-"
+        ql = getattr(fq_detail, "quality_label", "-") if fq_detail else "-"
         print(
             f"[camera] src={source} age_ms={age_ms_out:.0f} acq={acquisition_freshness} "
-            f"fq={fq_s} fq_r={rsn} vision={vision_status} recovery={recovery_state} "
+            f"fq={fq_s} qlabel={ql} fq_r={rsn} vision={vision_status} recovery={recovery_state} "
             f"streak={self._fresh_frame_streak} trusted={trusted} seq={seq} "
             f"last_id={self._last_stable_person_id or '-'}"
         )
@@ -255,6 +233,7 @@ class CameraManager:
             fresh_frame_streak=self._fresh_frame_streak,
             last_stable_identity=self._last_stable_person_id,
             acquisition_freshness=acquisition_freshness,
+            quality_detail=fq_detail,
         )
 
     def resolve_frame(self, image=None):
