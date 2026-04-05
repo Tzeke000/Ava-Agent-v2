@@ -14,6 +14,7 @@ Downstream code adapts a :class:`PerceptionPipelineBundle` to :class:`perception
 - **Phase 6 salience** — :class:`SalientItem`, :class:`SalienceResult`, ``brain.salience.build_salience_result``; ranked items on :class:`InterpretationOutput` / :class:`perception.PerceptionState` for summaries, memory-worthiness, and initiative (see roadmap).
 - **Phase 7 continuity** — :class:`ContinuityResult` (identity_state, temporal match factors); ``brain.continuity.update_continuity``.
 - **Phase 8 identity** — :class:`IdentityResolutionResult` (raw vs resolved identity); ``brain.identity_fallback.resolve_identity_fallback``.
+- **Phase 9 scene** — :class:`SceneSummaryResult`; ``brain.scene_summary.build_scene_summary``.
 """
 from __future__ import annotations
 
@@ -172,6 +173,25 @@ class IdentityResolutionResult:
 
 
 @dataclass
+class SceneSummaryResult:
+    """Phase 9 — compact stable scene description for reasoning, memory, and UI."""
+
+    face_presence: str = "unknown"  # none | unknown_face | single_face | multiple_faces
+    face_count_estimate: int = 0
+    primary_identity_summary: str = ""
+    key_entities: list[str] = field(default_factory=list)
+    lighting_summary: str = ""
+    blur_summary: str = ""
+    scene_change_summary: str = ""
+    entrant_summary: str = ""
+    overall_scene_state: str = "uncertain"  # stable | changed | uncertain
+    compact_text_summary: str = ""
+    summary_confidence: float = 0.5
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class ContinuityOutput:
     """Stage 5 — identity continuity / tracking + Phase 7 structured result."""
 
@@ -217,3 +237,5 @@ class PerceptionPipelineBundle:
     user_text: str = ""
     # Phase 8 — after continuity
     identity_resolution: Optional[IdentityResolutionResult] = None
+    # Phase 9 — after identity resolution
+    scene_summary: Optional[SceneSummaryResult] = None

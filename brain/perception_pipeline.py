@@ -2,8 +2,8 @@
 Phase 3 — staged perception pipeline.
 
 Stages (conceptual): acquisition → quality gate → detection → recognition →
-interpretation (emotion + salience) → continuity (Phase 7 temporal) → package →
-:class:`perception.PerceptionState` via adapter.
+interpretation (emotion + salience) → continuity (Phase 7) → identity fallback (Phase 8) →
+scene summary (Phase 9) → package → :class:`perception.PerceptionState` via adapter.
 
 Failures in one stage do not abort the turn; each stage returns safe defaults and ``StageResult``.
 """
@@ -19,6 +19,7 @@ from .perception_types import (
     DetectionOutput,
     IdentityResolutionResult,
     InterpretationOutput,
+    SceneSummaryResult,
     PackageOutput,
     PerceptionPipelineBundle,
     QualityOutput,
@@ -30,6 +31,7 @@ from .frame_quality import compute_frame_quality, confidence_scales_from_label
 from .salience import build_salience_result, salience_items_as_dicts
 from .continuity import update_continuity
 from .identity_fallback import resolve_identity_fallback
+from .scene_summary import build_scene_summary
 
 
 def _apply_quality_fields_to_state(state: Any, q: QualityOutput) -> None:
@@ -116,6 +118,38 @@ def _apply_identity_resolution_to_state(state: Any, ir: IdentityResolutionResult
     state.identity_fallback_source = ir.fallback_source
     state.identity_fallback_notes = list(ir.fallback_notes)
     state.identity_confidence = float(ir.identity_confidence)
+
+
+def _apply_scene_summary_to_state(state: Any, ss: SceneSummaryResult | None) -> None:
+    """Copy Phase 9 scene summary onto PerceptionState."""
+    if ss is None:
+        state.scene_compact_summary = ""
+        state.scene_overall_state = "uncertain"
+        state.scene_summary_confidence = 0.0
+        state.scene_face_presence = "unknown"
+        state.scene_face_count_estimate = 0
+        state.scene_primary_identity_line = ""
+        state.scene_key_entities = []
+        state.scene_lighting_summary = ""
+        state.scene_blur_summary = ""
+        state.scene_change_summary = ""
+        state.scene_entrant_summary = ""
+        state.scene_summary_notes = []
+        state.scene_summary_meta = {}
+        return
+    state.scene_compact_summary = ss.compact_text_summary
+    state.scene_overall_state = ss.overall_scene_state
+    state.scene_summary_confidence = float(ss.summary_confidence)
+    state.scene_face_presence = ss.face_presence
+    state.scene_face_count_estimate = int(ss.face_count_estimate)
+    state.scene_primary_identity_line = ss.primary_identity_summary
+    state.scene_key_entities = list(ss.key_entities)
+    state.scene_lighting_summary = ss.lighting_summary
+    state.scene_blur_summary = ss.blur_summary
+    state.scene_change_summary = ss.scene_change_summary
+    state.scene_entrant_summary = ss.entrant_summary
+    state.scene_summary_notes = list(ss.notes)
+    state.scene_summary_meta = dict(ss.meta)
 
 
 def _apply_salience_structured_to_state(state: Any, interp: InterpretationOutput) -> None:
@@ -488,6 +522,26 @@ def run_perception_pipeline(
         f"resolved={id_res.resolved_identity!r}"
     )
 
+    vs = getattr(resolved, "vision_status", "no_frame") if resolved is not None else "no_frame"
+    af = getattr(resolved, "acquisition_freshness", "unavailable") if resolved is not None else "unavailable"
+    fseq = int(getattr(resolved, "frame_seq", 0) or 0) if resolved is not None else 0
+    ss = build_scene_summary(
+        trusted=trusted,
+        vision_status=str(vs),
+        face_detected=bool(det.face_detected),
+        person_count=int(det.person_count or 0),
+        id_res=id_res,
+        qual=qual,
+        interp=interp,
+        cont=cont,
+        acquisition_freshness=str(af),
+        frame_seq=fseq,
+    )
+    print(
+        f"[perception_pipeline] summary state={ss.overall_scene_state} "
+        f"identity={ss.primary_identity_summary!r} change={ss.scene_change_summary!r}"
+    )
+
     print(
         f"[perception_pipeline] package trusted={trusted} vision="
         f"{getattr(resolved, 'vision_status', 'n/a') if resolved else 'n/a'}"
@@ -505,6 +559,7 @@ def run_perception_pipeline(
         resolved=resolved,
         user_text=ut,
         identity_resolution=id_res,
+        scene_summary=ss,
     )
 
 
@@ -523,8 +578,10 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
     c = bundle.continuity
     i = bundle.interpretation
     idr = bundle.identity_resolution
+    ss = bundle.scene_summary
 
     if not bundle.acquisition.stage.ok or resolved is None:
+        _apply_scene_summary_to_state(state, ss)
         return state
 
     state.frame = resolved.frame
@@ -556,6 +613,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
             f"qlabel={state.quality_label} fq={state.frame_quality:.2f} recovery={state.recovery_state} "
             f"trusted=False id_conf=0.0 (suppress identity/emotion/scene-as-current)"
         )
+        _apply_scene_summary_to_state(state, ss)
         return state
 
     if not resolved.visual_truth_trusted:
@@ -597,6 +655,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
             f"id_conf=0.0 cont={state.continuity_confidence:.2f} "
             f"(suppress identity/emotion/scene-as-current)"
         )
+        _apply_scene_summary_to_state(state, ss)
         return state
 
     state.face_status = d.face_status
@@ -635,6 +694,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
         base_sal * q.quality_only_expression_scale * q.blur_interpretation_scale
     )
     _apply_salience_structured_to_state(state, i)
+    _apply_scene_summary_to_state(state, ss)
     print(
         f"[perception] vision={state.vision_status} acq={state.acquisition_freshness} "
         f"qlabel={state.quality_label} blur_label={state.blur_label} blur_val={state.blur_value:.1f} "
@@ -644,6 +704,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
         f"cont={state.continuity_confidence:.2f} id_state={state.identity_state} "
         f"resolved_id={state.resolved_face_identity!r} raw_id={state.face_identity!r} "
         f"salience={state.salience:.2f} top={state.salience_top_type}:{state.salience_top_label} "
+        f"scene={state.scene_overall_state!r} "
         f"(base={base_sal:.2f} expr_q={q.quality_only_expression_scale:.2f} blur_interp={q.blur_interpretation_scale:.2f})"
     )
     return state
