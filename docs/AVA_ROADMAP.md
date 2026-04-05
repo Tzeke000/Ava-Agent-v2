@@ -108,6 +108,12 @@ This is a development-only quality-of-life feature that makes tuning the system 
 - **`brain/perception_types.py`**: **`SalientItem`**, **`SalienceResult`**; **`DetectionOutput.face_rects`**; **`InterpretationOutput.salience_structured`**.
 - **`brain/perception_pipeline.py`**: After detection + recognition, interpretation builds structured salience; logs **`[salience]`** per item and **`[perception_pipeline] top_salient=`**; final **`PerceptionState.salience`** still equals combined scalar × expression-quality × blur-interp scales; **`salience_items`**, **`salience_top_*`**, **`salience_combined_scalar`** exposed for UI / memory / initiative hooks.
 
+### Perception — Phase 7 — Tracking and continuity *(live)*
+
+- **`brain/continuity.py`**: Module-level **recent primary-face memory** (normalized center, area ratio, last identity, salience top label); **`update_continuity()`** compares the current trusted tick using **spatial** (center distance + size ratio), **time decay** (wall clock + frame gap), **salience top** consistency, and **LBPH** when recognized. Emits **`ContinuityResult`**: `identity_state` (`confirmed_recognition` | `likely_same_known` | `unknown_face` | `no_face`), `continuity_confidence`, `prior_identity` / `current_identity`, `matched_factors` / `matched_notes`, `suppress_flip` when carrying prior without fresh recognition.
+- **`brain/perception_types.py`**: **`ContinuityResult`**; **`ContinuityOutput.structured`**.
+- **`brain/perception_pipeline.py`**: Pipeline order **interpretation → continuity** (salience available); **`note_trusted_identity`** only on **confirmed_recognition**; logs **`[continuity]`** and **`[perception_pipeline] continuity`**; **`PerceptionState`** gets **`identity_state`** and continuity detail fields; **`likely_same_known`** raises **`identity_confidence`** and sets **`last_stable_identity`** from continuity while **`face_identity`** stays raw LBPH output.
+
 ### P1-03 — Untrack Legacy `.tmp` Files
 
 Two `.tmp` files are still tracked in git from before `.gitignore` was updated:

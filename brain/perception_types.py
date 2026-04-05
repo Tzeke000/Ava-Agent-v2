@@ -12,6 +12,7 @@ Downstream code adapts a :class:`PerceptionPipelineBundle` to :class:`perception
 - **Interpretation** layer — LLM or rule-based scene narration (gated by trust).
 - **Phase 5 blur** — scene summaries, recognition fallback, interpretation certainty, and visual memory-worthiness can read ``blur_label`` / ``blur_reason_flags`` from :class:`FrameQualityAssessment` or :class:`perception.PerceptionState` (hooks not all wired yet).
 - **Phase 6 salience** — :class:`SalientItem`, :class:`SalienceResult`, ``brain.salience.build_salience_result``; ranked items on :class:`InterpretationOutput` / :class:`perception.PerceptionState` for summaries, memory-worthiness, and initiative (see roadmap).
+- **Phase 7 continuity** — :class:`ContinuityResult` (identity_state, temporal match factors); ``brain.continuity.update_continuity``.
 """
 from __future__ import annotations
 
@@ -139,13 +140,31 @@ class RecognitionOutput:
 
 
 @dataclass
+class ContinuityResult:
+    """Phase 7 — structured temporal continuity (lightweight frame memory, not a full tracker)."""
+
+    identity_state: str = "no_face"
+    # confirmed_recognition | likely_same_known | unknown_face | no_face
+    continuity_confidence: float = 0.0
+    prior_identity: Optional[str] = None
+    current_identity: Optional[str] = None
+    matched_factors: dict[str, float] = field(default_factory=dict)
+    matched_notes: list[str] = field(default_factory=list)
+    frame_gap: int = 0
+    seconds_since_prior: float = -1.0
+    suppress_flip: bool = False
+    last_stable_identity: Optional[str] = None
+
+
+@dataclass
 class ContinuityOutput:
-    """Stage 5 — identity continuity / tracking (placeholder + ``note_trusted_identity`` hook)."""
+    """Stage 5 — identity continuity / tracking + Phase 7 structured result."""
 
     stage: StageResult
     last_stable_identity: Optional[str] = None
     continuity_confidence: float = 0.0
     tracking_note: str = ""
+    structured: Optional[ContinuityResult] = None
 
 
 @dataclass
