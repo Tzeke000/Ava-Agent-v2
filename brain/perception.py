@@ -32,6 +32,12 @@ class PerceptionState:
     person_count: int = 0
     user_text: str = ""
     salience: float = 0.2
+    # Phase 6 — structured salience (pre quality/blur scalar in salience_combined_scalar when set)
+    salience_top_type: str = ""
+    salience_top_label: str = ""
+    salience_top_score: float = 0.0
+    salience_items: list[dict[str, Any]] = field(default_factory=list)
+    salience_combined_scalar: float = 0.2
     timestamp: float = field(default_factory=now_ts)
     face_status: str = "No camera image"
     recognized_text: str = ""
