@@ -5,7 +5,7 @@ Each stage produces a small dataclass with :class:`StageResult` plus stage-speci
 Downstream code adapts a :class:`PerceptionPipelineBundle` to :class:`perception.PerceptionState`.
 
 **Future extension points** (not all wired yet):
-- Richer **quality** scoring (blur, exposure) — partially in ``camera.assess_frame_quality_basic``.
+- **Frame quality** — see :class:`FrameQualityAssessment` and ``brain.frame_quality`` (Phase 4).
 - **Salience** scoring beyond face + emotion heuristics.
 - **Tracking / continuity** — multi-frame identity tracks (E4).
 - **Scene summaries** — short-term visual memory text.
@@ -15,6 +15,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Optional
+
+
+@dataclass
+class FrameQualityAssessment:
+    """
+    Structured frame quality (Phase 4). Scores are in [0, 1] where higher is better
+    except where noted. ``overall_quality_score`` matches the legacy camera aggregate
+    used for ``ResolvedFrame.frame_quality`` / low-quality gating when computed via
+    ``brain.frame_quality.compute_frame_quality``.
+    """
+
+    blur_score: float = 0.0
+    darkness_score: float = 0.0
+    overexposure_score: float = 0.0
+    motion_smear_score: float = 1.0
+    occlusion_score: float = 1.0
+    overall_quality_score: float = 0.0
+    quality_label: str = "unreliable"
+    reason_flags: list[str] = field(default_factory=list)
+    meta: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -38,7 +58,7 @@ class AcquisitionOutput:
 
 @dataclass
 class QualityOutput:
-    """Stage 2 — trust / staleness / quality gate (from ``ResolvedFrame``; no duplicate CV here)."""
+    """Stage 2 — trust / staleness / structured quality (see ``FrameQualityAssessment``)."""
 
     stage: StageResult
     visual_truth_trusted: bool = False
@@ -48,6 +68,9 @@ class QualityOutput:
     is_fresh: bool = False
     recovery_state: str = "none"
     fresh_frame_streak: int = 0
+    structured: Optional[FrameQualityAssessment] = None
+    recognition_confidence_scale: float = 1.0
+    expression_confidence_scale: float = 1.0
 
 
 @dataclass
