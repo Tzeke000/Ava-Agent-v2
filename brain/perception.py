@@ -2,7 +2,7 @@
 Unified perception from camera + user text.
 
 Phase 3: building :class:`PerceptionState` goes through :mod:`brain.perception_pipeline`
-(staged acquisition → quality → detection → recognition → continuity → interpretation → package).
+(staged acquisition → quality → detection → recognition → interpretation → continuity → package).
 
 Vision gating: identity, emotion, and present-tense scene claims require ``visual_truth_trusted``
 (camera layer: stable after fresh frames / recovery — see ``brain.camera``).
@@ -56,6 +56,16 @@ class PerceptionState:
     last_stable_identity: str | None = None
     identity_confidence: float = 0.0
     continuity_confidence: float = 0.0
+    # Phase 7 — temporal continuity (see brain.continuity)
+    identity_state: str = "no_face"
+    # confirmed_recognition | likely_same_known | unknown_face | no_face
+    continuity_prior_identity: str | None = None
+    continuity_current_identity: str | None = None
+    continuity_matched_factors: dict[str, Any] = field(default_factory=dict)
+    continuity_matched_notes: list[str] = field(default_factory=list)
+    continuity_frame_gap: int = 0
+    continuity_seconds_since_prior: float = -1.0
+    continuity_suppress_flip: bool = False
     # Phase 2 — acquisition layer (see brain.frame_store)
     acquisition_freshness: str = "unavailable"
     # Phase 4 — structured quality (brain.frame_quality + perception_pipeline quality stage)

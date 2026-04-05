@@ -1,8 +1,9 @@
 """
 Phase 3 — staged perception pipeline.
 
-Stages (conceptual): acquisition → quality gate → detection → recognition → continuity →
-interpretation → package → :class:`perception.PerceptionState` via adapter.
+Stages (conceptual): acquisition → quality gate → detection → recognition →
+interpretation (emotion + salience) → continuity (Phase 7 temporal) → package →
+:class:`perception.PerceptionState` via adapter.
 
 Failures in one stage do not abort the turn; each stage returns safe defaults and ``StageResult``.
 """
@@ -26,6 +27,7 @@ from .perception_types import (
 from .perception_utils import lbph_distance_to_identity_confidence
 from .frame_quality import compute_frame_quality, confidence_scales_from_label
 from .salience import build_salience_result, salience_items_as_dicts
+from .continuity import update_continuity
 
 
 def _apply_quality_fields_to_state(state: Any, q: QualityOutput) -> None:
@@ -79,6 +81,23 @@ def _log_top_salient(sal_res: SalienceResult) -> None:
         )
     else:
         print(f"[perception_pipeline] top_salient=none combined={sal_res.combined_scalar:.2f}")
+
+
+def _apply_continuity_structured_to_state(state: Any, cont: Any) -> None:
+    """Copy Phase 7 continuity snapshot onto PerceptionState."""
+    cr = getattr(cont, "structured", None)
+    if cr is None:
+        state.identity_state = "no_face"
+        return
+    state.identity_state = cr.identity_state
+    state.continuity_confidence = float(cr.continuity_confidence)
+    state.continuity_prior_identity = cr.prior_identity
+    state.continuity_current_identity = cr.current_identity
+    state.continuity_matched_factors = dict(cr.matched_factors)
+    state.continuity_matched_notes = list(cr.matched_notes)
+    state.continuity_frame_gap = int(cr.frame_gap)
+    state.continuity_seconds_since_prior = float(cr.seconds_since_prior)
+    state.continuity_suppress_flip = bool(cr.suppress_flip)
 
 
 def _apply_salience_structured_to_state(state: Any, interp: InterpretationOutput) -> None:
@@ -260,38 +279,74 @@ def _stage_recognition(
 def _stage_continuity(
     camera_manager: Any,
     resolved: Any,
+    det: DetectionOutput,
     recog: RecognitionOutput,
+    interp: InterpretationOutput,
     trusted: bool,
 ) -> ContinuityOutput:
-    """Placeholder tracking note; applies ``note_trusted_identity`` when recognition succeeds."""
+    """Phase 7 temporal continuity after salience; ``note_trusted_identity`` on confirmed recognition."""
     last_stable = getattr(resolved, "last_stable_identity", None) if resolved else None
+    sal_top_label = ""
+    sal_top_type = ""
+    sr = interp.salience_structured
+    if sr is not None and sr.items:
+        top = next((x for x in sr.items if x.is_top), None)
+        if top is None:
+            top = sr.items[0]
+        sal_top_label = top.label
+        sal_top_type = top.item_type
+
+    frame_seq = int(getattr(resolved, "frame_seq", 0) or 0) if resolved else 0
+    frame_ts = float(getattr(resolved, "frame_ts", 0.0) or 0.0) if resolved else 0.0
+    shape = resolved.frame.shape if resolved is not None and resolved.frame is not None else None
+
+    cr = update_continuity(
+        trusted=trusted,
+        frame_seq=frame_seq,
+        frame_ts=frame_ts,
+        frame_shape=shape,
+        face_detected=bool(det.face_detected),
+        face_rects=list(det.face_rects or []),
+        recognized_text=recog.recognized_text or "",
+        face_identity=recog.face_identity if trusted else None,
+        salience_top_label=sal_top_label,
+        salience_top_type=sal_top_type,
+    )
+
     if not trusted or resolved is None:
+        print(
+            f"[perception_pipeline] continuity state={cr.identity_state} conf={cr.continuity_confidence:.2f} "
+            f"(deferred_untrusted)"
+        )
         return ContinuityOutput(
             stage=StageResult(ok=False, skipped=True, error="untrusted"),
             last_stable_identity=last_stable,
-            continuity_confidence=0.0,
+            continuity_confidence=cr.continuity_confidence,
             tracking_note="continuity_deferred_until_trusted_frame",
+            structured=cr,
         )
-    continuity = 0.0
-    tracking_note = "placeholder_e4_tracking"
-    if recog.face_identity:
+
+    if cr.identity_state == "confirmed_recognition" and recog.face_identity:
         try:
             camera_manager.note_trusted_identity(recog.face_identity)
         except Exception as e:
             print(f"[perception_pipeline] continuity note_trusted_identity failed: {e}")
         last_stable = recog.face_identity
-        continuity = lbph_distance_to_identity_confidence(recog.recognized_text)
-    elif recog.stage.skipped:
-        tracking_note = "recognition_skipped"
+    elif cr.last_stable_identity:
+        last_stable = cr.last_stable_identity or last_stable
+
+    tracking_note = ",".join(cr.matched_notes[:5]) if cr.matched_notes else "continuity_v7"
+    flip = " suppress_flip" if cr.suppress_flip else ""
     print(
-        f"[perception_pipeline] continuity last_stable={last_stable!r} "
-        f"conf={continuity:.2f} note={tracking_note!r}"
+        f"[perception_pipeline] continuity state={cr.identity_state} conf={cr.continuity_confidence:.2f}"
+        f"{flip} last_stable={last_stable!r} note={tracking_note!r}"
     )
     return ContinuityOutput(
-        stage=StageResult(ok=True, confidence=continuity),
+        stage=StageResult(ok=True, confidence=cr.continuity_confidence),
         last_stable_identity=last_stable,
-        continuity_confidence=continuity,
+        continuity_confidence=cr.continuity_confidence,
         tracking_note=tracking_note,
+        structured=cr,
     )
 
 
@@ -299,7 +354,6 @@ def _stage_interpretation(
     resolved: Any,
     det: DetectionOutput,
     recog: RecognitionOutput,
-    cont: ContinuityOutput,
     trusted: bool,
     user_text: str,
     qual: QualityOutput,
@@ -379,10 +433,10 @@ def run_perception_pipeline(
     if trusted:
         det = _stage_detection(camera_manager, resolved, g)
         recog = _stage_recognition(camera_manager, resolved, g, True)
-        cont = _stage_continuity(camera_manager, resolved, recog, True)
-        interp = _stage_interpretation(resolved, det, recog, cont, True, ut, qual)
+        interp = _stage_interpretation(resolved, det, recog, True, ut, qual)
+        cont = _stage_continuity(camera_manager, resolved, det, recog, interp, True)
     else:
-        print("[perception_pipeline] detection/recognition/continuity short-circuit (untrusted or no frame)")
+        print("[perception_pipeline] detection/recognition short-circuit (untrusted or no frame)")
         det = DetectionOutput(
             stage=StageResult(ok=False, skipped=True, error="untrusted_or_no_frame"),
             face_status="No camera image",
@@ -393,8 +447,8 @@ def run_perception_pipeline(
             face_identity=None,
             identity_confidence=0.0,
         )
-        cont = _stage_continuity(camera_manager, resolved, recog, False)
-        interp = _stage_interpretation(resolved, det, recog, cont, False, ut, qual)
+        interp = _stage_interpretation(resolved, det, recog, False, ut, qual)
+        cont = _stage_continuity(camera_manager, resolved, det, recog, interp, False)
 
     print(
         f"[perception_pipeline] package trusted={trusted} vision="
@@ -489,7 +543,8 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
         state.face_detected = False
         state.person_count = 0
         state.gaze_present = False
-        if state.last_stable_identity:
+        _apply_continuity_structured_to_state(state, c)
+        if state.last_stable_identity and state.continuity_confidence < 0.12:
             state.continuity_confidence = 0.12
         base = float(i.salience)
         state.salience = base
@@ -511,19 +566,31 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
     state.face_identity = r.face_identity
     state.face_emotion = i.face_emotion
 
+    _apply_continuity_structured_to_state(state, c)
+    cr = c.structured
+
     if state.face_identity:
         state.identity_confidence = (
             lbph_distance_to_identity_confidence(state.recognized_text)
             * q.recognition_confidence_scale
         )
         state.last_stable_identity = state.face_identity
-        state.continuity_confidence = state.identity_confidence
+        if cr is not None:
+            state.continuity_confidence = max(
+                float(state.continuity_confidence), float(cr.continuity_confidence)
+            )
+    elif cr is not None and cr.identity_state == "likely_same_known" and cr.current_identity:
+        state.identity_confidence = max(
+            0.22 * q.recognition_confidence_scale,
+            min(0.88, float(cr.continuity_confidence) * 0.9),
+        )
+        state.last_stable_identity = cr.current_identity
     elif state.face_detected:
         state.identity_confidence = 0.22 * q.recognition_confidence_scale
-        state.continuity_confidence = 0.18 if state.last_stable_identity else 0.0
     else:
         state.identity_confidence = 0.0
-        state.continuity_confidence = 0.15 if state.last_stable_identity else 0.0
+        if state.last_stable_identity:
+            state.continuity_confidence = max(float(state.continuity_confidence), 0.14)
 
     # Interpretation / salience: structured combined scalar × quality expression × blur (interp).
     base_sal = float(i.salience)
@@ -537,8 +604,8 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
         f"age_ms={state.frame_age_ms:.0f} src={state.frame_source} "
         f"fq={state.frame_quality:.2f} recovery={state.recovery_state} streak={state.fresh_frame_streak} "
         f"trusted=True id_conf={state.identity_confidence:.2f} (rec_scale={q.recognition_confidence_scale:.2f}) "
-        f"cont={state.continuity_confidence:.2f} salience={state.salience:.2f} "
-        f"top={state.salience_top_type}:{state.salience_top_label} "
+        f"cont={state.continuity_confidence:.2f} id_state={state.identity_state} "
+        f"salience={state.salience:.2f} top={state.salience_top_type}:{state.salience_top_label} "
         f"(base={base_sal:.2f} expr_q={q.quality_only_expression_scale:.2f} blur_interp={q.blur_interpretation_scale:.2f})"
     )
     return state
