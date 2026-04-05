@@ -120,6 +120,12 @@ This is a development-only quality-of-life feature that makes tuning the system 
 - **`brain/perception_types.py`**: **`IdentityResolutionResult`**; **`PerceptionPipelineBundle.identity_resolution`**.
 - **`brain/perception_pipeline.py`**: **`note_trusted_identity`** only when Phase 8 resolution is **`confirmed_recognition`**; **`[perception_pipeline] identity resolved`**. **`PerceptionState`**: **`face_identity`** = raw LBPH; **`resolved_face_identity`** / **`stable_face_identity`** / **`identity_fallback_*`** for UI and later hooks.
 
+### Perception — Phase 9 — Scene summaries *(live)*
+
+- **`brain/scene_summary.py`**: **`build_scene_summary()`** after identity resolution — compact **`SceneSummaryResult`** from **`identity_state`**, resolved identity, quality/blur labels, motion smear, face-count delta (entrant hint), and vision trust. **`compact_text_summary`** for UI/prompts; **`overall_scene_state`** is **`stable`** \| **`changed`** \| **`uncertain`**; **`key_entities`** empty until object detection. Logs **`[scene_summary]`**.
+- **`brain/perception_types.py`**: **`SceneSummaryResult`**; **`PerceptionPipelineBundle.scene_summary`**.
+- **`brain/perception_pipeline.py`**: **`[perception_pipeline] summary`**; **`PerceptionState`** **`scene_*`** fields including **`scene_compact_summary`** and **`scene_summary_meta`**.
+
 ### P1-03 — Untrack Legacy `.tmp` Files
 
 Two `.tmp` files are still tracked in git from before `.gitignore` was updated:
