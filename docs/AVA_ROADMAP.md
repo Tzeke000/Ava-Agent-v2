@@ -132,6 +132,12 @@ This is a development-only quality-of-life feature that makes tuning the system 
 - **`brain/perception_types.py`**: **`InterpretationLayerResult`**; **`PerceptionPipelineBundle.interpretation_layer`**.
 - **`brain/perception_pipeline.py`**: **`PerceptionState`** **`interpretation_*`** fields; does **not** overwrite raw perception or **`scene_*`** text.
 
+### Perception — Phase 11 — Memory-ready perception outputs *(live)*
+
+- **`brain/perception_memory.py`**: After the interpretation layer, **`build_perception_memory_output()`** emits at most one **`PerceptionMemoryEvent`** per tick from scene summary + **`InterpretationLayerResult`** + identity resolution (with quality/salience/continuity in **`evidence`**). No storage or scoring yet.
+- **`brain/perception_types.py`**: **`PerceptionMemoryEvent`**, **`PerceptionMemoryOutput`**, **`PerceptionPipelineBundle.perception_memory`**.
+- **`brain/perception_pipeline.py`**: Runs memory output after **`build_interpretation_layer`**; logs **`[perception_memory]`** and **`[perception_pipeline] memory`**; maps summary fields onto **`PerceptionState`** **`perception_memory_*`**. Duplicate **`no_meaningful_change`** ticks with the same stable signature are skipped (no new record).
+
 ### P1-03 — Untrack Legacy `.tmp` Files
 
 Two `.tmp` files are still tracked in git from before `.gitignore` was updated:

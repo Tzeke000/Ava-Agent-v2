@@ -3,7 +3,7 @@ Unified perception from camera + user text.
 
 Phase 3: building :class:`PerceptionState` goes through :mod:`brain.perception_pipeline`
 (staged acquisition → quality → detection → recognition → interpretation → continuity →
-identity resolution → scene summary → interpretation layer → package).
+identity resolution → scene summary → interpretation layer → perception memory output → package).
 
 Vision gating: identity, emotion, and present-tense scene claims require ``visual_truth_trusted``
 (camera layer: stable after fresh frames / recovery — see ``brain.camera``).
@@ -115,6 +115,14 @@ class PerceptionState:
     interpretation_notes: list[str] = field(default_factory=list)
     interpretation_no_meaningful_change: bool = True
     interpretation_evidence: dict[str, Any] = field(default_factory=dict)
+    # Phase 11 — compact memory-ready event (generation only; no persistence here)
+    perception_memory_event_type: str = ""
+    perception_memory_candidate: bool = False
+    perception_memory_confidence: float = 0.0
+    perception_memory_summary: str = ""
+    perception_memory_meta: dict[str, Any] = field(default_factory=dict)
+    perception_memory_suppressed: bool = False
+    perception_memory_skip_reason: str = ""
 
 
 def _compute_salience(state: PerceptionState) -> float:

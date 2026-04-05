@@ -3,8 +3,8 @@ Phase 3 — staged perception pipeline.
 
 Stages (conceptual): acquisition → quality gate → detection → recognition →
 interpretation (emotion + salience) → continuity (Phase 7) → identity fallback (Phase 8) →
-scene summary (Phase 9) → interpretation layer (Phase 10) → package →
-:class:`perception.PerceptionState` via adapter.
+scene summary (Phase 9) → interpretation layer (Phase 10) → perception memory (Phase 11) →
+package → :class:`perception.PerceptionState` via adapter.
 
 Failures in one stage do not abort the turn; each stage returns safe defaults and ``StageResult``.
 """
@@ -21,6 +21,7 @@ from .perception_types import (
     IdentityResolutionResult,
     InterpretationLayerResult,
     InterpretationOutput,
+    PerceptionMemoryOutput,
     SceneSummaryResult,
     PackageOutput,
     PerceptionPipelineBundle,
@@ -35,6 +36,8 @@ from .continuity import update_continuity
 from .identity_fallback import resolve_identity_fallback
 from .scene_summary import build_scene_summary
 from .interpretation import build_interpretation_layer
+from .perception_memory import build_perception_memory_output
+from .shared import now_ts
 
 
 def _apply_quality_fields_to_state(state: Any, q: QualityOutput) -> None:
@@ -177,6 +180,49 @@ def _apply_interpretation_layer_to_state(state: Any, il: InterpretationLayerResu
     state.interpretation_notes = list(il.interpretation_notes)
     state.interpretation_no_meaningful_change = bool(il.no_meaningful_change)
     state.interpretation_evidence = dict(il.evidence)
+
+
+def _apply_perception_memory_to_state(state: Any, pm: PerceptionMemoryOutput | None) -> None:
+    """Copy Phase 11 memory-ready record summary onto PerceptionState (no persistence)."""
+    if pm is None:
+        state.perception_memory_suppressed = False
+        state.perception_memory_event_type = ""
+        state.perception_memory_candidate = False
+        state.perception_memory_confidence = 0.0
+        state.perception_memory_summary = ""
+        state.perception_memory_meta = {}
+        state.perception_memory_skip_reason = ""
+        return
+    state.perception_memory_skip_reason = pm.skip_reason or ""
+    if pm.event is None:
+        state.perception_memory_suppressed = bool(pm.skipped)
+        state.perception_memory_event_type = ""
+        state.perception_memory_candidate = False
+        state.perception_memory_confidence = 0.0
+        state.perception_memory_summary = ""
+        state.perception_memory_meta = {
+            "skipped": bool(pm.skipped),
+            "skip_reason": state.perception_memory_skip_reason,
+        }
+        return
+    state.perception_memory_suppressed = False
+    ev = pm.event
+    state.perception_memory_event_type = ev.event_type
+    state.perception_memory_candidate = bool(ev.memory_worthy_candidate)
+    state.perception_memory_confidence = float(ev.event_confidence)
+    state.perception_memory_summary = ev.scene_summary_snippet
+    state.perception_memory_meta = {
+        "wall_time": ev.wall_time,
+        "frame_seq": ev.frame_seq,
+        "event_priority": ev.event_priority,
+        "identity_state": ev.identity_state,
+        "resolved_identity": ev.resolved_identity,
+        "stable_identity": ev.stable_identity,
+        "interpretation_primary": ev.interpretation_primary_event,
+        "evidence": dict(ev.evidence),
+        "notes": list(ev.notes),
+        "relevant_entities": list(ev.relevant_entities),
+    }
 
 
 def _apply_salience_structured_to_state(state: Any, interp: InterpretationOutput) -> None:
@@ -584,6 +630,29 @@ def run_perception_pipeline(
         f"priority={il.event_priority:.2f} conf={il.event_confidence:.2f}"
     )
 
+    pm = build_perception_memory_output(
+        wall_time=now_ts(),
+        frame_seq=fseq,
+        trusted=trusted,
+        acquisition_freshness=str(af),
+        id_res=id_res,
+        scene=ss,
+        il=il,
+        qual=qual,
+        interp=interp,
+        cont=cont,
+    )
+    if pm.skipped or pm.event is None:
+        print(
+            f"[perception_pipeline] memory event=— candidate=False "
+            f"skipped={pm.skipped} reason={pm.skip_reason!r}"
+        )
+    else:
+        print(
+            f"[perception_pipeline] memory event={pm.event.event_type!r} "
+            f"candidate={pm.event.memory_worthy_candidate}"
+        )
+
     print(
         f"[perception_pipeline] package trusted={trusted} vision="
         f"{getattr(resolved, 'vision_status', 'n/a') if resolved else 'n/a'}"
@@ -602,6 +671,8 @@ def run_perception_pipeline(
         user_text=ut,
         identity_resolution=id_res,
         scene_summary=ss,
+        interpretation_layer=il,
+        perception_memory=pm,
     )
 
 
@@ -622,10 +693,12 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
     idr = bundle.identity_resolution
     ss = bundle.scene_summary
     il = bundle.interpretation_layer
+    pm = bundle.perception_memory
 
     if not bundle.acquisition.stage.ok or resolved is None:
         _apply_scene_summary_to_state(state, ss)
         _apply_interpretation_layer_to_state(state, il)
+        _apply_perception_memory_to_state(state, pm)
         return state
 
     state.frame = resolved.frame
@@ -659,6 +732,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
         )
         _apply_scene_summary_to_state(state, ss)
         _apply_interpretation_layer_to_state(state, il)
+        _apply_perception_memory_to_state(state, pm)
         return state
 
     if not resolved.visual_truth_trusted:
@@ -702,6 +776,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
         )
         _apply_scene_summary_to_state(state, ss)
         _apply_interpretation_layer_to_state(state, il)
+        _apply_perception_memory_to_state(state, pm)
         return state
 
     state.face_status = d.face_status
@@ -742,6 +817,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
     _apply_salience_structured_to_state(state, i)
     _apply_scene_summary_to_state(state, ss)
     _apply_interpretation_layer_to_state(state, il)
+    _apply_perception_memory_to_state(state, pm)
     print(
         f"[perception] vision={state.vision_status} acq={state.acquisition_freshness} "
         f"qlabel={state.quality_label} blur_label={state.blur_label} blur_val={state.blur_value:.1f} "
