@@ -102,6 +102,12 @@ This is a development-only quality-of-life feature that makes tuning the system 
 - **`brain/perception_pipeline.py`**: Combined confidence = Phase 4 label scale × blur scale; salience uses **`quality_only_expression_scale` × `blur_interpretation_scale`** (lighter blur penalty on interpretation). Logs **`blur_value`**, **`blur_label`**, per-layer blur scales, and combined rec/expr.
 - **`brain/perception.py`**: **`PerceptionState`** blur fields for UI / prompts / future hooks (scene summaries, recognition fallback, memory-worthiness).
 
+### Perception — Phase 6 — Structured salience scoring *(live)*
+
+- **`brain/salience.py`**: **`build_salience_result()`** — ranked **`SalientItem`** list (face / scene_cue), factor breakdown (centeredness, prominence, motion attention from frame-quality smear, recognition relevance, legacy emotion/user engagement), **`future_hooks`** for hand-held object and scene-change deltas (placeholders). **`combined_scalar`** blends structured primary score with **`perception_utils.compute_salience`** for backward-compatible magnitude.
+- **`brain/perception_types.py`**: **`SalientItem`**, **`SalienceResult`**; **`DetectionOutput.face_rects`**; **`InterpretationOutput.salience_structured`**.
+- **`brain/perception_pipeline.py`**: After detection + recognition, interpretation builds structured salience; logs **`[salience]`** per item and **`[perception_pipeline] top_salient=`**; final **`PerceptionState.salience`** still equals combined scalar × expression-quality × blur-interp scales; **`salience_items`**, **`salience_top_*`**, **`salience_combined_scalar`** exposed for UI / memory / initiative hooks.
+
 ### P1-03 — Untrack Legacy `.tmp` Files
 
 Two `.tmp` files are still tracked in git from before `.gitignore` was updated:

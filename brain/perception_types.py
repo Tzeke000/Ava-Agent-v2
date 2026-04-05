@@ -11,11 +11,33 @@ Downstream code adapts a :class:`PerceptionPipelineBundle` to :class:`perception
 - **Scene summaries** — short-term visual memory text.
 - **Interpretation** layer — LLM or rule-based scene narration (gated by trust).
 - **Phase 5 blur** — scene summaries, recognition fallback, interpretation certainty, and visual memory-worthiness can read ``blur_label`` / ``blur_reason_flags`` from :class:`FrameQualityAssessment` or :class:`perception.PerceptionState` (hooks not all wired yet).
+- **Phase 6 salience** — :class:`SalientItem`, :class:`SalienceResult`, ``brain.salience.build_salience_result``; ranked items on :class:`InterpretationOutput` / :class:`perception.PerceptionState` for summaries, memory-worthiness, and initiative (see roadmap).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Optional
+
+
+@dataclass
+class SalientItem:
+    """One ranked salience candidate (Phase 6)."""
+
+    item_type: str  # "face" | "object" | "scene_cue"
+    label: str
+    score: float
+    factors: dict[str, float] = field(default_factory=dict)
+    is_top: bool = False
+
+
+@dataclass
+class SalienceResult:
+    """Ranked salience output; ``combined_scalar`` feeds legacy ``InterpretationOutput.salience``."""
+
+    items: list[SalientItem] = field(default_factory=list)
+    combined_scalar: float = 0.2
+    legacy_engagement_scalar: float = 0.2
+    future_hooks: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -102,6 +124,8 @@ class DetectionOutput:
     person_count: int = 0
     face_status: str = "No camera image"
     gaze_present: bool = False
+    # Phase 6 — salience geometry (BGR frame pixels, x y w h)
+    face_rects: list[tuple[int, int, int, int]] = field(default_factory=list)
 
 
 @dataclass
@@ -132,6 +156,8 @@ class InterpretationOutput:
     face_emotion: Optional[str] = None
     salience: float = 0.2
     scene_summary_hint: str = ""
+    # Phase 6 — structured salience (ranked items); salience scalar blends with legacy engagement
+    salience_structured: Optional[SalienceResult] = None
 
 
 @dataclass

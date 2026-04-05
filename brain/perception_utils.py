@@ -16,7 +16,7 @@ def lbph_distance_to_identity_confidence(recognized_text: str, threshold: float 
 
 
 def compute_salience(face_detected: bool, face_emotion: str | None, user_text: str) -> float:
-    """Lightweight salience from face + emotion + user text (same semantics as legacy)."""
+    """Legacy engagement scalar (face + emotion + user text). Blended into Phase 6 structured salience in ``brain.salience``."""
     if not face_detected:
         return 0.2
     em = (face_emotion or "").lower()

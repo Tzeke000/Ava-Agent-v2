@@ -20,10 +20,12 @@ from .perception_types import (
     PerceptionPipelineBundle,
     QualityOutput,
     RecognitionOutput,
+    SalienceResult,
     StageResult,
 )
-from .perception_utils import compute_salience, lbph_distance_to_identity_confidence
+from .perception_utils import lbph_distance_to_identity_confidence
 from .frame_quality import compute_frame_quality, confidence_scales_from_label
+from .salience import build_salience_result, salience_items_as_dicts
 
 
 def _apply_quality_fields_to_state(state: Any, q: QualityOutput) -> None:
@@ -59,6 +61,42 @@ def _apply_quality_fields_to_state(state: Any, q: QualityOutput) -> None:
     state.overexposure_quality_score = sq.overexposure_score
     state.motion_smear_quality_score = sq.motion_smear_score
     state.occlusion_quality_score = sq.occlusion_score
+
+
+def _motion_smear_from_quality(qual: QualityOutput) -> float:
+    sq = qual.structured
+    if sq is None:
+        return 1.0
+    return float(getattr(sq, "motion_smear_score", 1.0))
+
+
+def _log_top_salient(sal_res: SalienceResult) -> None:
+    top = next((x for x in sal_res.items if x.is_top), None)
+    if top:
+        print(
+            f"[perception_pipeline] top_salient={top.item_type}:{top.label} "
+            f"score={top.score:.2f} combined={sal_res.combined_scalar:.2f}"
+        )
+    else:
+        print(f"[perception_pipeline] top_salient=none combined={sal_res.combined_scalar:.2f}")
+
+
+def _apply_salience_structured_to_state(state: Any, interp: InterpretationOutput) -> None:
+    """Copy Phase 6 salience snapshot onto PerceptionState (safe if structured missing)."""
+    sr = interp.salience_structured
+    if sr is None:
+        state.salience_items = []
+        state.salience_top_label = ""
+        state.salience_top_type = ""
+        state.salience_top_score = 0.0
+        state.salience_combined_scalar = float(interp.salience)
+        return
+    state.salience_items = salience_items_as_dicts(sr.items)
+    top = next((x for x in sr.items if x.is_top), None)
+    state.salience_top_label = top.label if top else ""
+    state.salience_top_type = top.item_type if top else ""
+    state.salience_top_score = float(top.score) if top else 0.0
+    state.salience_combined_scalar = float(sr.combined_scalar)
 
 
 def _stage_acquisition(camera_manager: Any, image: Any) -> AcquisitionOutput:
@@ -158,6 +196,7 @@ def _stage_detection(camera_manager: Any, resolved: Any, g: dict) -> DetectionOu
     person_count = 0
     face_detected = False
     gaze_present = False
+    face_rects: list[tuple[int, int, int, int]] = []
     try:
         cascade = g.get("face_cascade")
         if cascade is not None:
@@ -168,11 +207,12 @@ def _stage_detection(camera_manager: Any, resolved: Any, g: dict) -> DetectionOu
             person_count = len(faces)
             face_detected = person_count > 0
             gaze_present = face_detected
+            face_rects = [(int(x), int(y), int(w), int(h)) for (x, y, w, h) in faces]
     except Exception as e:
         print(f"[perception_pipeline] detection cascade failed: {e}")
     print(
         f"[perception_pipeline] detection ok={face_status!r} count={person_count} "
-        f"face_detected={face_detected}"
+        f"face_detected={face_detected} rects={len(face_rects)}"
     )
     return DetectionOutput(
         stage=StageResult(ok=True, meta={"cascade": person_count >= 0}),
@@ -180,6 +220,7 @@ def _stage_detection(camera_manager: Any, resolved: Any, g: dict) -> DetectionOu
         person_count=person_count,
         face_status=face_status,
         gaze_present=gaze_present,
+        face_rects=face_rects,
     )
 
 
@@ -261,16 +302,31 @@ def _stage_interpretation(
     cont: ContinuityOutput,
     trusted: bool,
     user_text: str,
+    qual: QualityOutput,
 ) -> InterpretationOutput:
     emotion: str | None = None
+    motion = _motion_smear_from_quality(qual)
+    shape = resolved.frame.shape if resolved is not None and resolved.frame is not None else None
+
     if not trusted or resolved is None or resolved.frame is None or not det.face_detected:
         print("[perception_pipeline] interpretation emotion skipped")
-        sal = compute_salience(False, None, user_text)
+        sal_res = build_salience_result(
+            frame_shape=shape,
+            face_rects=list(det.face_rects or []),
+            face_detected=bool(det.face_detected),
+            person_count=int(det.person_count or 0),
+            face_identity=recog.face_identity if trusted else None,
+            face_emotion=None,
+            user_text=user_text,
+            motion_smear_score=motion,
+        )
+        _log_top_salient(sal_res)
         return InterpretationOutput(
             stage=StageResult(ok=False, skipped=True, error="no_emotion_path"),
             face_emotion=None,
-            salience=sal,
+            salience=sal_res.combined_scalar,
             scene_summary_hint="",
+            salience_structured=sal_res,
         )
     try:
         from .vision import analyze_face_emotion
@@ -279,16 +335,27 @@ def _stage_interpretation(
     except Exception as e:
         print(f"[perception_pipeline] interpretation emotion failed: {e}")
         emotion = "neutral"
-    sal = compute_salience(det.face_detected, emotion, user_text)
+    sal_res = build_salience_result(
+        frame_shape=shape,
+        face_rects=list(det.face_rects or []),
+        face_detected=det.face_detected,
+        person_count=det.person_count,
+        face_identity=recog.face_identity,
+        face_emotion=emotion,
+        user_text=user_text,
+        motion_smear_score=motion,
+    )
+    _log_top_salient(sal_res)
     print(
-        f"[perception_pipeline] interpretation emotion={emotion!r} salience={sal:.2f} "
+        f"[perception_pipeline] interpretation emotion={emotion!r} salience={sal_res.combined_scalar:.2f} "
         f"(scene_summary_hook=unused)"
     )
     return InterpretationOutput(
         stage=StageResult(ok=True, meta={"emotion": emotion}),
         face_emotion=emotion,
-        salience=sal,
+        salience=sal_res.combined_scalar,
         scene_summary_hint="",
+        salience_structured=sal_res,
     )
 
 
@@ -313,7 +380,7 @@ def run_perception_pipeline(
         det = _stage_detection(camera_manager, resolved, g)
         recog = _stage_recognition(camera_manager, resolved, g, True)
         cont = _stage_continuity(camera_manager, resolved, recog, True)
-        interp = _stage_interpretation(resolved, det, recog, cont, True, ut)
+        interp = _stage_interpretation(resolved, det, recog, cont, True, ut, qual)
     else:
         print("[perception_pipeline] detection/recognition/continuity short-circuit (untrusted or no frame)")
         det = DetectionOutput(
@@ -327,7 +394,7 @@ def run_perception_pipeline(
             identity_confidence=0.0,
         )
         cont = _stage_continuity(camera_manager, resolved, recog, False)
-        interp = _stage_interpretation(resolved, det, recog, cont, False, ut)
+        interp = _stage_interpretation(resolved, det, recog, cont, False, ut, qual)
 
     print(
         f"[perception_pipeline] package trusted={trusted} vision="
@@ -424,7 +491,9 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
         state.gaze_present = False
         if state.last_stable_identity:
             state.continuity_confidence = 0.12
-        state.salience = i.salience
+        base = float(i.salience)
+        state.salience = base
+        _apply_salience_structured_to_state(state, i)
         print(
             f"[perception] vision={state.vision_status} qlabel={state.quality_label} "
             f"age_ms={state.frame_age_ms:.0f} src={state.frame_source} fq={state.frame_quality:.2f} "
@@ -456,12 +525,12 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
         state.identity_confidence = 0.0
         state.continuity_confidence = 0.15 if state.last_stable_identity else 0.0
 
-    # Interpretation / salience: quality expression leg × lighter blur (interp) scale.
+    # Interpretation / salience: structured combined scalar × quality expression × blur (interp).
+    base_sal = float(i.salience)
     state.salience = (
-        compute_salience(state.face_detected, state.face_emotion, user_text or "")
-        * q.quality_only_expression_scale
-        * q.blur_interpretation_scale
+        base_sal * q.quality_only_expression_scale * q.blur_interpretation_scale
     )
+    _apply_salience_structured_to_state(state, i)
     print(
         f"[perception] vision={state.vision_status} acq={state.acquisition_freshness} "
         f"qlabel={state.quality_label} blur_label={state.blur_label} blur_val={state.blur_value:.1f} "
@@ -469,6 +538,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
         f"fq={state.frame_quality:.2f} recovery={state.recovery_state} streak={state.fresh_frame_streak} "
         f"trusted=True id_conf={state.identity_confidence:.2f} (rec_scale={q.recognition_confidence_scale:.2f}) "
         f"cont={state.continuity_confidence:.2f} salience={state.salience:.2f} "
-        f"(expr_q={q.quality_only_expression_scale:.2f} blur_interp={q.blur_interpretation_scale:.2f})"
+        f"top={state.salience_top_type}:{state.salience_top_label} "
+        f"(base={base_sal:.2f} expr_q={q.quality_only_expression_scale:.2f} blur_interp={q.blur_interpretation_scale:.2f})"
     )
     return state
