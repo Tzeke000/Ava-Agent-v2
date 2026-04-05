@@ -15,6 +15,7 @@ Downstream code adapts a :class:`PerceptionPipelineBundle` to :class:`perception
 - **Phase 7 continuity** — :class:`ContinuityResult` (identity_state, temporal match factors); ``brain.continuity.update_continuity``.
 - **Phase 8 identity** — :class:`IdentityResolutionResult` (raw vs resolved identity); ``brain.identity_fallback.resolve_identity_fallback``.
 - **Phase 9 scene** — :class:`SceneSummaryResult`; ``brain.scene_summary.build_scene_summary``.
+- **Phase 10 interpretation** — :class:`InterpretationLayerResult` (semantic events); ``brain.interpretation.build_interpretation_layer``.
 """
 from __future__ import annotations
 
@@ -192,6 +193,21 @@ class SceneSummaryResult:
 
 
 @dataclass
+class InterpretationLayerResult:
+    """Phase 10 — semantic events inferred from structured perception (not raw pixels, not user text gen)."""
+
+    event_types: list[str] = field(default_factory=list)
+    event_confidence: float = 0.5
+    event_priority: float = 0.5
+    interpreted_subject: Optional[str] = None
+    interpreted_identity: Optional[str] = None
+    interpretation_notes: list[str] = field(default_factory=list)
+    evidence: dict[str, Any] = field(default_factory=dict)
+    no_meaningful_change: bool = True
+    primary_event: str = "uncertain_visual_state"
+
+
+@dataclass
 class ContinuityOutput:
     """Stage 5 — identity continuity / tracking + Phase 7 structured result."""
 
@@ -239,3 +255,5 @@ class PerceptionPipelineBundle:
     identity_resolution: Optional[IdentityResolutionResult] = None
     # Phase 9 — after identity resolution
     scene_summary: Optional[SceneSummaryResult] = None
+    # Phase 10 — after scene summary (semantic events; separate from emotion/salience stage above)
+    interpretation_layer: Optional[InterpretationLayerResult] = None
