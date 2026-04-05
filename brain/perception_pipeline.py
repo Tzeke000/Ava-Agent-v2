@@ -15,7 +15,9 @@ from typing import Any
 from .perception_types import (
     AcquisitionOutput,
     ContinuityOutput,
+    ContinuityResult,
     DetectionOutput,
+    IdentityResolutionResult,
     InterpretationOutput,
     PackageOutput,
     PerceptionPipelineBundle,
@@ -24,10 +26,10 @@ from .perception_types import (
     SalienceResult,
     StageResult,
 )
-from .perception_utils import lbph_distance_to_identity_confidence
 from .frame_quality import compute_frame_quality, confidence_scales_from_label
 from .salience import build_salience_result, salience_items_as_dicts
 from .continuity import update_continuity
+from .identity_fallback import resolve_identity_fallback
 
 
 def _apply_quality_fields_to_state(state: Any, q: QualityOutput) -> None:
@@ -84,12 +86,10 @@ def _log_top_salient(sal_res: SalienceResult) -> None:
 
 
 def _apply_continuity_structured_to_state(state: Any, cont: Any) -> None:
-    """Copy Phase 7 continuity snapshot onto PerceptionState."""
+    """Copy Phase 7 continuity snapshot onto PerceptionState (not public ``identity_state`` — Phase 8)."""
     cr = getattr(cont, "structured", None)
     if cr is None:
-        state.identity_state = "no_face"
         return
-    state.identity_state = cr.identity_state
     state.continuity_confidence = float(cr.continuity_confidence)
     state.continuity_prior_identity = cr.prior_identity
     state.continuity_current_identity = cr.current_identity
@@ -98,6 +98,24 @@ def _apply_continuity_structured_to_state(state: Any, cont: Any) -> None:
     state.continuity_frame_gap = int(cr.frame_gap)
     state.continuity_seconds_since_prior = float(cr.seconds_since_prior)
     state.continuity_suppress_flip = bool(cr.suppress_flip)
+
+
+def _apply_identity_resolution_to_state(state: Any, ir: IdentityResolutionResult | None) -> None:
+    """Copy Phase 8 identity resolution (canonical ``identity_state``) onto PerceptionState."""
+    if ir is None:
+        state.identity_state = "no_face"
+        state.resolved_face_identity = None
+        state.stable_face_identity = None
+        state.identity_fallback_source = "none"
+        state.identity_fallback_notes = []
+        state.identity_confidence = 0.0
+        return
+    state.identity_state = ir.identity_state
+    state.resolved_face_identity = ir.resolved_identity
+    state.stable_face_identity = ir.stable_identity
+    state.identity_fallback_source = ir.fallback_source
+    state.identity_fallback_notes = list(ir.fallback_notes)
+    state.identity_confidence = float(ir.identity_confidence)
 
 
 def _apply_salience_structured_to_state(state: Any, interp: InterpretationOutput) -> None:
@@ -327,10 +345,6 @@ def _stage_continuity(
         )
 
     if cr.identity_state == "confirmed_recognition" and recog.face_identity:
-        try:
-            camera_manager.note_trusted_identity(recog.face_identity)
-        except Exception as e:
-            print(f"[perception_pipeline] continuity note_trusted_identity failed: {e}")
         last_stable = recog.face_identity
     elif cr.last_stable_identity:
         last_stable = cr.last_stable_identity or last_stable
@@ -450,6 +464,30 @@ def run_perception_pipeline(
         interp = _stage_interpretation(resolved, det, recog, False, ut, qual)
         cont = _stage_continuity(camera_manager, resolved, det, recog, interp, False)
 
+    cr_struct: ContinuityResult | None = cont.structured
+    id_res = resolve_identity_fallback(
+        trusted=trusted,
+        face_detected=bool(det.face_detected),
+        raw_identity=recog.face_identity,
+        recognized_text=recog.recognized_text or "",
+        recognition_confidence_scale=float(qual.recognition_confidence_scale),
+        continuity=cr_struct,
+    )
+    if (
+        trusted
+        and id_res.identity_state == "confirmed_recognition"
+        and id_res.raw_identity
+    ):
+        try:
+            camera_manager.note_trusted_identity(id_res.raw_identity)
+        except Exception as e:
+            print(f"[perception_pipeline] identity note_trusted_identity failed: {e}")
+    print(
+        f"[perception_pipeline] identity resolved state={id_res.identity_state} "
+        f"source={id_res.fallback_source} conf={id_res.identity_confidence:.2f} "
+        f"resolved={id_res.resolved_identity!r}"
+    )
+
     print(
         f"[perception_pipeline] package trusted={trusted} vision="
         f"{getattr(resolved, 'vision_status', 'n/a') if resolved else 'n/a'}"
@@ -466,6 +504,7 @@ def run_perception_pipeline(
         package=pkg,
         resolved=resolved,
         user_text=ut,
+        identity_resolution=id_res,
     )
 
 
@@ -483,6 +522,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
     r = bundle.recognition
     c = bundle.continuity
     i = bundle.interpretation
+    idr = bundle.identity_resolution
 
     if not bundle.acquisition.stage.ok or resolved is None:
         return state
@@ -544,6 +584,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
         state.person_count = 0
         state.gaze_present = False
         _apply_continuity_structured_to_state(state, c)
+        _apply_identity_resolution_to_state(state, idr)
         if state.last_stable_identity and state.continuity_confidence < 0.12:
             state.continuity_confidence = 0.12
         base = float(i.salience)
@@ -568,29 +609,25 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
 
     _apply_continuity_structured_to_state(state, c)
     cr = c.structured
+    _apply_identity_resolution_to_state(state, idr)
 
-    if state.face_identity:
-        state.identity_confidence = (
-            lbph_distance_to_identity_confidence(state.recognized_text)
-            * q.recognition_confidence_scale
-        )
-        state.last_stable_identity = state.face_identity
-        if cr is not None:
-            state.continuity_confidence = max(
-                float(state.continuity_confidence), float(cr.continuity_confidence)
-            )
-    elif cr is not None and cr.identity_state == "likely_same_known" and cr.current_identity:
+    if idr is not None and idr.resolved_identity:
+        state.last_stable_identity = idr.resolved_identity
+    if (
+        idr is not None
+        and state.face_detected
+        and idr.identity_state == "unknown_face"
+    ):
         state.identity_confidence = max(
-            0.22 * q.recognition_confidence_scale,
-            min(0.88, float(cr.continuity_confidence) * 0.9),
+            float(state.identity_confidence),
+            0.22 * float(q.recognition_confidence_scale),
         )
-        state.last_stable_identity = cr.current_identity
-    elif state.face_detected:
-        state.identity_confidence = 0.22 * q.recognition_confidence_scale
-    else:
-        state.identity_confidence = 0.0
-        if state.last_stable_identity:
-            state.continuity_confidence = max(float(state.continuity_confidence), 0.14)
+    if cr is not None:
+        state.continuity_confidence = max(
+            float(state.continuity_confidence), float(cr.continuity_confidence)
+        )
+    if not state.face_detected and state.last_stable_identity:
+        state.continuity_confidence = max(float(state.continuity_confidence), 0.14)
 
     # Interpretation / salience: structured combined scalar × quality expression × blur (interp).
     base_sal = float(i.salience)
@@ -605,6 +642,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
         f"fq={state.frame_quality:.2f} recovery={state.recovery_state} streak={state.fresh_frame_streak} "
         f"trusted=True id_conf={state.identity_confidence:.2f} (rec_scale={q.recognition_confidence_scale:.2f}) "
         f"cont={state.continuity_confidence:.2f} id_state={state.identity_state} "
+        f"resolved_id={state.resolved_face_identity!r} raw_id={state.face_identity!r} "
         f"salience={state.salience:.2f} top={state.salience_top_type}:{state.salience_top_label} "
         f"(base={base_sal:.2f} expr_q={q.quality_only_expression_scale:.2f} blur_interp={q.blur_interpretation_scale:.2f})"
     )

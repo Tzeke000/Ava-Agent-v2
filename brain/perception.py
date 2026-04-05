@@ -57,8 +57,13 @@ class PerceptionState:
     identity_confidence: float = 0.0
     continuity_confidence: float = 0.0
     # Phase 7 — temporal continuity (see brain.continuity)
+    # Phase 8 — canonical identity_state from identity_fallback (not raw LBPH alone)
     identity_state: str = "no_face"
-    # confirmed_recognition | likely_same_known | unknown_face | no_face
+    # confirmed_recognition | likely_identity_by_continuity | unknown_face | no_face
+    resolved_face_identity: str | None = None
+    stable_face_identity: str | None = None
+    identity_fallback_source: str = "none"
+    identity_fallback_notes: list[str] = field(default_factory=list)
     continuity_prior_identity: str | None = None
     continuity_current_identity: str | None = None
     continuity_matched_factors: dict[str, Any] = field(default_factory=dict)

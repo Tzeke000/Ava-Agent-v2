@@ -233,7 +233,7 @@ def update_continuity(
     # No recognition this frame — carry prior if geometry + time agree
     if prior_id and spatial_eff >= LIKELY_SAME_SPATIAL_MIN and frame_gap <= MAX_FRAME_GAP and sec_gap <= MAX_SECONDS_GAP:
         current_id = prior_id
-        state = "likely_same_known"
+        state = "likely_identity_by_continuity"
         conf = float(min(0.88, 0.38 + 0.52 * spatial_eff + 0.1 * sal_match))
         notes.append("spatial_carry_prior")
         suppress_flip = True

@@ -13,6 +13,7 @@ Downstream code adapts a :class:`PerceptionPipelineBundle` to :class:`perception
 - **Phase 5 blur** — scene summaries, recognition fallback, interpretation certainty, and visual memory-worthiness can read ``blur_label`` / ``blur_reason_flags`` from :class:`FrameQualityAssessment` or :class:`perception.PerceptionState` (hooks not all wired yet).
 - **Phase 6 salience** — :class:`SalientItem`, :class:`SalienceResult`, ``brain.salience.build_salience_result``; ranked items on :class:`InterpretationOutput` / :class:`perception.PerceptionState` for summaries, memory-worthiness, and initiative (see roadmap).
 - **Phase 7 continuity** — :class:`ContinuityResult` (identity_state, temporal match factors); ``brain.continuity.update_continuity``.
+- **Phase 8 identity** — :class:`IdentityResolutionResult` (raw vs resolved identity); ``brain.identity_fallback.resolve_identity_fallback``.
 """
 from __future__ import annotations
 
@@ -144,7 +145,7 @@ class ContinuityResult:
     """Phase 7 — structured temporal continuity (lightweight frame memory, not a full tracker)."""
 
     identity_state: str = "no_face"
-    # confirmed_recognition | likely_same_known | unknown_face | no_face
+    # confirmed_recognition | likely_identity_by_continuity | unknown_face | no_face
     continuity_confidence: float = 0.0
     prior_identity: Optional[str] = None
     current_identity: Optional[str] = None
@@ -154,6 +155,20 @@ class ContinuityResult:
     seconds_since_prior: float = -1.0
     suppress_flip: bool = False
     last_stable_identity: Optional[str] = None
+
+
+@dataclass
+class IdentityResolutionResult:
+    """Phase 8 — public identity hierarchy (raw LBPH separate from resolved/stable)."""
+
+    identity_state: str = "no_face"
+    # confirmed_recognition | likely_identity_by_continuity | unknown_face | no_face
+    raw_identity: Optional[str] = None
+    resolved_identity: Optional[str] = None
+    stable_identity: Optional[str] = None
+    identity_confidence: float = 0.0
+    fallback_source: str = "none"  # recognition | continuity | none
+    fallback_notes: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -200,3 +215,5 @@ class PerceptionPipelineBundle:
     # Raw resolved frame reference for adapter (frame + timestamps)
     resolved: Any = None
     user_text: str = ""
+    # Phase 8 — after continuity
+    identity_resolution: Optional[IdentityResolutionResult] = None
