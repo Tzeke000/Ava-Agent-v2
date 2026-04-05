@@ -16,6 +16,7 @@ Downstream code adapts a :class:`PerceptionPipelineBundle` to :class:`perception
 - **Phase 8 identity** — :class:`IdentityResolutionResult` (raw vs resolved identity); ``brain.identity_fallback.resolve_identity_fallback``.
 - **Phase 9 scene** — :class:`SceneSummaryResult`; ``brain.scene_summary.build_scene_summary``.
 - **Phase 10 interpretation** — :class:`InterpretationLayerResult` (semantic events); ``brain.interpretation.build_interpretation_layer``.
+- **Phase 11 perception memory** — :class:`PerceptionMemoryEvent`, :class:`PerceptionMemoryOutput`; ``brain.perception_memory.build_perception_memory_output``.
 """
 from __future__ import annotations
 
@@ -208,6 +209,36 @@ class InterpretationLayerResult:
 
 
 @dataclass
+class PerceptionMemoryEvent:
+    """Phase 11 — one memory-ready perception record (no persistence in this phase)."""
+
+    wall_time: float = 0.0
+    frame_seq: int = 0
+    event_type: str = ""
+    event_confidence: float = 0.0
+    event_priority: float = 0.0
+    identity_state: str = ""
+    resolved_identity: Optional[str] = None
+    stable_identity: Optional[str] = None
+    relevant_entities: list[str] = field(default_factory=list)
+    scene_summary_snippet: str = ""
+    interpretation_primary_event: str = ""
+    evidence: dict[str, Any] = field(default_factory=dict)
+    memory_worthy_candidate: bool = False
+    notes: list[str] = field(default_factory=list)
+    suppressed_duplicate: bool = False
+
+
+@dataclass
+class PerceptionMemoryOutput:
+    """Phase 11 — optional primary event + duplicate-suppression metadata."""
+
+    event: Optional[PerceptionMemoryEvent] = None
+    skipped: bool = False
+    skip_reason: str = ""
+
+
+@dataclass
 class ContinuityOutput:
     """Stage 5 — identity continuity / tracking + Phase 7 structured result."""
 
@@ -257,3 +288,5 @@ class PerceptionPipelineBundle:
     scene_summary: Optional[SceneSummaryResult] = None
     # Phase 10 — after scene summary (semantic events; separate from emotion/salience stage above)
     interpretation_layer: Optional[InterpretationLayerResult] = None
+    # Phase 11 — after interpretation layer
+    perception_memory: Optional[PerceptionMemoryOutput] = None
