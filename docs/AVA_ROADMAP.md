@@ -95,6 +95,13 @@ This is a development-only quality-of-life feature that makes tuning the system 
 - **`brain/perception_pipeline.py`**: Quality stage attaches structured output + scales; trusted-path **identity** / **salience** scaled **additively** from label.
 - **`brain/perception.py`**: **`PerceptionState`** extended with **`quality_label`**, metric scores, and scale fields (defaults safe for old code paths).
 
+### Perception — Phase 5 — Dedicated blur signal *(live)*
+
+- **`brain/frame_quality.py`**: Central **`BLUR_VAR_SOFT_MAX`** / **`BLUR_VAR_SHARP_MIN`**; **`classify_blur_laplacian_var()`** → **`blur_label`** `sharp` | `soft` | `blurry`; **`blur_layer_confidence_scales()`** → recognition / expression / interpretation multipliers (interpretation slightly milder on **`blurry`**). Legacy **`overall_quality_score`** recipe unchanged; blur also feeds **`reason_flags`** as before.
+- **`brain/perception_types.py`**: **`FrameQualityAssessment`** and **`QualityOutput`** carry **`blur_value`**, blur scales, **`quality_only_*`** scales for combining label × blur; **`blur_reason_flags`** for inspection.
+- **`brain/perception_pipeline.py`**: Combined confidence = Phase 4 label scale × blur scale; salience uses **`quality_only_expression_scale` × `blur_interpretation_scale`** (lighter blur penalty on interpretation). Logs **`blur_value`**, **`blur_label`**, per-layer blur scales, and combined rec/expr.
+- **`brain/perception.py`**: **`PerceptionState`** blur fields for UI / prompts / future hooks (scene summaries, recognition fallback, memory-worthiness).
+
 ### P1-03 — Untrack Legacy `.tmp` Files
 
 Two `.tmp` files are still tracked in git from before `.gitignore` was updated:
