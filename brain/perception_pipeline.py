@@ -3,7 +3,8 @@ Phase 3 — staged perception pipeline.
 
 Stages (conceptual): acquisition → quality gate → detection → recognition →
 interpretation (emotion + salience) → continuity (Phase 7) → identity fallback (Phase 8) →
-scene summary (Phase 9) → package → :class:`perception.PerceptionState` via adapter.
+scene summary (Phase 9) → interpretation layer (Phase 10) → package →
+:class:`perception.PerceptionState` via adapter.
 
 Failures in one stage do not abort the turn; each stage returns safe defaults and ``StageResult``.
 """
@@ -18,6 +19,7 @@ from .perception_types import (
     ContinuityResult,
     DetectionOutput,
     IdentityResolutionResult,
+    InterpretationLayerResult,
     InterpretationOutput,
     SceneSummaryResult,
     PackageOutput,
@@ -32,6 +34,7 @@ from .salience import build_salience_result, salience_items_as_dicts
 from .continuity import update_continuity
 from .identity_fallback import resolve_identity_fallback
 from .scene_summary import build_scene_summary
+from .interpretation import build_interpretation_layer
 
 
 def _apply_quality_fields_to_state(state: Any, q: QualityOutput) -> None:
@@ -150,6 +153,30 @@ def _apply_scene_summary_to_state(state: Any, ss: SceneSummaryResult | None) -> 
     state.scene_entrant_summary = ss.entrant_summary
     state.scene_summary_notes = list(ss.notes)
     state.scene_summary_meta = dict(ss.meta)
+
+
+def _apply_interpretation_layer_to_state(state: Any, il: InterpretationLayerResult | None) -> None:
+    """Copy Phase 10 semantic interpretation onto PerceptionState."""
+    if il is None:
+        state.interpretation_event_types = []
+        state.interpretation_primary_event = "uncertain_visual_state"
+        state.interpretation_confidence = 0.0
+        state.interpretation_priority = 0.0
+        state.interpretation_subject = None
+        state.interpretation_identity = None
+        state.interpretation_notes = []
+        state.interpretation_no_meaningful_change = True
+        state.interpretation_evidence = {}
+        return
+    state.interpretation_event_types = list(il.event_types)
+    state.interpretation_primary_event = il.primary_event
+    state.interpretation_confidence = float(il.event_confidence)
+    state.interpretation_priority = float(il.event_priority)
+    state.interpretation_subject = il.interpreted_subject
+    state.interpretation_identity = il.interpreted_identity
+    state.interpretation_notes = list(il.interpretation_notes)
+    state.interpretation_no_meaningful_change = bool(il.no_meaningful_change)
+    state.interpretation_evidence = dict(il.evidence)
 
 
 def _apply_salience_structured_to_state(state: Any, interp: InterpretationOutput) -> None:
@@ -542,6 +569,21 @@ def run_perception_pipeline(
         f"identity={ss.primary_identity_summary!r} change={ss.scene_change_summary!r}"
     )
 
+    il = build_interpretation_layer(
+        trusted=trusted,
+        vision_status=str(vs),
+        user_text=ut,
+        id_res=id_res,
+        scene=ss,
+        interp=interp,
+        qual=qual,
+        cont=cont,
+    )
+    print(
+        f"[perception_pipeline] interpretation primary={il.primary_event!r} "
+        f"priority={il.event_priority:.2f} conf={il.event_confidence:.2f}"
+    )
+
     print(
         f"[perception_pipeline] package trusted={trusted} vision="
         f"{getattr(resolved, 'vision_status', 'n/a') if resolved else 'n/a'}"
@@ -579,9 +621,11 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
     i = bundle.interpretation
     idr = bundle.identity_resolution
     ss = bundle.scene_summary
+    il = bundle.interpretation_layer
 
     if not bundle.acquisition.stage.ok or resolved is None:
         _apply_scene_summary_to_state(state, ss)
+        _apply_interpretation_layer_to_state(state, il)
         return state
 
     state.frame = resolved.frame
@@ -614,6 +658,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
             f"trusted=False id_conf=0.0 (suppress identity/emotion/scene-as-current)"
         )
         _apply_scene_summary_to_state(state, ss)
+        _apply_interpretation_layer_to_state(state, il)
         return state
 
     if not resolved.visual_truth_trusted:
@@ -656,6 +701,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
             f"(suppress identity/emotion/scene-as-current)"
         )
         _apply_scene_summary_to_state(state, ss)
+        _apply_interpretation_layer_to_state(state, il)
         return state
 
     state.face_status = d.face_status
@@ -695,6 +741,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
     )
     _apply_salience_structured_to_state(state, i)
     _apply_scene_summary_to_state(state, ss)
+    _apply_interpretation_layer_to_state(state, il)
     print(
         f"[perception] vision={state.vision_status} acq={state.acquisition_freshness} "
         f"qlabel={state.quality_label} blur_label={state.blur_label} blur_val={state.blur_value:.1f} "
@@ -704,7 +751,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
         f"cont={state.continuity_confidence:.2f} id_state={state.identity_state} "
         f"resolved_id={state.resolved_face_identity!r} raw_id={state.face_identity!r} "
         f"salience={state.salience:.2f} top={state.salience_top_type}:{state.salience_top_label} "
-        f"scene={state.scene_overall_state!r} "
+        f"scene={state.scene_overall_state!r} interp={state.interpretation_primary_event!r} "
         f"(base={base_sal:.2f} expr_q={q.quality_only_expression_scale:.2f} blur_interp={q.blur_interpretation_scale:.2f})"
     )
     return state

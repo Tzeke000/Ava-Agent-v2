@@ -126,6 +126,12 @@ This is a development-only quality-of-life feature that makes tuning the system 
 - **`brain/perception_types.py`**: **`SceneSummaryResult`**; **`PerceptionPipelineBundle.scene_summary`**.
 - **`brain/perception_pipeline.py`**: **`[perception_pipeline] summary`**; **`PerceptionState`** **`scene_*`** fields including **`scene_compact_summary`** and **`scene_summary_meta`**.
 
+### Perception — Phase 10 — Interpretation layer *(live)*
+
+- **`brain/interpretation.py`**: **`build_interpretation_layer()`** after scene summary — **`InterpretationLayerResult`** with **`event_types`** (e.g. **`person_entered`**, **`person_left`**, **`known_person_present`**, **`likely_known_person_present`**, **`unknown_person_present`**, **`scene_changed`**, **`user_or_subject_engaged`** / **`disengaged`**, **`occupied_or_busy_visual_state`**, **`no_meaningful_change`**, **`uncertain_visual_state`**), **`primary_event`**, **`event_confidence`** / **`event_priority`**, **`interpreted_subject`** / **`interpreted_identity`**, **`evidence`** snapshot, **`no_meaningful_change`**. Uses scene summary, identity resolution, quality/blur, salience/emotion, continuity; untrusted → **`uncertain_visual_state`**. Logs **`[interpretation]`** and **`[perception_pipeline] interpretation`**.
+- **`brain/perception_types.py`**: **`InterpretationLayerResult`**; **`PerceptionPipelineBundle.interpretation_layer`**.
+- **`brain/perception_pipeline.py`**: **`PerceptionState`** **`interpretation_*`** fields; does **not** overwrite raw perception or **`scene_*`** text.
+
 ### P1-03 — Untrack Legacy `.tmp` Files
 
 Two `.tmp` files are still tracked in git from before `.gitignore` was updated:
