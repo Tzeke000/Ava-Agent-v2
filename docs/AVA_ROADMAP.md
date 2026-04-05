@@ -110,9 +110,15 @@ This is a development-only quality-of-life feature that makes tuning the system 
 
 ### Perception — Phase 7 — Tracking and continuity *(live)*
 
-- **`brain/continuity.py`**: Module-level **recent primary-face memory** (normalized center, area ratio, last identity, salience top label); **`update_continuity()`** compares the current trusted tick using **spatial** (center distance + size ratio), **time decay** (wall clock + frame gap), **salience top** consistency, and **LBPH** when recognized. Emits **`ContinuityResult`**: `identity_state` (`confirmed_recognition` | `likely_same_known` | `unknown_face` | `no_face`), `continuity_confidence`, `prior_identity` / `current_identity`, `matched_factors` / `matched_notes`, `suppress_flip` when carrying prior without fresh recognition.
+- **`brain/continuity.py`**: Module-level **recent primary-face memory** (normalized center, area ratio, last identity, salience top label); **`update_continuity()`** compares the current trusted tick using **spatial** (center distance + size ratio), **time decay** (wall clock + frame gap), **salience top** consistency, and **LBPH** when recognized. Emits **`ContinuityResult`**: `identity_state` includes **`likely_identity_by_continuity`** when carrying prior without a fresh recognizer label, plus **`confirmed_recognition`** / **`unknown_face`** / **`no_face`**; **`suppress_flip`** when spatial carry applies.
 - **`brain/perception_types.py`**: **`ContinuityResult`**; **`ContinuityOutput.structured`**.
-- **`brain/perception_pipeline.py`**: Pipeline order **interpretation → continuity** (salience available); **`note_trusted_identity`** only on **confirmed_recognition**; logs **`[continuity]`** and **`[perception_pipeline] continuity`**; **`PerceptionState`** gets **`identity_state`** and continuity detail fields; **`likely_same_known`** raises **`identity_confidence`** and sets **`last_stable_identity`** from continuity while **`face_identity`** stays raw LBPH output.
+- **`brain/perception_pipeline.py`**: Pipeline order **interpretation → continuity** (salience available); logs **`[continuity]`** and **`[perception_pipeline] continuity`**.
+
+### Perception — Phase 8 — Fallback identity hierarchy *(live)*
+
+- **`brain/identity_fallback.py`**: **`resolve_identity_fallback()`** after continuity — canonical **`identity_state`**: **`confirmed_recognition`** (raw id + scaled LBPH ≥ threshold), **`likely_identity_by_continuity`**, **`unknown_face`**, **`no_face`**. Emits **`IdentityResolutionResult`**: **`raw_identity`**, **`resolved_identity`**, **`stable_identity`**, **`fallback_source`** (`recognition` | `continuity` | `none`), **`fallback_notes`**. Demotes weak LBPH even if recognizer returns a label; logs **`[identity_fallback]`**.
+- **`brain/perception_types.py`**: **`IdentityResolutionResult`**; **`PerceptionPipelineBundle.identity_resolution`**.
+- **`brain/perception_pipeline.py`**: **`note_trusted_identity`** only when Phase 8 resolution is **`confirmed_recognition`**; **`[perception_pipeline] identity resolved`**. **`PerceptionState`**: **`face_identity`** = raw LBPH; **`resolved_face_identity`** / **`stable_face_identity`** / **`identity_fallback_*`** for UI and later hooks.
 
 ### P1-03 — Untrack Legacy `.tmp` Files
 
