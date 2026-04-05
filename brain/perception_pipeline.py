@@ -33,6 +33,13 @@ def _apply_quality_fields_to_state(state: Any, q: QualityOutput) -> None:
     sq = q.structured
     if sq is None:
         state.quality_label = "unreliable"
+        state.blur_value = 0.0
+        state.blur_label = "sharp"
+        state.blur_confidence_scale = 1.0
+        state.blur_recognition_scale = 1.0
+        state.blur_expression_scale = 1.0
+        state.blur_interpretation_scale = 1.0
+        state.blur_reason_flags = []
         state.blur_quality_score = 0.0
         state.darkness_quality_score = 0.0
         state.overexposure_quality_score = 0.0
@@ -40,6 +47,13 @@ def _apply_quality_fields_to_state(state: Any, q: QualityOutput) -> None:
         state.occlusion_quality_score = 1.0
         return
     state.quality_label = sq.quality_label
+    state.blur_value = getattr(sq, "blur_value", 0.0)
+    state.blur_label = getattr(sq, "blur_label", "sharp")
+    state.blur_confidence_scale = getattr(sq, "blur_confidence_scale", 1.0)
+    state.blur_recognition_scale = getattr(sq, "blur_recognition_scale", 1.0)
+    state.blur_expression_scale = getattr(sq, "blur_expression_scale", 1.0)
+    state.blur_interpretation_scale = getattr(sq, "blur_interpretation_scale", 1.0)
+    state.blur_reason_flags = list(getattr(sq, "blur_reason_flags", []) or [])
     state.blur_quality_score = sq.blur_score
     state.darkness_quality_score = sq.darkness_score
     state.overexposure_quality_score = sq.overexposure_score
@@ -77,19 +91,37 @@ def _stage_quality(resolved: Any) -> QualityOutput:
     if structured is None and resolved.frame is not None:
         structured = compute_frame_quality(resolved.frame)
     label = structured.quality_label if structured is not None else "unreliable"
-    rec_scale, expr_scale = confidence_scales_from_label(label)
+    q_rec, q_expr = confidence_scales_from_label(label)
+    blur_val = 0.0
+    blur_label = "sharp"
+    br = be = bi = 1.0
+    if structured is not None:
+        blur_val = float(getattr(structured, "blur_value", 0.0))
+        blur_label = getattr(structured, "blur_label", "sharp")
+        br = float(getattr(structured, "blur_recognition_scale", 1.0))
+        be = float(getattr(structured, "blur_expression_scale", 1.0))
+        bi = float(getattr(structured, "blur_interpretation_scale", 1.0))
+    rec_scale = q_rec * br
+    expr_scale = q_expr * be
     conf = 1.0 if resolved.visual_truth_trusted else 0.0
     print(
         f"[perception_pipeline] quality vision={resolved.vision_status} "
         f"trusted={resolved.visual_truth_trusted} fq={resolved.frame_quality:.2f} "
         f"qlabel={label} recovery={resolved.recovery_state} "
-        f"rec_scale={rec_scale:.2f} expr_scale={expr_scale:.2f}"
+        f"blur_value={blur_val:.1f} blur_label={blur_label} "
+        f"blur_scale rec={br:.2f} expr={be:.2f} interp={bi:.2f} "
+        f"combined_rec={rec_scale:.2f} combined_expr={expr_scale:.2f}"
     )
     return QualityOutput(
         stage=StageResult(
             ok=True,
             confidence=conf,
-            meta={"vision_status": resolved.vision_status, "quality_label": label},
+            meta={
+                "vision_status": resolved.vision_status,
+                "quality_label": label,
+                "blur_label": blur_label,
+                "blur_value": blur_val,
+            },
         ),
         visual_truth_trusted=resolved.visual_truth_trusted,
         vision_status=resolved.vision_status,
@@ -101,6 +133,13 @@ def _stage_quality(resolved: Any) -> QualityOutput:
         structured=structured,
         recognition_confidence_scale=rec_scale,
         expression_confidence_scale=expr_scale,
+        blur_value=blur_val,
+        blur_label=blur_label,
+        blur_recognition_scale=br,
+        blur_expression_scale=be,
+        blur_interpretation_scale=bi,
+        quality_only_recognition_scale=q_rec,
+        quality_only_expression_scale=q_expr,
     )
 
 
@@ -417,15 +456,19 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
         state.identity_confidence = 0.0
         state.continuity_confidence = 0.15 if state.last_stable_identity else 0.0
 
+    # Interpretation / salience: quality expression leg × lighter blur (interp) scale.
     state.salience = (
         compute_salience(state.face_detected, state.face_emotion, user_text or "")
-        * q.expression_confidence_scale
+        * q.quality_only_expression_scale
+        * q.blur_interpretation_scale
     )
     print(
         f"[perception] vision={state.vision_status} acq={state.acquisition_freshness} "
-        f"qlabel={state.quality_label} age_ms={state.frame_age_ms:.0f} src={state.frame_source} "
+        f"qlabel={state.quality_label} blur_label={state.blur_label} blur_val={state.blur_value:.1f} "
+        f"age_ms={state.frame_age_ms:.0f} src={state.frame_source} "
         f"fq={state.frame_quality:.2f} recovery={state.recovery_state} streak={state.fresh_frame_streak} "
-        f"trusted=True id_conf={state.identity_confidence:.2f} cont={state.continuity_confidence:.2f} "
-        f"(recognition/emotion allowed)"
+        f"trusted=True id_conf={state.identity_confidence:.2f} (rec_scale={q.recognition_confidence_scale:.2f}) "
+        f"cont={state.continuity_confidence:.2f} salience={state.salience:.2f} "
+        f"(expr_q={q.quality_only_expression_scale:.2f} blur_interp={q.blur_interpretation_scale:.2f})"
     )
     return state

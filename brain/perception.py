@@ -54,6 +54,14 @@ class PerceptionState:
     acquisition_freshness: str = "unavailable"
     # Phase 4 — structured quality (brain.frame_quality + perception_pipeline quality stage)
     quality_label: str = "unreliable"
+    # Phase 5 — blur layer (Laplacian variance, labels, per-path scales; see brain.frame_quality)
+    blur_value: float = 0.0
+    blur_label: str = "sharp"
+    blur_confidence_scale: float = 1.0
+    blur_recognition_scale: float = 1.0
+    blur_expression_scale: float = 1.0
+    blur_interpretation_scale: float = 1.0
+    blur_reason_flags: list[str] = field(default_factory=list)
     blur_quality_score: float = 0.0
     darkness_quality_score: float = 0.0
     overexposure_quality_score: float = 0.0

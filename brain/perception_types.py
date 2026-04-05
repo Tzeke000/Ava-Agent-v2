@@ -10,6 +10,7 @@ Downstream code adapts a :class:`PerceptionPipelineBundle` to :class:`perception
 - **Tracking / continuity** — multi-frame identity tracks (E4).
 - **Scene summaries** — short-term visual memory text.
 - **Interpretation** layer — LLM or rule-based scene narration (gated by trust).
+- **Phase 5 blur** — scene summaries, recognition fallback, interpretation certainty, and visual memory-worthiness can read ``blur_label`` / ``blur_reason_flags`` from :class:`FrameQualityAssessment` or :class:`perception.PerceptionState` (hooks not all wired yet).
 """
 from __future__ import annotations
 
@@ -20,12 +21,23 @@ from typing import Any, Optional
 @dataclass
 class FrameQualityAssessment:
     """
-    Structured frame quality (Phase 4). Scores are in [0, 1] where higher is better
-    except where noted. ``overall_quality_score`` matches the legacy camera aggregate
-    used for ``ResolvedFrame.frame_quality`` / low-quality gating when computed via
-    ``brain.frame_quality.compute_frame_quality``.
+    Structured frame quality (Phase 4 + Phase 5 blur layer). Scores are in [0, 1] where
+    higher is better except where noted. ``overall_quality_score`` matches the legacy
+    camera aggregate used for ``ResolvedFrame.frame_quality`` / low-quality gating when
+    computed via ``brain.frame_quality.compute_frame_quality``.
+
+    **Phase 5 blur** (Laplacian variance): ``blur_value``, ``blur_label`` (sharp | soft | blurry),
+    per-layer scales for recognition / expression / interpretation — see
+    ``brain.frame_quality.blur_layer_confidence_scales``.
     """
 
+    blur_value: float = 0.0
+    blur_label: str = "sharp"
+    blur_confidence_scale: float = 1.0
+    blur_recognition_scale: float = 1.0
+    blur_expression_scale: float = 1.0
+    blur_interpretation_scale: float = 1.0
+    blur_reason_flags: list[str] = field(default_factory=list)
     blur_score: float = 0.0
     darkness_score: float = 0.0
     overexposure_score: float = 0.0
@@ -71,6 +83,14 @@ class QualityOutput:
     structured: Optional[FrameQualityAssessment] = None
     recognition_confidence_scale: float = 1.0
     expression_confidence_scale: float = 1.0
+    # Phase 5 — blur layer (combined scales above = quality_label × blur)
+    blur_value: float = 0.0
+    blur_label: str = "sharp"
+    blur_recognition_scale: float = 1.0
+    blur_expression_scale: float = 1.0
+    blur_interpretation_scale: float = 1.0
+    quality_only_recognition_scale: float = 1.0
+    quality_only_expression_scale: float = 1.0
 
 
 @dataclass
