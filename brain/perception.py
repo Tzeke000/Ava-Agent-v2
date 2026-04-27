@@ -5,8 +5,10 @@ Phase 3: building :class:`PerceptionState` goes through :mod:`brain.perception_p
 (staged acquisition → quality → detection → recognition → interpretation → continuity →
 identity resolution → scene summary → interpretation layer → perception memory output →
 memory importance scoring → pattern learning → proactive triggers → self-tests →
-workbench proposals → reflection/self-model → contemplation → package), then
-:mod:`brain.perception_state_adapter` maps the bundle to flat state.
+workbench proposals → reflection/self-model → contemplation → social continuity → memory refinement →
+model routing → curiosity → outcome learning → conversational nuance →
+multi-session strategic continuity → supervised self-improvement loop →
+package), then :mod:`brain.perception_state_adapter` maps the bundle to flat state.
 
 Vision gating: identity, emotion, and present-tense scene claims require ``visual_truth_trusted``
 (camera layer: stable after fresh frames / recovery — see ``brain.camera``).
@@ -197,6 +199,94 @@ class PerceptionState:
     contemplation_guiding_principles: list[str] = field(default_factory=list)
     contemplation_priority_weights: dict[str, Any] = field(default_factory=dict)
     contemplation_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 22 — voice conversation / turn-taking (advisory; safe defaults when not in voice cycle)
+    voice_turn_state: str = "idle"
+    voice_user_speaking: bool = False
+    voice_assistant_speaking: bool = False
+    voice_should_wait: bool = False
+    voice_should_respond: bool = True
+    voice_response_readiness: float = 0.5
+    voice_interrupted: bool = False
+    voice_continuity_hint: str = ""
+    voice_pacing_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 23 — social continuity / soft relationship modeling (bounded; descriptive only)
+    relationship_familiarity_score: float = 0.5
+    relationship_trust_signal: float = 0.5
+    relationship_summary: str = ""
+    interaction_style_hint: str = "steady_familiar_tone"
+    unfinished_thread_present: bool = False
+    recurring_topics: list[str] = field(default_factory=list)
+    recent_social_tone: str = "neutral"
+    relationship_confidence: float = 0.35
+    relationship_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 24 — memory refinement (additive on Phase 12; advisory for persistence hooks)
+    refined_memory_class: str = "ignore"
+    refined_memory_worthy: bool = False
+    refined_memory_retention_strength: float = 0.2
+    refined_memory_retrieval_priority: float = 0.15
+    refined_memory_unfinished_thread_candidate: bool = False
+    refined_memory_social_relevance: float = 0.35
+    refined_memory_episodic_relevance: float = 0.25
+    refined_memory_pattern_relevance: float = 0.25
+    refined_memory_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 25 — model routing (Ollama tag selection; identity/persona unchanged)
+    cognitive_mode: str = "fallback_safe_mode"
+    routing_selected_model: str = ""
+    routing_fallback_model: str = ""
+    routing_reason: str = ""
+    routing_confidence: float = 0.0
+    routing_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 26 — bounded curiosity (structured; advisory — does not execute actions)
+    curiosity_triggered: bool = False
+    curiosity_theme: str = "no_curiosity_needed"
+    curiosity_question: str = ""
+    curiosity_reason: str = ""
+    curiosity_confidence: float = 0.0
+    curiosity_suggested_next_step: str = "no_exploration_needed"
+    curiosity_should_observe: bool = False
+    curiosity_should_clarify: bool = False
+    curiosity_should_defer: bool = False
+    curiosity_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 27 — outcome learning (advisory adjustment signals — no automatic retuning)
+    outcome_learning_category: str = "no_adjustment_needed"
+    outcome_learning_quality: str = "neutral"
+    suggested_behavior_adjustment: str = ""
+    adjustment_confidence: float = 0.0
+    adjustment_target: str = ""
+    outcome_learning_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 28 — conversational nuance (bounded guidance; no automatic reply rewrite)
+    nuance_tone: str = "uncertain_neutral"
+    nuance_summary: str = ""
+    nuance_confidence: float = 0.32
+    warmth_level: float = 0.52
+    practicality_level: float = 0.48
+    softness_level: float = 0.52
+    seriousness_level: float = 0.46
+    humor_tolerance: float = 0.34
+    verbosity_bias: float = 0.52
+    pacing_bias: float = 0.5
+    restraint_bias: float = 0.46
+    nuance_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 29 — multi-session strategic continuity (bounded carryover; not Phase 7 temporal continuity)
+    strategic_continuity_summary: str = ""
+    strategic_continuity_confidence: float = 0.0
+    active_threads: list[dict[str, Any]] = field(default_factory=list)
+    strategic_priorities: list[str] = field(default_factory=list)
+    relationship_carryover: str = ""
+    maintenance_carryover: str = ""
+    continuity_scope: str = "none"
+    continuity_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 30 — supervised self-improvement loop (descriptive; no auto-approve/execute)
+    improvement_loop_active: bool = False
+    improvement_loop_stage: str = "no_active_loop"
+    improvement_loop_summary: str = ""
+    improvement_active_issue: str = ""
+    improvement_active_proposal_id: str = ""
+    improvement_awaiting_approval: bool = False
+    improvement_execution_success: bool = False
+    improvement_execution_failed: bool = False
+    improvement_suggested_next_step: str = ""
+    improvement_loop_meta: dict[str, Any] = field(default_factory=dict)
 
 
 def _compute_salience(state: PerceptionState) -> float:
@@ -209,4 +299,4 @@ def build_perception(camera_manager, image, g: dict, user_text: str = "") -> Per
     When vision is not stable, do not treat identity/emotion as current truth.
     """
     bundle = run_perception_pipeline(camera_manager, image, g, user_text or "")
-    return bundle_to_perception_state(bundle, user_text or "")
+    return bundle_to_perception_state(bundle, user_text or "", g)

@@ -6,7 +6,10 @@ interpretation (emotion + salience) → continuity (Phase 7) → identity fallba
 scene summary (Phase 9) → interpretation layer (Phase 10) → perception memory (Phase 11) →
 memory scoring (Phase 12) → pattern learning (Phase 13) → proactive triggers (Phase 14) →
 self-tests (Phase 15) → workbench proposals (Phase 16) → reflection/self-model (Phase 17) →
-contemplation (Phase 18) → package →
+contemplation (Phase 18) → social continuity (Phase 23) → memory refinement (Phase 24) →
+model routing (Phase 25) → curiosity (Phase 26) → outcome learning (Phase 27) →
+conversational nuance (Phase 28) → multi-session strategic continuity (Phase 29) →
+supervised self-improvement loop (Phase 30) → package →
 :class:`perception.PerceptionState` via :mod:`brain.perception_state_adapter`.
 
 Failures in one stage do not abort the turn; each stage returns safe defaults and ``StageResult``.
@@ -42,6 +45,15 @@ from .proactive_triggers import evaluate_proactive_triggers
 from .selftests import maybe_run_selftests
 from .workbench import build_workbench_proposals
 from .reflection import build_reflection_result
+from .calibration import record_calibration_tick
+from .memory_refinement import build_memory_refinement_result_safe
+from .curiosity import build_curiosity_result_safe
+from .model_routing import build_model_routing_result
+from .outcome_learning import build_outcome_learning_result_safe
+from .conversational_nuance import build_conversational_nuance_safe
+from .session_continuity import build_strategic_continuity_safe
+from .self_improvement_loop import build_supervised_self_improvement_loop_safe
+from .relationship_model import build_social_continuity_result
 from .contemplation import build_contemplation_result
 from .perception_state_adapter import bundle_to_perception_state
 from .shared import now_ts
@@ -512,6 +524,7 @@ def run_perception_pipeline(
         cont=cont,
         acquisition_freshness=str(af),
         visual_truth_trusted=trusted,
+        voice_user_turn_priority=bool(g.get("_voice_user_turn_priority")),
     )
     print(
         f"[perception_pipeline] proactive={pt.trigger_type} "
@@ -566,13 +579,158 @@ def run_perception_pipeline(
         f"theme={ct.contemplation_theme}"
     )
 
+    soc = build_social_continuity_result(
+        user_text=ut,
+        g=g,
+        perception_memory=pm,
+        memory_importance=mi,
+        pattern_learning=pl,
+        proactive_trigger=pt,
+        reflection=rf,
+        contemplation=ct,
+        interpretation_layer=il,
+        scene_summary=ss,
+        identity_resolution=id_res,
+    )
+    print(
+        f"[perception_pipeline] relationship hint={soc.interaction_style_hint} "
+        f"familiarity={soc.familiarity_score:.2f} unfinished_thread={soc.unfinished_thread_present}"
+    )
+
+    mr = build_memory_refinement_result_safe(
+        user_text=ut,
+        g=g,
+        perception_memory=pm,
+        memory_importance=mi,
+        pattern_learning=pl,
+        reflection=rf,
+        contemplation=ct,
+        social_continuity=soc,
+        interpretation_layer=il,
+        identity_resolution=id_res,
+    )
+    print(
+        f"[perception_pipeline] memory_refined class={mr.decision.refined_memory_class} "
+        f"worthy={mr.decision.refined_memory_worthy}"
+    )
+
+    route_res = build_model_routing_result(
+        user_text=ut,
+        g=g,
+        quality=qual,
+        workbench=wb,
+        memory_refinement=mr,
+        social_continuity=soc,
+        reflection=rf,
+        contemplation=ct,
+        interpretation_layer=il,
+    )
+
+    cq = build_curiosity_result_safe(
+        user_text=ut,
+        g=g,
+        pattern_learning=pl,
+        memory_refinement=mr,
+        reflection=rf,
+        contemplation=ct,
+        social_continuity=soc,
+        proactive_trigger=pt,
+        selftests=st,
+        workbench=wb,
+        model_routing=route_res,
+        identity_resolution=id_res,
+        interpretation_layer=il,
+        scene_summary=ss,
+    )
+    print(
+        f"[perception_pipeline] curiosity={cq.curiosity_theme} triggered={cq.curiosity_triggered} "
+        f"mode={cq.exploration_mode}"
+    )
+
+    ol = build_outcome_learning_result_safe(
+        g=g,
+        quality=qual,
+        perception_memory=pm,
+        memory_importance=mi,
+        pattern_learning=pl,
+        proactive_trigger=pt,
+        selftests=st,
+        workbench=wb,
+        reflection=rf,
+        contemplation=ct,
+        social_continuity=soc,
+        memory_refinement=mr,
+        model_routing=route_res,
+        curiosity=cq,
+        identity_resolution=id_res,
+        interpretation_layer=il,
+        scene_summary=ss,
+    )
+    print(
+        f"[perception_pipeline] outcome_learning={ol.outcome_category} conf={ol.adjustment_confidence:.2f} "
+        f"target={ol.adjustment_target!r}"
+    )
+
+    cn = build_conversational_nuance_safe(
+        g=g,
+        quality=qual,
+        interpretation_layer=il,
+        scene_summary=ss,
+        pattern_learning=pl,
+        proactive_trigger=pt,
+        reflection=rf,
+        contemplation=ct,
+        social_continuity=soc,
+        memory_refinement=mr,
+        model_routing=route_res,
+        curiosity=cq,
+        outcome_learning=ol,
+    )
+    print(
+        f"[perception_pipeline] nuance={cn.confidence:.2f} tone={cn.nuance_tone} "
+        f"pacing_hint={cn.emotional_pacing_hint!r}"
+    )
+
+    sc = build_strategic_continuity_safe(
+        g=g,
+        user_text=ut,
+        identity_resolution=id_res,
+        social_continuity=soc,
+        memory_refinement=mr,
+        workbench=wb,
+        reflection=rf,
+        contemplation=ct,
+        curiosity=cq,
+        outcome_learning=ol,
+        conversational_nuance=cn,
+        selftests=st,
+    )
+    print(
+        f"[perception_pipeline] continuity_session={sc.continuity_scope} "
+        f"conf={sc.continuity_confidence:.2f}"
+    )
+
+    ilp = build_supervised_self_improvement_loop_safe(
+        g=g,
+        selftests=st,
+        workbench=wb,
+        reflection=rf,
+        contemplation=ct,
+        outcome_learning=ol,
+        strategic_continuity=sc,
+    )
+    print(
+        f"[perception_pipeline] improvement_loop={ilp.loop_stage} "
+        f"active={ilp.loop_active}"
+    )
+
     print(
         f"[perception_pipeline] package trusted={trusted} vision="
         f"{getattr(resolved, 'vision_status', 'n/a') if resolved else 'n/a'}"
     )
     pkg = PackageOutput(stage=StageResult(ok=True))
 
-    return PerceptionPipelineBundle(
+    bundle = PerceptionPipelineBundle(
         acquisition=acq,
         quality=qual,
         detection=det,
@@ -593,4 +751,14 @@ def run_perception_pipeline(
         workbench=wb,
         reflection=rf,
         contemplation=ct,
+        social_continuity=soc,
+        memory_refinement=mr,
+        model_routing=route_res,
+        curiosity=cq,
+        outcome_learning=ol,
+        conversational_nuance=cn,
+        strategic_continuity=sc,
+        improvement_loop=ilp,
     )
+    record_calibration_tick(bundle)
+    return bundle
