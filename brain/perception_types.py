@@ -1245,3 +1245,6 @@ class PerceptionPipelineBundle:
     strategic_continuity: Optional[StrategicContinuityResult] = None
     # Phase 30 — supervised self-improvement loop (descriptive only)
     improvement_loop: Optional[ImprovementLoopResult] = None
+    # Phase 31 — heartbeat & bounded adaptive learning (quiet background continuity)
+    heartbeat: Optional[HeartbeatTickResult] = None
+    adaptive_learning: Optional[AdaptiveLearningResult] = None

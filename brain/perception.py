@@ -287,6 +287,16 @@ class PerceptionState:
     improvement_execution_failed: bool = False
     improvement_suggested_next_step: str = ""
     improvement_loop_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 31 — resident heartbeat + bounded adaptive learning (advisory; no auto-speak)
+    heartbeat_active: bool = False
+    heartbeat_mode: str = "no_heartbeat"
+    heartbeat_summary: str = ""
+    heartbeat_last_reason: str = ""
+    heartbeat_tick_id: int = 0
+    heartbeat_meta: dict[str, Any] = field(default_factory=dict)
+    learning_focus: str = ""
+    learning_summary: str = ""
+    learning_confidence: float = 0.0
 
 
 def _compute_salience(state: PerceptionState) -> float:
