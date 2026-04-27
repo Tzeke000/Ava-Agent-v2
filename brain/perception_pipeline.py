@@ -4,7 +4,10 @@ Phase 3 — staged perception pipeline.
 Stages (conceptual): acquisition → quality gate → detection → recognition →
 interpretation (emotion + salience) → continuity (Phase 7) → identity fallback (Phase 8) →
 scene summary (Phase 9) → interpretation layer (Phase 10) → perception memory (Phase 11) →
-package → :class:`perception.PerceptionState` via adapter.
+memory scoring (Phase 12) → pattern learning (Phase 13) → proactive triggers (Phase 14) →
+self-tests (Phase 15) → workbench proposals (Phase 16) → reflection/self-model (Phase 17) →
+contemplation (Phase 18) → package →
+:class:`perception.PerceptionState` via :mod:`brain.perception_state_adapter`.
 
 Failures in one stage do not abort the turn; each stage returns safe defaults and ``StageResult``.
 """
@@ -18,11 +21,7 @@ from .perception_types import (
     ContinuityOutput,
     ContinuityResult,
     DetectionOutput,
-    IdentityResolutionResult,
-    InterpretationLayerResult,
     InterpretationOutput,
-    PerceptionMemoryOutput,
-    SceneSummaryResult,
     PackageOutput,
     PerceptionPipelineBundle,
     QualityOutput,
@@ -31,48 +30,21 @@ from .perception_types import (
     StageResult,
 )
 from .frame_quality import compute_frame_quality, confidence_scales_from_label
-from .salience import build_salience_result, salience_items_as_dicts
+from .salience import build_salience_result
 from .continuity import update_continuity
 from .identity_fallback import resolve_identity_fallback
 from .scene_summary import build_scene_summary
 from .interpretation import build_interpretation_layer
 from .perception_memory import build_perception_memory_output
+from .memory_scoring import score_memory_importance
+from .pattern_learning import learn_pattern_signals
+from .proactive_triggers import evaluate_proactive_triggers
+from .selftests import maybe_run_selftests
+from .workbench import build_workbench_proposals
+from .reflection import build_reflection_result
+from .contemplation import build_contemplation_result
+from .perception_state_adapter import bundle_to_perception_state
 from .shared import now_ts
-
-
-def _apply_quality_fields_to_state(state: Any, q: QualityOutput) -> None:
-    """Copy structured quality + scales onto PerceptionState (Phase 4)."""
-    state.recognition_quality_scale = q.recognition_confidence_scale
-    state.expression_quality_scale = q.expression_confidence_scale
-    sq = q.structured
-    if sq is None:
-        state.quality_label = "unreliable"
-        state.blur_value = 0.0
-        state.blur_label = "sharp"
-        state.blur_confidence_scale = 1.0
-        state.blur_recognition_scale = 1.0
-        state.blur_expression_scale = 1.0
-        state.blur_interpretation_scale = 1.0
-        state.blur_reason_flags = []
-        state.blur_quality_score = 0.0
-        state.darkness_quality_score = 0.0
-        state.overexposure_quality_score = 0.0
-        state.motion_smear_quality_score = 1.0
-        state.occlusion_quality_score = 1.0
-        return
-    state.quality_label = sq.quality_label
-    state.blur_value = getattr(sq, "blur_value", 0.0)
-    state.blur_label = getattr(sq, "blur_label", "sharp")
-    state.blur_confidence_scale = getattr(sq, "blur_confidence_scale", 1.0)
-    state.blur_recognition_scale = getattr(sq, "blur_recognition_scale", 1.0)
-    state.blur_expression_scale = getattr(sq, "blur_expression_scale", 1.0)
-    state.blur_interpretation_scale = getattr(sq, "blur_interpretation_scale", 1.0)
-    state.blur_reason_flags = list(getattr(sq, "blur_reason_flags", []) or [])
-    state.blur_quality_score = sq.blur_score
-    state.darkness_quality_score = sq.darkness_score
-    state.overexposure_quality_score = sq.overexposure_score
-    state.motion_smear_quality_score = sq.motion_smear_score
-    state.occlusion_quality_score = sq.occlusion_score
 
 
 def _motion_smear_from_quality(qual: QualityOutput) -> float:
@@ -91,156 +63,6 @@ def _log_top_salient(sal_res: SalienceResult) -> None:
         )
     else:
         print(f"[perception_pipeline] top_salient=none combined={sal_res.combined_scalar:.2f}")
-
-
-def _apply_continuity_structured_to_state(state: Any, cont: Any) -> None:
-    """Copy Phase 7 continuity snapshot onto PerceptionState (not public ``identity_state`` — Phase 8)."""
-    cr = getattr(cont, "structured", None)
-    if cr is None:
-        return
-    state.continuity_confidence = float(cr.continuity_confidence)
-    state.continuity_prior_identity = cr.prior_identity
-    state.continuity_current_identity = cr.current_identity
-    state.continuity_matched_factors = dict(cr.matched_factors)
-    state.continuity_matched_notes = list(cr.matched_notes)
-    state.continuity_frame_gap = int(cr.frame_gap)
-    state.continuity_seconds_since_prior = float(cr.seconds_since_prior)
-    state.continuity_suppress_flip = bool(cr.suppress_flip)
-
-
-def _apply_identity_resolution_to_state(state: Any, ir: IdentityResolutionResult | None) -> None:
-    """Copy Phase 8 identity resolution (canonical ``identity_state``) onto PerceptionState."""
-    if ir is None:
-        state.identity_state = "no_face"
-        state.resolved_face_identity = None
-        state.stable_face_identity = None
-        state.identity_fallback_source = "none"
-        state.identity_fallback_notes = []
-        state.identity_confidence = 0.0
-        return
-    state.identity_state = ir.identity_state
-    state.resolved_face_identity = ir.resolved_identity
-    state.stable_face_identity = ir.stable_identity
-    state.identity_fallback_source = ir.fallback_source
-    state.identity_fallback_notes = list(ir.fallback_notes)
-    state.identity_confidence = float(ir.identity_confidence)
-
-
-def _apply_scene_summary_to_state(state: Any, ss: SceneSummaryResult | None) -> None:
-    """Copy Phase 9 scene summary onto PerceptionState."""
-    if ss is None:
-        state.scene_compact_summary = ""
-        state.scene_overall_state = "uncertain"
-        state.scene_summary_confidence = 0.0
-        state.scene_face_presence = "unknown"
-        state.scene_face_count_estimate = 0
-        state.scene_primary_identity_line = ""
-        state.scene_key_entities = []
-        state.scene_lighting_summary = ""
-        state.scene_blur_summary = ""
-        state.scene_change_summary = ""
-        state.scene_entrant_summary = ""
-        state.scene_summary_notes = []
-        state.scene_summary_meta = {}
-        return
-    state.scene_compact_summary = ss.compact_text_summary
-    state.scene_overall_state = ss.overall_scene_state
-    state.scene_summary_confidence = float(ss.summary_confidence)
-    state.scene_face_presence = ss.face_presence
-    state.scene_face_count_estimate = int(ss.face_count_estimate)
-    state.scene_primary_identity_line = ss.primary_identity_summary
-    state.scene_key_entities = list(ss.key_entities)
-    state.scene_lighting_summary = ss.lighting_summary
-    state.scene_blur_summary = ss.blur_summary
-    state.scene_change_summary = ss.scene_change_summary
-    state.scene_entrant_summary = ss.entrant_summary
-    state.scene_summary_notes = list(ss.notes)
-    state.scene_summary_meta = dict(ss.meta)
-
-
-def _apply_interpretation_layer_to_state(state: Any, il: InterpretationLayerResult | None) -> None:
-    """Copy Phase 10 semantic interpretation onto PerceptionState."""
-    if il is None:
-        state.interpretation_event_types = []
-        state.interpretation_primary_event = "uncertain_visual_state"
-        state.interpretation_confidence = 0.0
-        state.interpretation_priority = 0.0
-        state.interpretation_subject = None
-        state.interpretation_identity = None
-        state.interpretation_notes = []
-        state.interpretation_no_meaningful_change = True
-        state.interpretation_evidence = {}
-        return
-    state.interpretation_event_types = list(il.event_types)
-    state.interpretation_primary_event = il.primary_event
-    state.interpretation_confidence = float(il.event_confidence)
-    state.interpretation_priority = float(il.event_priority)
-    state.interpretation_subject = il.interpreted_subject
-    state.interpretation_identity = il.interpreted_identity
-    state.interpretation_notes = list(il.interpretation_notes)
-    state.interpretation_no_meaningful_change = bool(il.no_meaningful_change)
-    state.interpretation_evidence = dict(il.evidence)
-
-
-def _apply_perception_memory_to_state(state: Any, pm: PerceptionMemoryOutput | None) -> None:
-    """Copy Phase 11 memory-ready record summary onto PerceptionState (no persistence)."""
-    if pm is None:
-        state.perception_memory_suppressed = False
-        state.perception_memory_event_type = ""
-        state.perception_memory_candidate = False
-        state.perception_memory_confidence = 0.0
-        state.perception_memory_summary = ""
-        state.perception_memory_meta = {}
-        state.perception_memory_skip_reason = ""
-        return
-    state.perception_memory_skip_reason = pm.skip_reason or ""
-    if pm.event is None:
-        state.perception_memory_suppressed = bool(pm.skipped)
-        state.perception_memory_event_type = ""
-        state.perception_memory_candidate = False
-        state.perception_memory_confidence = 0.0
-        state.perception_memory_summary = ""
-        state.perception_memory_meta = {
-            "skipped": bool(pm.skipped),
-            "skip_reason": state.perception_memory_skip_reason,
-        }
-        return
-    state.perception_memory_suppressed = False
-    ev = pm.event
-    state.perception_memory_event_type = ev.event_type
-    state.perception_memory_candidate = bool(ev.memory_worthy_candidate)
-    state.perception_memory_confidence = float(ev.event_confidence)
-    state.perception_memory_summary = ev.scene_summary_snippet
-    state.perception_memory_meta = {
-        "wall_time": ev.wall_time,
-        "frame_seq": ev.frame_seq,
-        "event_priority": ev.event_priority,
-        "identity_state": ev.identity_state,
-        "resolved_identity": ev.resolved_identity,
-        "stable_identity": ev.stable_identity,
-        "interpretation_primary": ev.interpretation_primary_event,
-        "evidence": dict(ev.evidence),
-        "notes": list(ev.notes),
-        "relevant_entities": list(ev.relevant_entities),
-    }
-
-
-def _apply_salience_structured_to_state(state: Any, interp: InterpretationOutput) -> None:
-    """Copy Phase 6 salience snapshot onto PerceptionState (safe if structured missing)."""
-    sr = interp.salience_structured
-    if sr is None:
-        state.salience_items = []
-        state.salience_top_label = ""
-        state.salience_top_type = ""
-        state.salience_top_score = 0.0
-        state.salience_combined_scalar = float(interp.salience)
-        return
-    state.salience_items = salience_items_as_dicts(sr.items)
-    top = next((x for x in sr.items if x.is_top), None)
-    state.salience_top_label = top.label if top else ""
-    state.salience_top_type = top.item_type if top else ""
-    state.salience_top_score = float(top.score) if top else 0.0
-    state.salience_combined_scalar = float(sr.combined_scalar)
 
 
 def _stage_acquisition(camera_manager: Any, image: Any) -> AcquisitionOutput:
@@ -653,6 +475,97 @@ def run_perception_pipeline(
             f"candidate={pm.event.memory_worthy_candidate}"
         )
 
+    mi = score_memory_importance(
+        perception_memory=pm,
+        id_res=id_res,
+        scene=ss,
+        il=il,
+        qual=qual,
+        cont=cont,
+        acquisition_freshness=str(af),
+    )
+    print(
+        f"[perception_pipeline] memory score={mi.decision.importance_score:.2f} "
+        f"class={mi.decision.memory_class} worthy={mi.decision.memory_worthy}"
+    )
+    pl = learn_pattern_signals(
+        perception_memory=pm,
+        memory_importance=mi,
+        id_res=id_res,
+        scene=ss,
+        il=il,
+        cont=cont,
+        acquisition_freshness=str(af),
+    )
+    print(
+        f"[perception_pipeline] pattern={pl.primary_signal.pattern_type} "
+        f"strength={pl.primary_signal.pattern_strength:.2f}"
+    )
+    pt = evaluate_proactive_triggers(
+        perception_memory=pm,
+        memory_importance=mi,
+        pattern_learning=pl,
+        id_res=id_res,
+        scene=ss,
+        il=il,
+        qual=qual,
+        cont=cont,
+        acquisition_freshness=str(af),
+        visual_truth_trusted=trusted,
+    )
+    print(
+        f"[perception_pipeline] proactive={pt.trigger_type} "
+        f"score={pt.trigger_score:.2f}"
+    )
+    st = maybe_run_selftests(
+        camera_manager=camera_manager,
+        g=g,
+        acquisition_freshness=str(af),
+    )
+    print(
+        f"[perception_pipeline] selftest={st.summary.overall_status} "
+        f"run={st.run_type}"
+    )
+    wb = build_workbench_proposals(
+        selftests=st,
+        acquisition_freshness=str(af),
+        proactive_trigger=pt,
+    )
+    print(
+        f"[perception_pipeline] workbench={wb.top_proposal.proposal_type} "
+        f"priority={wb.top_proposal.priority}"
+    )
+    rf = build_reflection_result(
+        memory_importance=mi,
+        pattern_learning=pl,
+        proactive_trigger=pt,
+        selftests=st,
+        workbench=wb,
+        workbench_execution_result=g.get("_last_workbench_execution_result"),
+        workbench_command_result=g.get("_last_workbench_command_result"),
+        visual_truth_trusted=trusted,
+        acquisition_freshness=str(af),
+    )
+    print(
+        f"[perception_pipeline] reflection={rf.reflection_category} "
+        f"state={rf.self_model.current_operational_state}"
+    )
+    ct = build_contemplation_result(
+        reflection=rf,
+        memory_importance=mi,
+        pattern_learning=pl,
+        perception_memory=pm,
+        proactive_trigger=pt,
+        selftests=st,
+        workbench=wb,
+        visual_truth_trusted=trusted,
+        acquisition_freshness=str(af),
+    )
+    print(
+        f"[perception_pipeline] contemplation={ct.contemplation_theme} "
+        f"theme={ct.contemplation_theme}"
+    )
+
     print(
         f"[perception_pipeline] package trusted={trusted} vision="
         f"{getattr(resolved, 'vision_status', 'n/a') if resolved else 'n/a'}"
@@ -673,161 +586,11 @@ def run_perception_pipeline(
         scene_summary=ss,
         interpretation_layer=il,
         perception_memory=pm,
+        memory_importance=mi,
+        pattern_learning=pl,
+        proactive_trigger=pt,
+        selftests=st,
+        workbench=wb,
+        reflection=rf,
+        contemplation=ct,
     )
-
-
-def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str) -> Any:
-    """
-    Map pipeline bundle to :class:`perception.PerceptionState` (legacy shape for workspace / avaagent).
-    """
-    from .perception import PerceptionState
-    from .shared import now_ts
-
-    state = PerceptionState(user_text=user_text or "", timestamp=now_ts())
-    resolved = bundle.resolved
-    q = bundle.quality
-    d = bundle.detection
-    r = bundle.recognition
-    c = bundle.continuity
-    i = bundle.interpretation
-    idr = bundle.identity_resolution
-    ss = bundle.scene_summary
-    il = bundle.interpretation_layer
-    pm = bundle.perception_memory
-
-    if not bundle.acquisition.stage.ok or resolved is None:
-        _apply_scene_summary_to_state(state, ss)
-        _apply_interpretation_layer_to_state(state, il)
-        _apply_perception_memory_to_state(state, pm)
-        return state
-
-    state.frame = resolved.frame
-    state.vision_status = resolved.vision_status
-    state.frame_ts = resolved.frame_ts
-    state.frame_age_ms = resolved.frame_age_ms
-    state.frame_source = resolved.source
-    state.frame_seq = resolved.frame_seq
-    state.is_fresh = resolved.is_fresh
-    state.fresh_frame_streak = resolved.fresh_frame_streak
-    state.visual_truth_trusted = q.visual_truth_trusted
-    state.frame_quality = q.frame_quality
-    state.frame_quality_reasons = list(q.frame_quality_reasons)
-    state.recovery_state = q.recovery_state
-    state.last_stable_identity = getattr(resolved, "last_stable_identity", None)
-    state.identity_confidence = 0.0
-    state.continuity_confidence = 0.0
-    state.acquisition_freshness = getattr(resolved, "acquisition_freshness", "unavailable")
-    _apply_quality_fields_to_state(state, q)
-
-    if resolved.frame is None:
-        state.face_status = "No camera image"
-        state.recognized_text = "No frame — cannot assess the scene as current."
-        state.face_detected = False
-        state.person_count = 0
-        state.gaze_present = False
-        print(
-            f"[perception] vision={state.vision_status} acq={state.acquisition_freshness} "
-            f"qlabel={state.quality_label} fq={state.frame_quality:.2f} recovery={state.recovery_state} "
-            f"trusted=False id_conf=0.0 (suppress identity/emotion/scene-as-current)"
-        )
-        _apply_scene_summary_to_state(state, ss)
-        _apply_interpretation_layer_to_state(state, il)
-        _apply_perception_memory_to_state(state, pm)
-        return state
-
-    if not resolved.visual_truth_trusted:
-        if resolved.vision_status == "stale_frame":
-            state.face_status = "Stale or outdated camera frame"
-            state.recognized_text = (
-                "Frame is too old to treat as a current view — not using recognition as ground truth."
-            )
-        elif resolved.vision_status == "recovering":
-            state.face_status = "Vision recovering (stabilizing)"
-            state.recognized_text = (
-                "Vision is recovering after an interruption — identity and expression are not trusted as current yet."
-            )
-        elif resolved.vision_status == "low_quality":
-            rsn = ", ".join(state.frame_quality_reasons) or "quality"
-            state.face_status = "Frame quality too low for a reliable read"
-            state.recognized_text = (
-                f"Image quality is weak ({rsn}) — not using identity or expression as ground truth yet."
-            )
-        else:
-            state.face_status = "Vision unavailable"
-            state.recognized_text = "No reliable visual read right now."
-        state.face_identity = None
-        state.face_emotion = None
-        state.face_detected = False
-        state.person_count = 0
-        state.gaze_present = False
-        _apply_continuity_structured_to_state(state, c)
-        _apply_identity_resolution_to_state(state, idr)
-        if state.last_stable_identity and state.continuity_confidence < 0.12:
-            state.continuity_confidence = 0.12
-        base = float(i.salience)
-        state.salience = base
-        _apply_salience_structured_to_state(state, i)
-        print(
-            f"[perception] vision={state.vision_status} qlabel={state.quality_label} "
-            f"age_ms={state.frame_age_ms:.0f} src={state.frame_source} fq={state.frame_quality:.2f} "
-            f"recovery={state.recovery_state} streak={state.fresh_frame_streak} trusted=False "
-            f"id_conf=0.0 cont={state.continuity_confidence:.2f} "
-            f"(suppress identity/emotion/scene-as-current)"
-        )
-        _apply_scene_summary_to_state(state, ss)
-        _apply_interpretation_layer_to_state(state, il)
-        _apply_perception_memory_to_state(state, pm)
-        return state
-
-    state.face_status = d.face_status
-    state.face_detected = d.face_detected
-    state.person_count = d.person_count
-    state.gaze_present = d.gaze_present
-    state.recognized_text = r.recognized_text
-    state.face_identity = r.face_identity
-    state.face_emotion = i.face_emotion
-
-    _apply_continuity_structured_to_state(state, c)
-    cr = c.structured
-    _apply_identity_resolution_to_state(state, idr)
-
-    if idr is not None and idr.resolved_identity:
-        state.last_stable_identity = idr.resolved_identity
-    if (
-        idr is not None
-        and state.face_detected
-        and idr.identity_state == "unknown_face"
-    ):
-        state.identity_confidence = max(
-            float(state.identity_confidence),
-            0.22 * float(q.recognition_confidence_scale),
-        )
-    if cr is not None:
-        state.continuity_confidence = max(
-            float(state.continuity_confidence), float(cr.continuity_confidence)
-        )
-    if not state.face_detected and state.last_stable_identity:
-        state.continuity_confidence = max(float(state.continuity_confidence), 0.14)
-
-    # Interpretation / salience: structured combined scalar × quality expression × blur (interp).
-    base_sal = float(i.salience)
-    state.salience = (
-        base_sal * q.quality_only_expression_scale * q.blur_interpretation_scale
-    )
-    _apply_salience_structured_to_state(state, i)
-    _apply_scene_summary_to_state(state, ss)
-    _apply_interpretation_layer_to_state(state, il)
-    _apply_perception_memory_to_state(state, pm)
-    print(
-        f"[perception] vision={state.vision_status} acq={state.acquisition_freshness} "
-        f"qlabel={state.quality_label} blur_label={state.blur_label} blur_val={state.blur_value:.1f} "
-        f"age_ms={state.frame_age_ms:.0f} src={state.frame_source} "
-        f"fq={state.frame_quality:.2f} recovery={state.recovery_state} streak={state.fresh_frame_streak} "
-        f"trusted=True id_conf={state.identity_confidence:.2f} (rec_scale={q.recognition_confidence_scale:.2f}) "
-        f"cont={state.continuity_confidence:.2f} id_state={state.identity_state} "
-        f"resolved_id={state.resolved_face_identity!r} raw_id={state.face_identity!r} "
-        f"salience={state.salience:.2f} top={state.salience_top_type}:{state.salience_top_label} "
-        f"scene={state.scene_overall_state!r} interp={state.interpretation_primary_event!r} "
-        f"(base={base_sal:.2f} expr_q={q.quality_only_expression_scale:.2f} blur_interp={q.blur_interpretation_scale:.2f})"
-    )
-    return state

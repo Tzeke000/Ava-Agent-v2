@@ -6653,7 +6653,17 @@ def finalize_ava_turn(
     return ai_reply, visual_out, active_profile, actions, reflection
 
 
+_RUN_AVA_TUNING_SOURCE_LOGGED = False
+
+
 def run_ava(user_input: str, image=None, active_person_id: str | None = None) -> tuple[str, dict, dict, list[str], dict]:
+    global _RUN_AVA_TUNING_SOURCE_LOGGED
+    if not _RUN_AVA_TUNING_SOURCE_LOGGED:
+        _RUN_AVA_TUNING_SOURCE_LOGGED = True
+        print(
+            "[run_ava] tuning layer: config/ava_tuning.py "
+            "(summarize_tuning_config() for a full snapshot)"
+        )
     active_person_id = active_person_id or get_active_person_id()
     _inp = (user_input or "").strip()
     print(

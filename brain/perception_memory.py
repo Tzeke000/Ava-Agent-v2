@@ -9,6 +9,8 @@ from __future__ import annotations
 import traceback
 from typing import Any, Optional
 
+from config.ava_tuning import MEMORY_EVENT_CONFIG, MEMORY_EVENT_TYPES
+
 from .perception_types import (
     ContinuityOutput,
     IdentityResolutionResult,
@@ -20,20 +22,8 @@ from .perception_types import (
     SceneSummaryResult,
 )
 
-_MEMORY_EVENT_TYPES = frozenset(
-    {
-        "person_entered",
-        "person_left",
-        "known_person_present",
-        "likely_known_person_present",
-        "unknown_person_present",
-        "scene_changed",
-        "room_became_empty",
-        "occupied_or_busy_visual_state",
-        "uncertain_visual_state",
-        "no_meaningful_change",
-    }
-)
+mecfg = MEMORY_EVENT_CONFIG
+_MEMORY_EVENT_TYPES = MEMORY_EVENT_TYPES
 
 _last_no_change_sig: Optional[tuple[Any, ...]] = None
 _had_face_prev: bool = False
@@ -106,8 +96,8 @@ def build_perception_memory_output(
             wall_time=wall_time,
             frame_seq=frame_seq,
             event_type="uncertain_visual_state",
-            event_confidence=0.2,
-            event_priority=0.18,
+            event_confidence=mecfg.error_event_confidence,
+            event_priority=mecfg.error_event_priority,
             identity_state="",
             evidence={"error": str(e)},
             memory_worthy_candidate=False,

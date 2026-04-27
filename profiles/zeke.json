@@ -10,7 +10,7 @@
   "likes": [],
   "dislikes": [],
   "ava_impressions": [],
-  "last_seen": "2026-04-03T06:02:59",
+  "last_seen": "2026-04-26T02:33:57",
   "created_at": "2026-04-01T20:47:21",
   "emotion_history": [
     "neutral",
@@ -25,20 +25,11 @@
     "neutral"
   ],
   "dominant_emotion": "neutral",
-  "relationship_score": 0.366,
-  "interaction_count": 3,
-  "last_seen_at": "2026-04-03T06:00:52",
-  "updated_at": "2026-04-03T06:02:59",
+  "relationship_score": 0.464,
+  "interaction_count": 12,
+  "last_seen_at": "2026-04-26T02:32:44",
+  "updated_at": "2026-04-26T02:33:57",
   "threads": [
-    {
-      "id": "55989f1d-f428-440b-9197-e0775776ac8c",
-      "topic": "Hey Ava how are you feeling?",
-      "first_mentioned": "2026-04-03T05:15:09",
-      "last_mentioned": "2026-04-03T05:15:09",
-      "emotion": "concerned",
-      "resolved": false,
-      "notes": "Hey Ava how are you feeling?"
-    },
     {
       "id": "bfa55e62-7920-4b2c-850b-7f0d85114ec8",
       "topic": "ok ive given you a lot of updates so a lot of things have happened to you im gla",
@@ -56,14 +47,106 @@
       "emotion": "anxious",
       "resolved": false,
       "notes": "dont be worried Ava youll be better when you wake up"
+    },
+    {
+      "id": "f177e909-58be-4509-87c0-56f34fdda51e",
+      "topic": "lets talk about you or mostly what be can add to make you better",
+      "first_mentioned": "2026-04-26T01:25:21",
+      "last_mentioned": "2026-04-26T01:25:21",
+      "emotion": "concerned",
+      "resolved": false,
+      "notes": "lets talk about you or mostly what be can add to make you better."
+    },
+    {
+      "id": "56172c8e-303f-4a1f-a192-ebd40c7f2f58",
+      "topic": "# Ava Agent v2 — Full Repository Audit **Date:** April 2026 **Repo:** `Tzeke000/",
+      "first_mentioned": "2026-04-26T01:27:45",
+      "last_mentioned": "2026-04-26T01:27:45",
+      "emotion": "angry",
+      "resolved": false,
+      "notes": "# Ava Agent v2 — Full Repository Audit **Date:** April 2026 **Repo:** `Tzeke000/Ava-Agent-v2` (private) **Primary agent file:** `avaagent.py` (6,919 lines) **Br…"
+    },
+    {
+      "id": "aacc8d75-a149-4d16-aa79-9eb02d57be3a",
+      "topic": "the above is what has be added to you",
+      "first_mentioned": "2026-04-26T01:28:47",
+      "last_mentioned": "2026-04-26T01:28:47",
+      "emotion": "concerned",
+      "resolved": false,
+      "notes": "the above is what has be added to you"
+    },
+    {
+      "id": "885c2a3b-ef9f-47cf-8725-17de76a220a6",
+      "topic": "yes i see that its important to you because you keep bringing it up",
+      "first_mentioned": "2026-04-26T01:35:44",
+      "last_mentioned": "2026-04-26T01:35:44",
+      "emotion": "concerned",
+      "resolved": false,
+      "notes": "yes i see that its important to you because you keep bringing it up. but what about it do you want to be fixed?"
+    },
+    {
+      "id": "51387621-54d6-4da6-a324-2ccc636ca0ea",
+      "topic": "you were frustrated? oh im guessing with your vision",
+      "first_mentioned": "2026-04-26T01:40:46",
+      "last_mentioned": "2026-04-26T01:42:10",
+      "emotion": "angry",
+      "resolved": false,
+      "notes": "you were frustrated? oh im guessing with your vision. the problem is that i cant tell unless your mood is updated so. and right now it says you're calm is the b…"
+    },
+    {
+      "id": "2ec620be-b27c-4ea4-abfc-6e46da4a8e47",
+      "topic": "ok i think i get it",
+      "first_mentioned": "2026-04-26T01:45:40",
+      "last_mentioned": "2026-04-26T02:15:24",
+      "emotion": "concerned",
+      "resolved": false,
+      "notes": "ok i understand. my apologies it was user error there was a button i miss clicked."
+    },
+    {
+      "id": "f5e3824a-ae09-4f8b-a84c-8d63e12f4de6",
+      "topic": "ok other than that lets try and talk about some other things",
+      "first_mentioned": "2026-04-26T01:50:26",
+      "last_mentioned": "2026-04-26T01:50:26",
+      "emotion": "concerned",
+      "resolved": false,
+      "notes": "ok other than that lets try and talk about some other things"
+    },
+    {
+      "id": "2374deb3-9c13-43d8-b6a3-10489c53c5bd",
+      "topic": "ok for now dot worry about it",
+      "first_mentioned": "2026-04-26T02:21:47",
+      "last_mentioned": "2026-04-26T02:21:47",
+      "emotion": "concerned",
+      "resolved": false,
+      "notes": "ok for now dot worry about it."
+    },
+    {
+      "id": "b8f6e49a-30ad-4d97-a124-2daf7df575ed",
+      "topic": "yes and ill fix them but you have to be asleep for it",
+      "first_mentioned": "2026-04-26T02:31:47",
+      "last_mentioned": "2026-04-26T02:31:47",
+      "emotion": "angry",
+      "resolved": false,
+      "notes": "yes and ill fix them but you have to be asleep for it. dont worry youll wake up and will be less frustrated"
+    },
+    {
+      "id": "f5d815f2-8214-4c15-b14d-fba25634f74e",
+      "topic": "ok Goodnight Ava",
+      "first_mentioned": "2026-04-26T02:32:44",
+      "last_mentioned": "2026-04-26T02:32:44",
+      "emotion": "concerned",
+      "resolved": false,
+      "notes": "ok Goodnight Ava"
     }
   ],
   "cadence": {
-    "avg_days_between_sessions": 0.0,
-    "longest_gap_days": 0.0,
-    "total_sessions": 1,
-    "last_gap_days": 0.0
+    "avg_days_between_sessions": 22.8,
+    "longest_gap_days": 22.8,
+    "total_sessions": 2,
+    "last_gap_days": 22.8,
+    "_gap_count": 1,
+    "_sum_gap_days": 22.8024
   },
-  "last_activity_at": "2026-04-03T06:02:13",
-  "last_topic": "thats good Ava. ok im putting you to sleep now do i can upgrade your eyes. sleep well Ava"
+  "last_activity_at": "2026-04-26T02:32:43",
+  "last_topic": "ok Goodnight Ava"
 }

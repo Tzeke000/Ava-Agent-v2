@@ -3,7 +3,10 @@ Unified perception from camera + user text.
 
 Phase 3: building :class:`PerceptionState` goes through :mod:`brain.perception_pipeline`
 (staged acquisition → quality → detection → recognition → interpretation → continuity →
-identity resolution → scene summary → interpretation layer → perception memory output → package).
+identity resolution → scene summary → interpretation layer → perception memory output →
+memory importance scoring → pattern learning → proactive triggers → self-tests →
+workbench proposals → reflection/self-model → contemplation → package), then
+:mod:`brain.perception_state_adapter` maps the bundle to flat state.
 
 Vision gating: identity, emotion, and present-tense scene claims require ``visual_truth_trusted``
 (camera layer: stable after fresh frames / recovery — see ``brain.camera``).
@@ -15,7 +18,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .perception_pipeline import bundle_to_perception_state, run_perception_pipeline
+from .perception_pipeline import run_perception_pipeline
+from .perception_state_adapter import bundle_to_perception_state
 from .perception_utils import compute_salience, lbph_distance_to_identity_confidence
 from .shared import now_ts
 
@@ -123,6 +127,76 @@ class PerceptionState:
     perception_memory_meta: dict[str, Any] = field(default_factory=dict)
     perception_memory_suppressed: bool = False
     perception_memory_skip_reason: str = ""
+    # Phase 12 — memory importance scoring (decision only; no persistence here)
+    memory_importance_score: float = 0.0
+    memory_importance_label: str = "ignore"
+    memory_worthy: bool = False
+    memory_decision_reason: str = ""
+    memory_class: str = "ignore"
+    memory_scoring_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 13 — pattern learning (signals only; no persistence here)
+    pattern_type: str = ""
+    pattern_strength: float = 0.0
+    pattern_familiarity_score: float = 0.0
+    pattern_unusualness_score: float = 0.0
+    pattern_subject: str = ""
+    pattern_notes: list[str] = field(default_factory=list)
+    pattern_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 14 — adaptive proactive trigger recommendation (no forced initiative)
+    proactive_should_trigger: bool = False
+    proactive_trigger_type: str = "no_trigger"
+    proactive_trigger_score: float = 0.0
+    proactive_trigger_reason: str = ""
+    proactive_suppression_reason: str = ""
+    proactive_trigger_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 15 — startup/recurring self-tests (diagnostics only)
+    selftest_overall_status: str = "ok"
+    selftest_failed_checks: list[str] = field(default_factory=list)
+    selftest_warning_checks: list[str] = field(default_factory=list)
+    selftest_last_run_type: str = "recurring"
+    selftest_summary: str = ""
+    selftest_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 16 — repair workbench proposal summary (proposal-only; no execution)
+    workbench_has_proposal: bool = False
+    workbench_top_proposal_type: str = "no_action_needed"
+    workbench_top_proposal_title: str = ""
+    workbench_top_proposal_priority: str = "low"
+    workbench_top_proposal_risk: str = "low"
+    workbench_summary: str = ""
+    workbench_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 16.5 — supervised execution state (no auto execution in pipeline)
+    workbench_execution_ready: bool = False
+    workbench_execution_mode: str = "dry_run"
+    workbench_last_execution_success: bool = False
+    workbench_last_execution_summary: str = ""
+    workbench_last_modified_files: list[str] = field(default_factory=list)
+    workbench_last_backup_paths: list[str] = field(default_factory=list)
+    workbench_execution_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 16.6 — workbench approval/command status surface
+    workbench_command_available: bool = True
+    workbench_pending_proposal_count: int = 0
+    workbench_selected_proposal_id: str = ""
+    workbench_last_command: str = ""
+    workbench_last_command_success: bool = False
+    workbench_last_command_summary: str = ""
+    workbench_last_rollback_success: bool = False
+    workbench_command_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 17 — evidence-based reflection and soft self-model (no auto behavior override)
+    reflection_summary: str = ""
+    reflection_category: str = "uncertain_state_reflection"
+    reflection_confidence: float = 0.0
+    reflection_suggested_adjustment: str = ""
+    self_model_tags: list[str] = field(default_factory=list)
+    self_model_state: str = "uncertain_operation"
+    reflection_meta: dict[str, Any] = field(default_factory=dict)
+    # Phase 18 — bounded internal contemplation (guidance-only, non-overriding)
+    contemplation_theme: str = "certainty_vs_usefulness"
+    contemplation_summary: str = ""
+    contemplation_question: str = ""
+    contemplation_confidence: float = 0.0
+    contemplation_guiding_principles: list[str] = field(default_factory=list)
+    contemplation_priority_weights: dict[str, Any] = field(default_factory=dict)
+    contemplation_meta: dict[str, Any] = field(default_factory=dict)
 
 
 def _compute_salience(state: PerceptionState) -> float:

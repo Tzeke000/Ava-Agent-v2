@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from typing import Optional
 
+from config.ava_tuning import IDENTITY_CONFIG
+
 from .perception_types import ContinuityResult, IdentityResolutionResult
 from .perception_utils import lbph_distance_to_identity_confidence
 
-# Scaled LBPH must reach this to treat recognizer label as confirmed (single knob).
-CONFIRM_LBPH_MIN = 0.41
+idcfg = IDENTITY_CONFIG
+CONFIRM_LBPH_MIN = idcfg.confirm_lbph_min
 
 
 def resolve_identity_fallback(
@@ -92,7 +94,14 @@ def resolve_identity_fallback(
         notes.append("continuity_carries_prior")
         carry_notes = notes + list(cont.matched_notes[:4])
         conf = float(
-            min(0.9, max(lbph_scaled, cont.continuity_confidence * 0.92, 0.28))
+            min(
+                idcfg.likely_carry_conf_cap,
+                max(
+                    lbph_scaled,
+                    cont.continuity_confidence * idcfg.likely_carry_continuity_scale,
+                    idcfg.likely_carry_floor,
+                ),
+            )
         )
         print(
             f"[identity_fallback] raw={raw!r} continuity={cont.identity_state!r} "
@@ -115,7 +124,14 @@ def resolve_identity_fallback(
         notes.append("demoted_despite_continuity_pre_label")
 
     conf_u = float(
-        max(lbph_scaled, 0.18, min(0.55, cont.continuity_confidence * 0.38))
+        max(
+            lbph_scaled,
+            idcfg.unknown_face_lbph_floor,
+            min(
+                idcfg.unknown_face_lbph_cap,
+                cont.continuity_confidence * idcfg.unknown_face_lbph_scale,
+            ),
+        )
     )
     print(
         f"[identity_fallback] raw={raw!r} continuity={cont.identity_state!r} "
@@ -126,7 +142,7 @@ def resolve_identity_fallback(
         raw_identity=raw,
         resolved_identity=None,
         stable_identity=prior,
-        identity_confidence=min(0.62, conf_u),
+        identity_confidence=min(idcfg.unknown_face_identity_cap, conf_u),
         fallback_source="none",
         fallback_notes=notes or ["unknown_face"],
     )
