@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from config.ava_tuning import SCENE_SUMMARY_CONFIG
+
 from .perception_types import (
     ContinuityOutput,
     IdentityResolutionResult,
@@ -16,8 +18,9 @@ from .perception_types import (
     SceneSummaryResult,
 )
 
+ssc = SCENE_SUMMARY_CONFIG
 _last_face_count: int = -1
-MOTION_CHANGED_THRESHOLD = 0.58  # motion_smear below this → scene_change emphasis
+MOTION_CHANGED_THRESHOLD = ssc.motion_changed_threshold
 
 
 def reset_scene_summary_memory() -> None:
@@ -58,9 +61,9 @@ def _lighting_summary(qual: QualityOutput) -> str:
         return "lighting_unavailable"
     d = float(getattr(sq, "darkness_score", 0.5))
     o = float(getattr(sq, "overexposure_score", 1.0))
-    if d < 0.22:
+    if d < ssc.lighting_darkness_low:
         return "low_light"
-    if o < 0.52:
+    if o < ssc.lighting_overexposure_low:
         return "bright_or_overexposed"
     return "medium_lighting"
 

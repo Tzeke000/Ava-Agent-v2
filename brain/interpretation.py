@@ -10,6 +10,8 @@ from __future__ import annotations
 import traceback
 from typing import Any, Optional
 
+from config.ava_tuning import INTERPRETATION_CONFIG, INTERPRETATION_EVENT_PRIORITY_ITEMS
+
 from .perception_types import (
     ContinuityOutput,
     IdentityResolutionResult,
@@ -19,26 +21,15 @@ from .perception_types import (
     SceneSummaryResult,
 )
 
-# Higher = wins as primary_event when multiple tags apply
-_EVENT_PRIORITY: dict[str, float] = {
-    "person_entered": 1.0,
-    "person_left": 0.95,
-    "scene_changed": 0.88,
-    "unknown_person_present": 0.72,
-    "known_person_present": 0.68,
-    "likely_known_person_present": 0.64,
-    "occupied_or_busy_visual_state": 0.58,
-    "user_or_subject_engaged": 0.55,
-    "user_or_subject_disengaged": 0.42,
-    "no_meaningful_change": 0.28,
-    "uncertain_visual_state": 0.18,
-}
+icfg = INTERPRETATION_CONFIG
+# Higher = wins as primary_event when multiple tags apply (:mod:`config.ava_tuning`)
+_EVENT_PRIORITY: dict[str, float] = dict(INTERPRETATION_EVENT_PRIORITY_ITEMS)
 
 
 def _pick_primary(events: list[str]) -> str:
     if not events:
         return "uncertain_visual_state"
-    return max(events, key=lambda e: _EVENT_PRIORITY.get(e, 0.4))
+    return max(events, key=lambda e: _EVENT_PRIORITY.get(e, icfg.default_primary_priority))
 
 
 def build_interpretation_layer(
@@ -71,7 +62,7 @@ def build_interpretation_layer(
         print(f"[interpretation] build failed: {e}\n{traceback.format_exc()}")
         return InterpretationLayerResult(
             event_types=["uncertain_visual_state"],
-            event_confidence=0.22,
+            event_confidence=icfg.error_fallback_confidence,
             event_priority=_EVENT_PRIORITY["uncertain_visual_state"],
             interpreted_subject=None,
             interpreted_identity=None,

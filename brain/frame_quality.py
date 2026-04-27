@@ -5,14 +5,11 @@ Phase 5 — dedicated blur detection (Laplacian variance) with labels and confid
 Computes per-metric scores, an overall score **compatible with legacy camera gating**,
 and labels ``usable`` | ``weak`` | ``unreliable``. Logs with prefix ``[frame_quality]``.
 
+Tuning knobs live in :mod:`config.ava_tuning` (``QUALITY_CONFIG``, ``BLUR_CONFIG``, etc.).
+
 **Overall score** uses the same recipe as the former ``assess_frame_quality_basic``:
 ``0.55 * blur_norm + 0.45 * lum_comfort``, then ×0.82 if any ``reason_flags`` apply.
 **Motion** / **occlusion** metrics are diagnostic only and do not change ``overall_quality_score``.
-
-**Phase 5 blur** (tune only ``BLUR_VAR_*`` below):
-- ``blur_label``: sharp | soft | blurry
-- ``blur_layer_confidence_scales()`` → (recognition, expression, interpretation) multipliers
-- Combined with overall quality label scales in ``perception_pipeline`` (multiply).
 
 Future hooks: blur → scene summaries, recognition fallback, visual memory worthiness — see
 ``FrameQualityAssessment.meta`` and ``blur_reason_flags``.
@@ -29,23 +26,16 @@ except Exception:
     cv2 = None
     np = None
 
+from config.ava_tuning import BLUR_CONFIG, CONFIDENCE_SCALE_CONFIG, QUALITY_CONFIG
+
 from .perception_types import FrameQualityAssessment
 
-# Keep in sync with brain.camera.LOW_QUALITY_THRESHOLD for "weak" band lower bound.
-WEAK_MIN_OVERALL = 0.28
-USABLE_MIN_OVERALL = 0.50
-
-# ---------------------------------------------------------------------------
-# Phase 5 — blur thresholds (Laplacian variance, CV_64F). Single source of truth.
-# ---------------------------------------------------------------------------
-# blurry: var < BLUR_VAR_SOFT_MAX
-# soft:   BLUR_VAR_SOFT_MAX <= var < BLUR_VAR_SHARP_MIN
-# sharp:  var >= BLUR_VAR_SHARP_MIN
-BLUR_VAR_SOFT_MAX = 45.0
-BLUR_VAR_SHARP_MIN = 120.0
-
-# blur_score for legacy overall only: min(1, var / BLUR_VAR_SCALE)
-BLUR_VAR_SCALE = 180.0
+# Public aliases (backward compatible; values from :mod:`config.ava_tuning`).
+WEAK_MIN_OVERALL = QUALITY_CONFIG.weak_min_overall
+USABLE_MIN_OVERALL = QUALITY_CONFIG.usable_min_overall
+BLUR_VAR_SOFT_MAX = BLUR_CONFIG.var_soft_max
+BLUR_VAR_SHARP_MIN = BLUR_CONFIG.var_sharp_min
+BLUR_VAR_SCALE = BLUR_CONFIG.var_scale
 
 _prev_gray_small: Optional[Any] = None
 
@@ -54,12 +44,12 @@ def classify_blur_laplacian_var(blur_var: float) -> tuple[str, list[str]]:
     """
     Map raw Laplacian variance to ``blur_label`` and ``blur_reason_flags``.
 
-    Thresholds: :data:`BLUR_VAR_SOFT_MAX`, :data:`BLUR_VAR_SHARP_MIN`.
+    Thresholds from ``BLUR_CONFIG`` (``var_soft_max``, ``var_sharp_min``).
     """
-    flags: list[str] = []
-    if blur_var < BLUR_VAR_SOFT_MAX:
+    bc = BLUR_CONFIG
+    if blur_var < bc.var_soft_max:
         return "blurry", ["blur_blurry"]
-    if blur_var < BLUR_VAR_SHARP_MIN:
+    if blur_var < bc.var_sharp_min:
         return "soft", ["blur_soft"]
     return "sharp", []
 
@@ -70,28 +60,31 @@ def blur_layer_confidence_scales(blur_label: str) -> tuple[float, float, float]:
 
     Interpretation uses a **lighter** penalty than expression (salience / scene hooks).
     """
+    bc = BLUR_CONFIG
     if blur_label == "sharp":
-        return 1.0, 1.0, 1.0
+        return bc.sharp_recognition, bc.sharp_expression, bc.sharp_interpretation
     if blur_label == "soft":
-        return 0.92, 0.88, 0.96
-    return 0.78, 0.72, 0.90
+        return bc.soft_recognition, bc.soft_expression, bc.soft_interpretation
+    return bc.blurry_recognition, bc.blurry_expression, bc.blurry_interpretation
 
 
 def _label_from_overall(overall: float) -> str:
-    if overall >= USABLE_MIN_OVERALL:
+    qc = QUALITY_CONFIG
+    if overall >= qc.usable_min_overall:
         return "usable"
-    if overall >= WEAK_MIN_OVERALL:
+    if overall >= qc.weak_min_overall:
         return "weak"
     return "unreliable"
 
 
 def confidence_scales_from_label(label: str) -> tuple[float, float]:
     """(recognition_scale, expression_scale) from overall quality label — Phase 4."""
+    cs = CONFIDENCE_SCALE_CONFIG
     if label == "usable":
-        return 1.0, 1.0
+        return cs.usable_recognition, cs.usable_expression
     if label == "weak":
-        return 0.88, 0.82
-    return 0.72, 0.65
+        return cs.weak_recognition, cs.weak_expression
+    return cs.unreliable_recognition, cs.unreliable_expression
 
 
 def compute_frame_quality(frame: Any) -> FrameQualityAssessment:
@@ -99,15 +92,17 @@ def compute_frame_quality(frame: Any) -> FrameQualityAssessment:
     Analyze ``frame`` (BGR). Safe on ``None`` or import failure.
     """
     global _prev_gray_small
+    qc = QUALITY_CONFIG
+    bc = BLUR_CONFIG
     empty = FrameQualityAssessment(
         blur_value=0.0,
         blur_label="blurry",
-        blur_confidence_scale=0.78,
-        blur_recognition_scale=0.78,
-        blur_expression_scale=0.72,
-        blur_interpretation_scale=0.90,
+        blur_confidence_scale=bc.blurry_recognition,
+        blur_recognition_scale=bc.blurry_recognition,
+        blur_expression_scale=bc.blurry_expression,
+        blur_interpretation_scale=bc.blurry_interpretation,
         blur_reason_flags=["blur_blurry"],
-        overall_quality_score=0.0,
+        overall_quality_score=qc.empty_assessment_overall,
         quality_label="unreliable",
         reason_flags=["no_frame"],
         meta={"ts": time.time()},
@@ -129,46 +124,55 @@ def compute_frame_quality(frame: Any) -> FrameQualityAssessment:
         br, be, bi = blur_layer_confidence_scales(blur_label)
 
         reason_flags: list[str] = []
-        if blur_var < BLUR_VAR_SOFT_MAX:
+        if blur_var < bc.var_soft_max:
             reason_flags.append("blurry")
-        if mean_lum < 0.07:
+        if mean_lum < qc.mean_lum_very_dark:
             reason_flags.append("very_dark")
-        elif mean_lum < 0.12:
+        elif mean_lum < qc.mean_lum_low_light:
             reason_flags.append("low_light")
-        if mean_lum > 0.93:
+        if mean_lum > qc.mean_lum_overexposed:
             reason_flags.append("overexposed")
 
-        blur_score = min(1.0, blur_var / BLUR_VAR_SCALE)
-        lum_comfort = 1.0 - min(1.0, abs(mean_lum - 0.42) * 2.0)
-        darkness_score = min(1.0, mean_lum / 0.15)
-        if mean_lum < 0.05:
-            darkness_score = min(darkness_score, 0.15)
+        blur_score = min(1.0, blur_var / bc.var_scale)
+        lum_comfort = 1.0 - min(
+            1.0, abs(mean_lum - qc.lum_comfort_center) * qc.lum_comfort_abs_scale
+        )
+        darkness_score = min(1.0, mean_lum / qc.darkness_norm_divisor)
+        if mean_lum < qc.darkness_floor_under_lum:
+            darkness_score = min(darkness_score, qc.darkness_floor_cap)
         overexposure_score = 1.0
-        if mean_lum > 0.85:
-            overexposure_score = max(0.0, 1.0 - (mean_lum - 0.85) / 0.15)
+        if mean_lum > qc.overexposure_start_lum:
+            overexposure_score = max(
+                0.0,
+                1.0 - (mean_lum - qc.overexposure_start_lum) / qc.overexposure_span,
+            )
 
         # Legacy overall (matches former assess_frame_quality_basic).
-        overall = 0.55 * blur_score + 0.45 * max(0.0, lum_comfort)
+        overall = qc.overall_blur_weight * blur_score + qc.overall_lum_weight * max(
+            0.0, lum_comfort
+        )
         if reason_flags:
-            overall *= 0.82
+            overall *= qc.reason_flags_overall_scale
 
         motion_smear_score = 1.0
         h, w = gray.shape[:2]
-        scale = min(1.0, 160.0 / max(w, 1))
+        scale = min(1.0, qc.motion_resize_ref_px / max(w, 1))
         small = cv2.resize(gray, (max(1, int(w * scale)), max(1, int(h * scale))))
         if _prev_gray_small is not None and _prev_gray_small.shape == small.shape:
             diff = np.mean(np.abs(small.astype(np.float32) - _prev_gray_small.astype(np.float32)))
-            motion_smear_score = float(max(0.0, min(1.0, 1.0 - diff / 35.0)))
+            motion_smear_score = float(
+                max(0.0, min(1.0, 1.0 - diff / qc.motion_diff_divisor))
+            )
         _prev_gray_small = small.copy()
 
         occlusion_score = 1.0
         try:
-            edges = cv2.Canny(gray, 50, 150)
+            edges = cv2.Canny(gray, qc.canny_low, qc.canny_high)
             edge_density = float(np.mean(edges > 0))
             meta_occlusion = {"edge_density": round(edge_density, 4), "note": "provisional_occlusion_proxy"}
         except Exception:
             meta_occlusion = {"note": "occlusion_unavailable"}
-            occlusion_score = 0.85
+            occlusion_score = qc.occlusion_fallback_score
 
         label = _label_from_overall(overall)
         meta = {

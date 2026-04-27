@@ -17,6 +17,15 @@ Downstream code adapts a :class:`PerceptionPipelineBundle` to :class:`perception
 - **Phase 9 scene** — :class:`SceneSummaryResult`; ``brain.scene_summary.build_scene_summary``.
 - **Phase 10 interpretation** — :class:`InterpretationLayerResult` (semantic events); ``brain.interpretation.build_interpretation_layer``.
 - **Phase 11 perception memory** — :class:`PerceptionMemoryEvent`, :class:`PerceptionMemoryOutput`; ``brain.perception_memory.build_perception_memory_output``.
+- **Phase 12 memory scoring** — :class:`MemoryDecisionResult`, :class:`MemoryImportanceResult`; ``brain.memory_scoring.score_memory_importance``.
+- **Phase 13 pattern learning** — :class:`PatternSignal`, :class:`PatternLearningResult`; ``brain.pattern_learning.learn_pattern_signals``.
+- **Phase 14 proactive triggers** — :class:`ProactiveTriggerCandidate`, :class:`ProactiveTriggerResult`; ``brain.proactive_triggers.evaluate_proactive_triggers``.
+- **Phase 15 self-tests** — :class:`SelfTestCheckResult`, :class:`SelfTestRunResult`, :class:`HealthSummaryResult`; ``brain.selftests``.
+- **Phase 16 workbench proposals** — :class:`RepairProposal`, :class:`WorkbenchProposalResult`; ``brain.workbench.build_workbench_proposals``.
+- **Phase 16.5 supervised execution** — :class:`WorkbenchExecutionRequest`, :class:`WorkbenchExecutionResult`, :class:`FileChangePlan`, :class:`FileChangeRecord`; ``brain.workbench_execute``.
+- **Phase 16.6 command layer** — :class:`WorkbenchCommandRequest`, :class:`WorkbenchCommandResult`, :class:`WorkbenchProposalView`, :class:`WorkbenchQueueState`; ``brain.workbench_commands``.
+- **Phase 17 reflection** — :class:`ReflectionObservation`, :class:`SelfModelSnapshot`, :class:`ReflectionResult`; ``brain.reflection.build_reflection_result``.
+- **Phase 18 contemplation** — :class:`ContemplationPrompt`, :class:`InternalPriorityView`, :class:`ContemplationResult`; ``brain.contemplation.build_contemplation_result``.
 """
 from __future__ import annotations
 
@@ -239,6 +248,388 @@ class PerceptionMemoryOutput:
 
 
 @dataclass
+class MemoryDecisionResult:
+    """Phase 12 — scored decision for one memory-ready perception event (still no persistence)."""
+
+    event_type: str = ""
+    importance_score: float = 0.0
+    importance_label: str = "ignore"  # ignore | low | medium | high
+    memory_worthy: bool = False
+    # transient_context | episodic_candidate | pattern_candidate | preference_candidate | ignore
+    memory_class: str = "ignore"
+    decision_reason: str = ""
+    novelty_score: float = 0.0
+    relevance_score: float = 0.0
+    uncertainty_penalty: float = 0.0
+    evidence: dict[str, Any] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class MemoryImportanceResult:
+    """Phase 12 — wrapper with skip metadata around :class:`MemoryDecisionResult`."""
+
+    decision: MemoryDecisionResult = field(default_factory=MemoryDecisionResult)
+    skipped: bool = False
+    skip_reason: str = ""
+
+
+@dataclass
+class PatternSignal:
+    """Phase 13 — one lightweight probabilistic pattern signal."""
+
+    pattern_detected: bool = False
+    pattern_type: str = ""  # identity_presence_pattern | scene_stability_pattern | ...
+    pattern_subject: str = ""
+    pattern_strength: float = 0.0
+    familiarity_score: float = 0.0
+    unusualness_score: float = 0.0
+    recurrence_count: int = 0
+    recurrence_score: float = 0.0
+    recent_transition_pattern: str = ""
+    pattern_candidate: bool = False
+    suggested_memory_class: str = "ignore"
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class PatternLearningResult:
+    """Phase 13 — wrapper for all pattern-learning signals in one tick."""
+
+    primary_signal: PatternSignal = field(default_factory=PatternSignal)
+    signals: list[PatternSignal] = field(default_factory=list)
+    skipped: bool = False
+    skip_reason: str = ""
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ProactiveTriggerCandidate:
+    """Phase 14 — one proactive trigger candidate (recommendation-only)."""
+
+    trigger_type: str = "no_trigger"
+    trigger_score: float = 0.0
+    trigger_priority: float = 0.0
+    trigger_reason: str = ""
+    suggested_action: str = "wait"
+    caution_flags: list[str] = field(default_factory=list)
+    supporting_evidence: dict[str, Any] = field(default_factory=dict)
+    suppressed: bool = False
+    suppression_reason: str = ""
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ProactiveTriggerResult:
+    """Phase 14 — proactive trigger recommendation output for this tick."""
+
+    should_trigger: bool = False
+    trigger_type: str = "no_trigger"
+    trigger_score: float = 0.0
+    trigger_priority: float = 0.0
+    trigger_reason: str = ""
+    suppression_reason: str = ""
+    suggested_action: str = "wait"
+    caution_flags: list[str] = field(default_factory=list)
+    supporting_evidence: dict[str, Any] = field(default_factory=dict)
+    candidates: list[ProactiveTriggerCandidate] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class SelfTestCheckResult:
+    """Phase 15 — one subsystem self-test check result."""
+
+    check_name: str = ""
+    status: str = "skipped"  # ok | warning | failed | skipped
+    severity: str = "info"  # info | warning | critical
+    passed: bool = False
+    message: str = ""
+    details: dict[str, Any] = field(default_factory=dict)
+    timestamp: float = 0.0
+    recommended_next_step: str = ""
+
+
+@dataclass
+class HealthSummaryResult:
+    """Phase 15 — summarized health status across checks."""
+
+    overall_status: str = "ok"  # ok | warning | failed
+    overall_severity: str = "info"  # info | warning | critical
+    failed_checks: list[str] = field(default_factory=list)
+    warning_checks: list[str] = field(default_factory=list)
+    passed_checks: list[str] = field(default_factory=list)
+    skipped_checks: list[str] = field(default_factory=list)
+    message: str = ""
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class SelfTestRunResult:
+    """Phase 15 — startup/recurring self-test run output."""
+
+    run_type: str = "recurring"  # startup | recurring | on_demand
+    checks: list[SelfTestCheckResult] = field(default_factory=list)
+    summary: HealthSummaryResult = field(default_factory=HealthSummaryResult)
+    timestamp: float = 0.0
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RepairProposal:
+    """Phase 16 — reviewable repair proposal (no automatic execution)."""
+
+    proposal_id: str = ""
+    proposal_type: str = "no_action_needed"
+    title: str = ""
+    problem_detected: str = ""
+    likely_cause: str = ""
+    recommended_action: str = ""
+    risk_level: str = "low"  # low | medium | high
+    requires_human_review: bool = True
+    confidence: float = 0.0
+    source_checks: list[str] = field(default_factory=list)
+    priority: str = "low"  # low | medium | high | urgent
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class WorkbenchProposalResult:
+    """Phase 16 — proposal bundle generated from self-tests/runtime evidence."""
+
+    has_proposal: bool = False
+    top_proposal: RepairProposal = field(default_factory=RepairProposal)
+    proposals: list[RepairProposal] = field(default_factory=list)
+    summary: str = ""
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class FileChangePlan:
+    """Phase 16.5 — requested file action plan for supervised execution."""
+
+    action_type: str = "write_patch_plan"
+    target_path: str = ""
+    content: str = ""
+    patch_text: str = ""
+    append_text: str = ""
+    reason: str = ""
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class FileChangeRecord:
+    """Phase 16.5 — recorded file action outcome for one path."""
+
+    target_path: str = ""
+    action_type: str = ""
+    success: bool = False
+    backup_path: str = ""
+    created: bool = False
+    modified: bool = False
+    diff_summary: str = ""
+    error_message: str = ""
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class WorkbenchExecutionRequest:
+    """Phase 16.5 — supervised execution request (requires approval for mutations)."""
+
+    execution_id: str = ""
+    proposal_id: str = ""
+    approved: bool = False
+    elevated_approval: bool = False
+    execution_mode: str = "dry_run"  # dry_run | staged | apply
+    action_type: str = "write_patch_plan"
+    target_paths: list[str] = field(default_factory=list)
+    change_plans: list[FileChangePlan] = field(default_factory=list)
+    rejection_reason: str = ""
+    requested_by: str = "system"
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class WorkbenchExecutionResult:
+    """Phase 16.5 — supervised execution result (no implicit auto-execution)."""
+
+    execution_id: str = ""
+    proposal_id: str = ""
+    approved: bool = False
+    execution_mode: str = "dry_run"
+    action_type: str = ""
+    success: bool = False
+    blocked: bool = False
+    denial_reason: str = ""
+    requires_elevated_approval: bool = False
+    target_paths: list[str] = field(default_factory=list)
+    created_files: list[str] = field(default_factory=list)
+    modified_files: list[str] = field(default_factory=list)
+    backup_paths: list[str] = field(default_factory=list)
+    diff_summary: list[str] = field(default_factory=list)
+    rollback_available: bool = False
+    rollback_hint: str = ""
+    error_message: str = ""
+    file_records: list[FileChangeRecord] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class WorkbenchProposalView:
+    """Phase 16.6 — compact proposal view for command/list operations."""
+
+    proposal_id: str = ""
+    proposal_type: str = "no_action_needed"
+    title: str = ""
+    priority: str = "low"
+    risk_level: str = "low"
+    confidence: float = 0.0
+    requires_human_review: bool = True
+    summary: str = ""
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class WorkbenchQueueState:
+    """Phase 16.6 — current in-memory workbench proposal/selection state."""
+
+    has_proposals: bool = False
+    proposal_count: int = 0
+    selected_proposal_id: str = ""
+    top_proposal_id: str = ""
+    top_proposal_type: str = "no_action_needed"
+    top_proposal_title: str = ""
+    top_proposal_priority: str = "low"
+    top_proposal_risk: str = "low"
+    approval_needed: bool = True
+    last_execution_info: dict[str, Any] = field(default_factory=dict)
+    last_rollback_info: dict[str, Any] = field(default_factory=dict)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class WorkbenchCommandRequest:
+    """Phase 16.6 — structured request for proposal review/approval commands."""
+
+    command_name: str = "show_workbench_status"
+    proposal_id: str = ""
+    execution_mode: str = "dry_run"  # dry_run | staged | apply
+    approved: bool = False
+    elevated_approval: bool = False
+    requested_by: str = "operator"
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class WorkbenchCommandResult:
+    """Phase 16.6 — result of executing one workbench command request."""
+
+    command_name: str = ""
+    proposal_id: str = ""
+    execution_mode: str = "dry_run"
+    approved: bool = False
+    elevated_approval: bool = False
+    success: bool = False
+    summary: str = ""
+    details: dict[str, Any] = field(default_factory=dict)
+    blocked_reason: str = ""
+    execution_result: Optional[WorkbenchExecutionResult] = None
+    available_proposals: list[WorkbenchProposalView] = field(default_factory=list)
+    queue_state: WorkbenchQueueState = field(default_factory=WorkbenchQueueState)
+    last_execution_info: dict[str, Any] = field(default_factory=dict)
+    last_rollback_info: dict[str, Any] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ReflectionObservation:
+    """Phase 17 — one grounded observation used for reflection."""
+
+    source: str = ""
+    key: str = ""
+    value: str = ""
+    evidence: dict[str, Any] = field(default_factory=dict)
+    confidence: float = 0.0
+
+
+@dataclass
+class SelfModelSnapshot:
+    """Phase 17 — soft operational self-model tags and state."""
+
+    self_model_tags: list[str] = field(default_factory=list)
+    current_operational_state: str = "uncertain_state"
+    confidence: float = 0.0
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ReflectionResult:
+    """Phase 17 — evidence-based reflection output (no direct behavior override)."""
+
+    reflection_category: str = "uncertain_state_reflection"
+    reflection_summary: str = ""
+    recent_outcome: str = ""
+    outcome_quality: str = "mixed"  # good | mixed | poor
+    detected_issue: str = ""
+    detected_success: str = ""
+    suggested_adjustment: str = ""
+    confidence: float = 0.0
+    observations: list[ReflectionObservation] = field(default_factory=list)
+    self_model: SelfModelSnapshot = field(default_factory=SelfModelSnapshot)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ContemplationPrompt:
+    """Phase 18 — bounded contemplation input framing."""
+
+    contemplation_theme: str = "certainty_vs_usefulness"
+    prompt_text: str = ""
+    evidence_keys: list[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class InternalPriorityView:
+    """Phase 18 — soft internal priorities (guidance only)."""
+
+    observe: float = 0.5
+    clarify: float = 0.5
+    remember: float = 0.5
+    adapt: float = 0.5
+    maintain: float = 0.5
+    engage: float = 0.5
+    remain_silent: float = 0.5
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ContemplationResult:
+    """Phase 18 — bounded internal contemplation output."""
+
+    contemplation_theme: str = "certainty_vs_usefulness"
+    contemplation_summary: str = ""
+    contemplation_question: str = ""
+    contemplation_position: str = ""
+    contemplation_confidence: float = 0.0
+    guiding_principles: list[str] = field(default_factory=list)
+    priority_weights: InternalPriorityView = field(default_factory=InternalPriorityView)
+    caution_notes: list[str] = field(default_factory=list)
+    evidence_basis: dict[str, Any] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class ContinuityOutput:
     """Stage 5 — identity continuity / tracking + Phase 7 structured result."""
 
@@ -270,7 +661,7 @@ class PackageOutput:
 
 @dataclass
 class PerceptionPipelineBundle:
-    """All stage outputs for one tick; :func:`bundle_to_perception_state` maps to ``PerceptionState``."""
+    """All stage outputs for one tick; :func:`brain.perception_state_adapter.bundle_to_perception_state` maps to ``PerceptionState``."""
 
     acquisition: AcquisitionOutput
     quality: QualityOutput
@@ -290,3 +681,17 @@ class PerceptionPipelineBundle:
     interpretation_layer: Optional[InterpretationLayerResult] = None
     # Phase 11 — after interpretation layer
     perception_memory: Optional[PerceptionMemoryOutput] = None
+    # Phase 12 — after perception memory output
+    memory_importance: Optional[MemoryImportanceResult] = None
+    # Phase 13 — after memory importance scoring
+    pattern_learning: Optional[PatternLearningResult] = None
+    # Phase 14 — after pattern learning
+    proactive_trigger: Optional[ProactiveTriggerResult] = None
+    # Phase 15 — startup/recurring health diagnostics
+    selftests: Optional[SelfTestRunResult] = None
+    # Phase 16 — repair workbench proposal generation
+    workbench: Optional[WorkbenchProposalResult] = None
+    # Phase 17 — reflection and self-model synthesis
+    reflection: Optional[ReflectionResult] = None
+    # Phase 18 — bounded philosophical/internal contemplation
+    contemplation: Optional[ContemplationResult] = None

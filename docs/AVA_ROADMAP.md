@@ -84,8 +84,10 @@ This is a development-only quality-of-life feature that makes tuning the system 
 
 - **`brain/perception_types.py`**: `StageResult`, stage outputs (`AcquisitionOutput`, `QualityOutput`, `DetectionOutput`, `RecognitionOutput`, `ContinuityOutput`, `InterpretationOutput`, `PackageOutput`), `PerceptionPipelineBundle`; module doc lists future hooks (quality scoring, salience, tracking, scene summaries, interpretation).
 - **`brain/perception_utils.py`**: `lbph_distance_to_identity_confidence`, `compute_salience` (shared, no pipeline import cycles).
-- **`brain/perception_pipeline.py`**: `run_perception_pipeline()` → staged flow with **`[perception_pipeline]`** logs (`acquisition`, `quality`, `detection`, `recognition`, `continuity`, `interpretation`, `package`); `bundle_to_perception_state()` adapts to legacy **`PerceptionState`**. Detection/recognition short-circuit when vision is untrusted (same as before). Stage failures log and continue with safe defaults.
+- **`brain/perception_pipeline.py`**: `run_perception_pipeline()` → staged flow with **`[perception_pipeline]`** logs (`acquisition`, `quality`, `detection`, `recognition`, `continuity`, `interpretation`, `package`). Detection/recognition short-circuit when vision is untrusted (same as before). Stage failures log and continue with safe defaults.
+- **`brain/perception_state_adapter.py`**: `bundle_to_perception_state()` maps **`PerceptionPipelineBundle`** → legacy **`PerceptionState`** (Phases 9–18 field copies live here; see Phase 19).
 - **`brain/perception.py`**: `build_perception()` delegates to the pipeline; **`PerceptionState`** unchanged for workspace / `avaagent`.
+- **Note:** **`PerceptionPipelineBundle`** → **`PerceptionState`** is **`bundle_to_perception_state()`** in **`brain/perception_state_adapter.py`** (centralized in Phase 19; previously inline in **`brain/perception_pipeline.py`**). Sections below spell out **stage orchestration** vs **flat state** where both matter.
 
 ### Perception — Phase 4 — Frame quality scoring *(live)*
 
@@ -106,7 +108,8 @@ This is a development-only quality-of-life feature that makes tuning the system 
 
 - **`brain/salience.py`**: **`build_salience_result()`** — ranked **`SalientItem`** list (face / scene_cue), factor breakdown (centeredness, prominence, motion attention from frame-quality smear, recognition relevance, legacy emotion/user engagement), **`future_hooks`** for hand-held object and scene-change deltas (placeholders). **`combined_scalar`** blends structured primary score with **`perception_utils.compute_salience`** for backward-compatible magnitude.
 - **`brain/perception_types.py`**: **`SalientItem`**, **`SalienceResult`**; **`DetectionOutput.face_rects`**; **`InterpretationOutput.salience_structured`**.
-- **`brain/perception_pipeline.py`**: After detection + recognition, interpretation builds structured salience; logs **`[salience]`** per item and **`[perception_pipeline] top_salient=`**; final **`PerceptionState.salience`** still equals combined scalar × expression-quality × blur-interp scales; **`salience_items`**, **`salience_top_*`**, **`salience_combined_scalar`** exposed for UI / memory / initiative hooks.
+- **`brain/perception_pipeline.py`**: After detection + recognition, interpretation builds structured salience; logs **`[salience]`** per item and **`[perception_pipeline] top_salient=`**.
+- **`brain/perception_state_adapter.py`**: **`PerceptionState.salience`** (combined scalar × expression-quality × blur-interp), **`salience_items`**, **`salience_top_*`**, **`salience_combined_scalar`** — set in **`bundle_to_perception_state()`** (Phase 19) for UI / memory / initiative hooks.
 
 ### Perception — Phase 7 — Tracking and continuity *(live)*
 
@@ -118,25 +121,105 @@ This is a development-only quality-of-life feature that makes tuning the system 
 
 - **`brain/identity_fallback.py`**: **`resolve_identity_fallback()`** after continuity — canonical **`identity_state`**: **`confirmed_recognition`** (raw id + scaled LBPH ≥ threshold), **`likely_identity_by_continuity`**, **`unknown_face`**, **`no_face`**. Emits **`IdentityResolutionResult`**: **`raw_identity`**, **`resolved_identity`**, **`stable_identity`**, **`fallback_source`** (`recognition` | `continuity` | `none`), **`fallback_notes`**. Demotes weak LBPH even if recognizer returns a label; logs **`[identity_fallback]`**.
 - **`brain/perception_types.py`**: **`IdentityResolutionResult`**; **`PerceptionPipelineBundle.identity_resolution`**.
-- **`brain/perception_pipeline.py`**: **`note_trusted_identity`** only when Phase 8 resolution is **`confirmed_recognition`**; **`[perception_pipeline] identity resolved`**. **`PerceptionState`**: **`face_identity`** = raw LBPH; **`resolved_face_identity`** / **`stable_face_identity`** / **`identity_fallback_*`** for UI and later hooks.
+- **`brain/perception_pipeline.py`**: **`note_trusted_identity`** only when Phase 8 resolution is **`confirmed_recognition`**; **`[perception_pipeline] identity resolved`**.
+- **`brain/perception_state_adapter.py`**: **`bundle_to_perception_state()`** copies **`IdentityResolutionResult`** onto **`PerceptionState`** (**`face_identity`** = raw LBPH; **`resolved_face_identity`** / **`stable_face_identity`** / **`identity_fallback_*`**, alongside acquisition/trust paths — Phase 19 adapter).
 
 ### Perception — Phase 9 — Scene summaries *(live)*
 
 - **`brain/scene_summary.py`**: **`build_scene_summary()`** after identity resolution — compact **`SceneSummaryResult`** from **`identity_state`**, resolved identity, quality/blur labels, motion smear, face-count delta (entrant hint), and vision trust. **`compact_text_summary`** for UI/prompts; **`overall_scene_state`** is **`stable`** \| **`changed`** \| **`uncertain`**; **`key_entities`** empty until object detection. Logs **`[scene_summary]`**.
 - **`brain/perception_types.py`**: **`SceneSummaryResult`**; **`PerceptionPipelineBundle.scene_summary`**.
-- **`brain/perception_pipeline.py`**: **`[perception_pipeline] summary`**; **`PerceptionState`** **`scene_*`** fields including **`scene_compact_summary`** and **`scene_summary_meta`**.
+- **`brain/perception_pipeline.py`**: **`[perception_pipeline] summary`** after **`build_scene_summary`**.
+- **`brain/perception_state_adapter.py`**: Maps **`scene_*`** onto **`PerceptionState`** (**`bundle_to_perception_state()`**, Phase 19).
 
 ### Perception — Phase 10 — Interpretation layer *(live)*
 
 - **`brain/interpretation.py`**: **`build_interpretation_layer()`** after scene summary — **`InterpretationLayerResult`** with **`event_types`** (e.g. **`person_entered`**, **`person_left`**, **`known_person_present`**, **`likely_known_person_present`**, **`unknown_person_present`**, **`scene_changed`**, **`user_or_subject_engaged`** / **`disengaged`**, **`occupied_or_busy_visual_state`**, **`no_meaningful_change`**, **`uncertain_visual_state`**), **`primary_event`**, **`event_confidence`** / **`event_priority`**, **`interpreted_subject`** / **`interpreted_identity`**, **`evidence`** snapshot, **`no_meaningful_change`**. Uses scene summary, identity resolution, quality/blur, salience/emotion, continuity; untrusted → **`uncertain_visual_state`**. Logs **`[interpretation]`** and **`[perception_pipeline] interpretation`**.
 - **`brain/perception_types.py`**: **`InterpretationLayerResult`**; **`PerceptionPipelineBundle.interpretation_layer`**.
-- **`brain/perception_pipeline.py`**: **`PerceptionState`** **`interpretation_*`** fields; does **not** overwrite raw perception or **`scene_*`** text.
+- **`brain/perception_pipeline.py`**: Runs **`build_interpretation_layer`** after scene summary; structured **`InterpretationLayerResult`** does **not** overwrite Phase 9 **`scene_*`** text.
+- **`brain/perception_state_adapter.py`**: Maps **`interpretation_*`** onto **`PerceptionState`** (**`bundle_to_perception_state()`**, Phase 19).
 
 ### Perception — Phase 11 — Memory-ready perception outputs *(live)*
 
 - **`brain/perception_memory.py`**: After the interpretation layer, **`build_perception_memory_output()`** emits at most one **`PerceptionMemoryEvent`** per tick from scene summary + **`InterpretationLayerResult`** + identity resolution (with quality/salience/continuity in **`evidence`**). No storage or scoring yet.
 - **`brain/perception_types.py`**: **`PerceptionMemoryEvent`**, **`PerceptionMemoryOutput`**, **`PerceptionPipelineBundle.perception_memory`**.
-- **`brain/perception_pipeline.py`**: Runs memory output after **`build_interpretation_layer`**; logs **`[perception_memory]`** and **`[perception_pipeline] memory`**; maps summary fields onto **`PerceptionState`** **`perception_memory_*`**. Duplicate **`no_meaningful_change`** ticks with the same stable signature are skipped (no new record).
+- **`brain/perception_pipeline.py`**: Runs memory output after **`build_interpretation_layer`**; logs **`[perception_memory]`** and **`[perception_pipeline] memory`**. Duplicate **`no_meaningful_change`** ticks with the same stable signature are skipped (no new record).
+- **`brain/perception_state_adapter.py`**: Maps **`perception_memory_*`** onto **`PerceptionState`** (**`bundle_to_perception_state()`**, Phase 19).
+
+### Perception — Phase 12 — Memory importance scoring *(live)*
+
+- **`brain/memory_scoring.py`**: **`score_memory_importance()`** consumes Phase 11 **`PerceptionMemoryOutput`** plus identity/scene/interpretation/quality/continuity context and returns a conservative **`MemoryImportanceResult`** (no persistence side effects).
+- **`brain/perception_types.py`**: Adds **`MemoryDecisionResult`** / **`MemoryImportanceResult`** and **`PerceptionPipelineBundle.memory_importance`**.
+- **`brain/perception_pipeline.py`**: Pipeline order is memory output → memory scoring → package; logs **`[memory_scoring]`** and **`[perception_pipeline] memory score=`**.
+- **`brain/perception_state_adapter.py`**: Maps **`memory_*`** onto **`PerceptionState`** (**`bundle_to_perception_state()`**, Phase 19; for persistence hooks / diagnostics).
+
+### Perception — Phase 13 — Pattern learning *(live)*
+
+- **`brain/pattern_learning.py`**: **`learn_pattern_signals()`** consumes scored events and structured context to produce lightweight probabilistic pattern signals (familiarity, unusualness, recurrence, transition pattern) without durable writes.
+- **`brain/perception_types.py`**: Adds **`PatternSignal`** / **`PatternLearningResult`** and **`PerceptionPipelineBundle.pattern_learning`**.
+- **`brain/perception_pipeline.py`**: Pipeline order is memory scoring → pattern learning → package; logs **`[pattern_learning]`** and **`[perception_pipeline] pattern=`**.
+- **`brain/perception_state_adapter.py`**: Maps **`pattern_*`** onto **`PerceptionState`** (**`bundle_to_perception_state()`**, Phase 19; future hooks: initiative, reflection, diagnostics).
+
+### Perception — Phase 14 — Adaptive proactive triggers *(live)*
+
+- **`brain/proactive_triggers.py`**: **`evaluate_proactive_triggers()`** consumes memory output + memory scoring + pattern signals + identity/scene/quality/continuity context and returns conservative trigger recommendations (no direct speech/tool forcing).
+- **`brain/perception_types.py`**: Adds **`ProactiveTriggerCandidate`** / **`ProactiveTriggerResult`** and **`PerceptionPipelineBundle.proactive_trigger`**.
+- **`brain/perception_pipeline.py`**: Pipeline order is pattern learning → proactive triggers → package; logs **`[proactive_triggers]`** and **`[perception_pipeline] proactive=`**.
+- **`brain/perception_state_adapter.py`**: Maps **`proactive_*`** onto **`PerceptionState`** (**`bundle_to_perception_state()`**, Phase 19; initiative/autonomy integration hooks).
+
+### Perception — Phase 15 — Startup and recurring self-tests *(live)*
+
+- **`brain/selftests.py`**: Lightweight diagnostics-only checks for startup and recurring cadence (camera module/read path, acquisition freshness path, pipeline callability, key dirs/files, memory path, audio/model hook exposure, tick-readiness). No automatic repairs.
+- **`brain/perception_types.py`**: Adds **`SelfTestCheckResult`**, **`HealthSummaryResult`**, **`SelfTestRunResult`**, and **`PerceptionPipelineBundle.selftests`**.
+- **`brain/perception_pipeline.py`**: Runs **`maybe_run_selftests()`** after proactive triggers; logs **`[selftests]`**.
+- **`brain/perception_state_adapter.py`**: Maps **`selftest_*`** onto **`PerceptionState`** (**`bundle_to_perception_state()`**, Phase 19; dashboards / repair-workbench).
+
+### Perception — Phase 16 — Repair workbench proposal system *(live)*
+
+- **`brain/workbench.py`**: **`build_workbench_proposals()`** translates structured self-test/runtime evidence into conservative, human-reviewable repair proposals (no automatic execution).
+- **`brain/perception_types.py`**: Adds **`RepairProposal`**, **`WorkbenchProposalResult`**, and **`PerceptionPipelineBundle.workbench`**.
+- **`brain/perception_pipeline.py`**: Runs workbench proposal generation after self-tests; logs **`[workbench]`** and **`[perception_pipeline] workbench=`**.
+- **`brain/perception_state_adapter.py`**: Maps **`workbench_*`** onto **`PerceptionState`** (**`bundle_to_perception_state()`**, Phase 19; UI / review hooks).
+
+### Perception — Phase 16.5 — Supervised code/file execution layer *(live)*
+
+- **`brain/workbench_execute.py`**: Adds explicit, supervised execution APIs around proposals with strict approval gating, path allowlist/default-deny, sensitive-target elevated approval, backup-before-modify, and rollback support.
+- **`brain/perception_types.py`**: Adds **`WorkbenchExecutionRequest`**, **`WorkbenchExecutionResult`**, **`FileChangePlan`**, **`FileChangeRecord`** for reviewable, reversible execution records.
+- **Design guardrail**: **proposal != execution**. Workbench proposals never auto-apply. Execution requires explicit approval and runs only through supervised request handling; pipeline only exposes readiness/status fields.
+
+### Perception — Phase 16.6 — Workbench approval/command layer *(live)*
+
+- **`brain/workbench_commands.py`**: Adds a structured operator command path for listing/reviewing/selecting proposals and invoking dry-run/staged/apply/rollback through Phase 16.5 APIs.
+- **`brain/perception_types.py`**: Adds **`WorkbenchCommandRequest`**, **`WorkbenchCommandResult`**, **`WorkbenchProposalView`**, **`WorkbenchQueueState`** for explicit command/approval/result handling.
+- **Approval guardrail**: Proposal review path now exists, but apply/staged/rollback still require explicit approval and execution still flows through Phase 16.5 safety checks (allowlist, sensitive-target elevation, backups, supervised rollback).
+
+### Perception — Phase 17 — Reflection and self-model *(live)*
+
+- **`brain/reflection.py`**: **`build_reflection_result()`** synthesizes evidence-based operational reflections from structured signals (self-tests, workbench outcomes, perception/memory/pattern/proactive context, optional command/execution adapters).
+- **`brain/perception_types.py`**: Adds **`ReflectionObservation`**, **`SelfModelSnapshot`**, **`ReflectionResult`**, and **`PerceptionPipelineBundle.reflection`**.
+- **`brain/perception_pipeline.py`**: Runs **`build_reflection_result`** after workbench proposal generation; logs **`[reflection]`** and **`[perception_pipeline] reflection=`**.
+- **`brain/perception_state_adapter.py`**: Maps **`ReflectionResult`** onto **`PerceptionState`** **`reflection_*`** and **`self_model_*`** (**`bundle_to_perception_state()`**, Phase 19).
+- **Boundedness guardrail**: reflections are grounded in runtime evidence and produce soft operational tags; no autonomous config/action override is introduced in this phase.
+
+### Perception — Phase 18 — Philosophical/internal contemplation *(live)*
+
+- **`brain/contemplation.py`**: **`build_contemplation_result()`** produces bounded, evidence-aware internal contemplation themes and soft internal priority weights from reflection/perception/maintenance context.
+- **`brain/perception_types.py`**: Adds **`ContemplationPrompt`**, **`InternalPriorityView`**, **`ContemplationResult`**, and **`PerceptionPipelineBundle.contemplation`**.
+- **`brain/perception_pipeline.py`**: Runs **`build_contemplation_result`** after reflection; logs **`[contemplation]`** and **`[perception_pipeline] contemplation=`**.
+- **`brain/perception_state_adapter.py`**: Maps **`ContemplationResult`** onto **`PerceptionState`** **`contemplation_*`** (**`bundle_to_perception_state()`**, Phase 19).
+- **Boundedness guardrail**: contemplation is descriptive guidance only, grounded in structured evidence, and does not introduce autonomous override behavior.
+
+### Perception — Phase 19 — Modularization cleanup *(live)*
+
+- **`brain/perception_state_adapter.py`**: Owns **`bundle_to_perception_state()`** and all bundle → **`PerceptionState`** field mapping (including **`apply_cognitive_phases_from_bundle()`** for Phases 9–18 so early-exit and full-trust paths stay aligned without duplicated apply chains).
+- **`brain/perception_pipeline.py`**: Stages + structured outputs only; re-exports **`bundle_to_perception_state`** for backward-compatible **`from brain.perception_pipeline import bundle_to_perception_state`**.
+- **Intent**: structural maintainability only — no intentional semantic changes to scoring, triggers, identity, workbench, reflection, or contemplation.
+
+### Phase 20 — Configuration & tuning layer *(live)*
+
+- **`config/ava_tuning.py`**: Central **dataclass sections** (`QUALITY_CONFIG`, `BLUR_CONFIG`, `SALIENCE_CONFIG`, `CONTINUITY_CONFIG`, `IDENTITY_CONFIG`, `SCENE_SUMMARY_CONFIG`, interpretation and memory-event/scoring knobs, **`PATTERN_CONFIG`**, **`PROACTIVE_CONFIG`**, **`SELFTEST_CONFIG`**, **`WORKBENCH_CONFIG`**, **`REFLECTION_CONFIG`**, **`CONTEMPLATION_CONFIG`**, etc.) with **defaults matching pre–Phase-20 behavior** so tuning is one place to edit, not a semantic retune pass.
+- **Feature modules** import these singletons (e.g. **`brain/frame_quality`**, **`brain/reflection`**, **`brain/contemplation`**, proactive/self-test/workbench); **`summarize_tuning_config()`** returns a compact dict for occasional debug.
+- **`avaagent.run_ava`**: One-time log on first entry noting the tuning layer source path (non-spammy).
+- **Intent**: calibration readiness — fewer scattered magic numbers, clearer subsystem ownership, **no large external settings framework** and **no intentional pipeline semantic changes**.
 
 ### P1-03 — Untrack Legacy `.tmp` Files
 

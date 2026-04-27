@@ -4,6 +4,8 @@ Phase 6 — structured visual salience (faces, scene cues, future objects).
 Computes ranked :class:`SalienceResult` with per-item factor breakdowns. Intended for
 scene summaries, interpretation prioritization, memory-worthiness, and initiative hooks.
 
+Tuning weights: :mod:`config.ava_tuning` ``SALIENCE_CONFIG``.
+
 Keeps a **combined_scalar** compatible with legacy ``perception_utils.compute_salience`` by
 blending geometric / motion / recognition factors with the existing engagement heuristic.
 """
@@ -11,24 +13,26 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from config.ava_tuning import SALIENCE_CONFIG
+
 from .perception_types import SalientItem, SalienceResult
 from .perception_utils import compute_salience
 
-# Tunable weights for primary face (sum ~1.0)
-W_CENTER = 0.26
-W_PROMINENCE = 0.22
-W_MOTION = 0.14
-W_RECOGNITION = 0.20
-W_ENGAGEMENT = 0.18
+sc = SALIENCE_CONFIG
 
-# Blend legacy engagement vs structured primary (when a face item exists)
-LEGACY_BLEND = 0.38
-STRUCTURED_BLEND = 0.62
+# Backward-compatible module aliases
+W_CENTER = sc.w_center
+W_PROMINENCE = sc.w_prominence
+W_MOTION = sc.w_motion
+W_RECOGNITION = sc.w_recognition
+W_ENGAGEMENT = sc.w_engagement
+LEGACY_BLEND = sc.legacy_blend
+STRUCTURED_BLEND = sc.structured_blend
 
 
 def _center_score(cx: float, cy: float, w: int, h: int) -> float:
     if w <= 0 or h <= 0:
-        return 0.35
+        return sc.center_default_no_frame
     nx = abs(cx - w / 2.0) / max(w / 2.0, 1.0)
     ny = abs(cy - h / 2.0) / max(h / 2.0, 1.0)
     d = (nx * nx + ny * ny) ** 0.5 / (2.0**0.5)
@@ -37,17 +41,19 @@ def _center_score(cx: float, cy: float, w: int, h: int) -> float:
 
 def _prominence_score(area: float, frame_area: float) -> float:
     if frame_area <= 0:
-        return 0.2
+        return sc.prominence_default_no_frame
     r = area / frame_area
-    return float(max(0.0, min(1.0, r**0.55 * 4.2)))
+    return float(
+        max(0.0, min(1.0, r ** sc.prominence_area_exp * sc.prominence_area_mult))
+    )
 
 
 def _recognition_relevance(face_identity: Optional[str], face_detected: bool) -> float:
     if face_identity:
         return 1.0
     if face_detected:
-        return 0.72
-    return 0.35
+        return sc.recognition_has_face_no_label
+    return sc.recognition_no_face
 
 
 def _pick_primary_rect(
@@ -64,7 +70,7 @@ def _pick_primary_rect(
         cy = y + rh / 2.0
         c = _center_score(cx, cy, fw, fh)
         p = _prominence_score(area, fa)
-        key = 0.55 * c + 0.45 * p
+        key = sc.rect_pick_center_weight * c + sc.rect_pick_prominence_weight * p
         if key > best_key:
             best_key = key
             best = (x, y, rw, rh)
@@ -80,11 +86,11 @@ def _face_item_score(
     engagement: float,
 ) -> float:
     raw = (
-        W_CENTER * center
-        + W_PROMINENCE * prominence
-        + W_MOTION * motion_attention
-        + W_RECOGNITION * recognition
-        + W_ENGAGEMENT * engagement
+        sc.w_center * center
+        + sc.w_prominence * prominence
+        + sc.w_motion * motion_attention
+        + sc.w_recognition * recognition
+        + sc.w_engagement * engagement
     )
     return float(max(0.0, min(1.0, raw)))
 
@@ -165,16 +171,16 @@ def build_salience_result(
                 cx, cy = x + rw / 2.0, y + rh / 2.0
                 c = _center_score(cx, cy, fw, fh)
                 p = _prominence_score(area, fa)
-                recog = 0.55
-                s = 0.82 * _face_item_score(
+                recog = sc.secondary_recognition
+                s = sc.secondary_item_scale * _face_item_score(
                     center=c,
                     prominence=p,
                     motion_attention=motion_attention,
                     recognition=recog,
-                    engagement=0.55,
+                    engagement=sc.secondary_engagement,
                 )
                 sec_score = max(sec_score, s)
-            if sec_score > 0.08:
+            if sec_score > sc.secondary_min_score:
                 items.append(
                     SalientItem(
                         item_type="face",
@@ -187,8 +193,12 @@ def build_salience_result(
     elif face_detected:
         # Cascade reported faces but no rects — single-face fallback
         recog = _recognition_relevance(face_identity, True)
-        center = 0.55
-        prominence = 0.45 if person_count <= 1 else 0.38
+        center = sc.cascade_center
+        prominence = (
+            sc.cascade_prominence_single
+            if person_count <= 1
+            else sc.cascade_prominence_multi
+        )
         score = _face_item_score(
             center=center,
             prominence=prominence,
@@ -215,8 +225,13 @@ def build_salience_result(
         )
 
     # Scene cue: sudden motion / instability
-    if motion_attention >= 0.28:
-        mscore = float(min(1.0, 0.25 + 0.9 * motion_attention))
+    if motion_attention >= sc.motion_scene_cue_threshold:
+        mscore = float(
+            min(
+                1.0,
+                sc.motion_scene_cue_base + sc.motion_scene_cue_mult * motion_attention,
+            )
+        )
         items.append(
             SalientItem(
                 item_type="scene_cue",
@@ -233,18 +248,24 @@ def build_salience_result(
     }
 
     items.sort(key=lambda it: it.score, reverse=True)
-    top_threshold = 0.08
+    top_threshold = sc.top_item_threshold
     top_idx = next((i for i, it in enumerate(items) if it.score >= top_threshold), None)
     for i, it in enumerate(items):
         it.is_top = top_idx is not None and i == top_idx
 
     struct_scalar = items[top_idx].score if top_idx is not None else legacy
     if face_detected and items and items[0].item_type == "face":
-        combined = LEGACY_BLEND * legacy + STRUCTURED_BLEND * struct_scalar
+        combined = sc.legacy_blend * legacy + sc.structured_blend * struct_scalar
     else:
-        combined = 0.55 * legacy + 0.45 * struct_scalar if items else legacy
+        combined = (
+            sc.nonface_legacy_a * legacy + sc.nonface_legacy_b * struct_scalar
+            if items
+            else legacy
+        )
 
-    combined = float(max(0.15, min(1.0, combined)))
+    combined = float(
+        max(sc.combined_scalar_min, min(sc.combined_scalar_max, combined))
+    )
 
     for it in items:
         facs = ", ".join(f"{k}={v}" for k, v in sorted(it.factors.items())[:6])
