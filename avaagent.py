@@ -7787,6 +7787,12 @@ def load_emotion_reference() -> dict:
 # =========================================================
 ensure_owner_profile()
 ensure_identity_files()
+try:
+    from brain.heartbeat import bootstrap_heartbeat_runtime
+
+    bootstrap_heartbeat_runtime(globals())
+except Exception as _hb_boot_e:
+    print(f"[heartbeat] bootstrap skipped: {_hb_boot_e}")
 seed_default_profiles()
 _AVA_IDENTITY_BLOCK = load_ava_identity()
 ensure_emotion_reference_file()
