@@ -26,6 +26,16 @@ Downstream code adapts a :class:`PerceptionPipelineBundle` to :class:`perception
 - **Phase 16.6 command layer** — :class:`WorkbenchCommandRequest`, :class:`WorkbenchCommandResult`, :class:`WorkbenchProposalView`, :class:`WorkbenchQueueState`; ``brain.workbench_commands``.
 - **Phase 17 reflection** — :class:`ReflectionObservation`, :class:`SelfModelSnapshot`, :class:`ReflectionResult`; ``brain.reflection.build_reflection_result``.
 - **Phase 18 contemplation** — :class:`ContemplationPrompt`, :class:`InternalPriorityView`, :class:`ContemplationResult`; ``brain.contemplation.build_contemplation_result``.
+- **Phase 21 calibration** — :class:`CalibrationObservation`, :class:`ThresholdReviewResult`, :class:`CalibrationReport`; ``brain.calibration`` (runtime signals + watchlist, no auto-retuning).
+- **Phase 22 voice conversation** — :class:`VoiceTimingDecision`, :class:`VoiceConversationResult`; ``brain.voice_conversation`` (turn-taking hints; record-stop UX).
+- **Phase 23 relationship / social continuity** — :class:`RelationshipSignal`, :class:`InteractionStyleProfile`, :class:`SocialContinuityResult`; ``brain.relationship_model`` (bounded soft social signals).
+- **Phase 24 memory refinement** — :class:`MemoryLinkSuggestion`, :class:`RefinedMemoryDecision`, :class:`MemoryRefinementResult`; ``brain.memory_refinement`` (retention / retrieval hints; additive on Phase 12).
+- **Phase 25 model routing** — :class:`ModelRouteCandidate`, :class:`CognitiveModeResult`, :class:`ModelRoutingResult`; ``brain.model_routing`` (explainable cognitive-mode → Ollama model mapping; stable identity across switches).
+- **Phase 26 curiosity** — :class:`CuriosityQuestion`, :class:`ExplorationSuggestion`, :class:`CuriosityResult`; ``brain.curiosity`` (bounded anomaly / gap noticing; structured suggestions only — no autonomous actions).
+- **Phase 27 outcome learning** — :class:`OutcomeObservation`, :class:`BehaviorAdjustmentSuggestion`, :class:`OutcomeLearningResult`; ``brain.outcome_learning`` (evidence-weighted advisory adjustment signals — no runtime auto-retuning).
+- **Phase 28 conversational nuance** — :class:`NuanceSignal`, :class:`ToneGuidanceProfile`, :class:`ConversationalNuanceResult`; ``brain.conversational_nuance`` (bounded tone/pacing/restraint guidance — no direct response rewrite).
+- **Phase 29 multi-session continuity** — :class:`ContinuityThread`, :class:`SessionCarryoverSummary`, :class:`StrategicContinuityResult`; ``brain.session_continuity`` (bounded carryover; **ava_core/** ``IDENTITY.md`` / ``SOUL.md`` / ``USER.md`` read first as authoritative anchors — read-only here; ``BOOTSTRAP.md`` omitted once core identity is established).
+- **Phase 30 supervised self-improvement loop** — :class:`ImprovementCycle`, :class:`ImprovementLoopResult`, :class:`ImprovementStepStatus`; ``brain.self_improvement_loop`` (issue → proposal → approval → execution → reflection — **descriptive only**, no auto-approve/execute).
 """
 from __future__ import annotations
 
@@ -630,6 +640,461 @@ class ContemplationResult:
 
 
 @dataclass
+class CalibrationObservation:
+    """
+    Phase 21 — one diagnostic calibration reading for a subsystem/metric pair.
+
+    ``suggested_direction`` guides human tuning (or ``watch`` / ``keep``), not runtime auto-adjustment.
+    """
+
+    subsystem_name: str
+    metric_name: str
+    observed_value: float
+    status: str  # ok | watch | attention | insufficient_data
+    suggested_direction: str  # raise | lower | keep | watch
+    confidence: float
+    evidence_count: int
+    notes: str = ""
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ThresholdReviewResult:
+    """Phase 21 — watchlist item: a tuning-sensitive region that may deserve review."""
+
+    area: str
+    current_signal: str
+    suggested_direction: str
+    rationale: str
+    evidence_count: int
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class CalibrationReport:
+    """Phase 21 — counters, derived rates, observations, and threshold watchlist."""
+
+    tick_count: int
+    rates: dict[str, float]
+    observations: list[CalibrationObservation]
+    watchlist: list[ThresholdReviewResult]
+    counters: dict[str, int] = field(default_factory=dict)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class VoiceTimingDecision:
+    """
+    Phase 22 — timing / floor / readiness for voice (advisory; does not block ``run_ava``).
+
+    Conservative defaults bias toward **waiting** over blurting when uncertain.
+    """
+
+    should_wait: bool = False
+    should_yield: bool = False
+    should_interrupt: bool = False
+    should_respond: bool = True
+    response_readiness: float = 0.55
+    silence_window_ms: float = 0.0
+    pacing_notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class VoiceConversationResult:
+    """
+    Phase 22 — structured voice turn snapshot for one push-to-talk cycle.
+
+    Gradio supplies a single audio clip per stop event (no streaming STT here); states are
+    **soft** interpretations for pacing, prompts, and continuity—not live DSP/VAD truth.
+    """
+
+    turn_state: str = "idle"
+    user_speaking: bool = False
+    assistant_speaking: bool = False
+    silence_window_ms: float = 0.0
+    timing: VoiceTimingDecision = field(default_factory=VoiceTimingDecision)
+    interruption_reason: str = ""
+    continuity_hint: str = ""
+    pacing_notes: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RelationshipSignal:
+    """Phase 23 — single bounded social/relationship cue (probabilistic, not a fixed trait label)."""
+
+    name: str = ""
+    strength: float = 0.0
+    evidence: list[str] = field(default_factory=list)
+
+
+@dataclass
+class InteractionStyleProfile:
+    """Phase 23 — soft preference signals in [0, 1]; 0.5 = neutral / unknown."""
+
+    warmth_preference_signal: float = 0.5
+    practicality_preference_signal: float = 0.5
+    quiet_preference_signal: float = 0.5
+    depth_preference_signal: float = 0.5
+
+
+@dataclass
+class SocialContinuityResult:
+    """
+    Phase 23 — bounded social continuity snapshot for one tick.
+
+    Descriptive only — does **not** authorize behavior overrides or sensitive trait claims.
+    """
+
+    familiarity_score: float = 0.5
+    trust_signal: float = 0.5
+    warmth_preference_signal: float = 0.5
+    practicality_preference_signal: float = 0.5
+    quiet_preference_signal: float = 0.5
+    depth_preference_signal: float = 0.5
+    style_profile: InteractionStyleProfile = field(default_factory=InteractionStyleProfile)
+    unfinished_thread_present: bool = False
+    recurring_topics: list[str] = field(default_factory=list)
+    recent_social_tone: str = "neutral"
+    relationship_summary: str = ""
+    interaction_style_hint: str = "steady_familiar_tone"
+    confidence: float = 0.35
+    signals: list[RelationshipSignal] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class MemoryLinkSuggestion:
+    """Phase 24 — soft association hint for retrieval / future linking (not a stored graph edge)."""
+
+    link_kind: str = ""
+    target_hint: str = ""
+    strength: float = 0.0
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RefinedMemoryDecision:
+    """Phase 24 — refined usefulness decision layered on Phase 11–12 outputs."""
+
+    refined_memory_worthy: bool = False
+    refined_memory_class: str = "ignore"
+    retention_strength: float = 0.2
+    retrieval_priority: float = 0.15
+    unfinished_thread_candidate: bool = False
+    social_relevance_score: float = 0.35
+    episodic_relevance_score: float = 0.25
+    pattern_relevance_score: float = 0.25
+    suppression_reason: str = ""
+
+
+@dataclass
+class MemoryRefinementResult:
+    """Phase 24 — bounded memory refinement snapshot for one tick."""
+
+    decision: RefinedMemoryDecision = field(default_factory=RefinedMemoryDecision)
+    link_targets: list[MemoryLinkSuggestion] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+# --- Phase 25 — dynamic Ollama model routing (cognitive mode → reasoning engine; not identity) ---
+
+
+@dataclass
+class ModelCapabilityEntry:
+    """
+    Runtime snapshot: config-backed capability profile intersected with live Ollama availability.
+
+    ``source`` is ``config`` for declared profiles; ``discovered`` when the model appeared in
+    discovery but had no explicit profile (neutral conservative defaults).
+    """
+
+    model_name: str
+    available: bool
+    cognitive_modes: list[str]
+    latency_tendency: float
+    reasoning_strength: float
+    coding_suitability: float
+    summarization_suitability: float
+    fallback_priority: int
+    source: str = "config"
+
+
+@dataclass
+class ModelRouteCandidate:
+    """One scored model choice for a cognitive routing category."""
+
+    model_name: str
+    cognitive_mode: str
+    score: float
+    reason: str = ""
+
+
+@dataclass
+class CognitiveModeResult:
+    """Conservative classification of which routing category fits this tick."""
+
+    cognitive_mode: str
+    classification_confidence: float
+    signals: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ModelRoutingResult:
+    """Structured routing decision: which Ollama model to use as the active reasoning engine."""
+
+    classification: CognitiveModeResult
+    cognitive_mode: str
+    selected_model: str
+    fallback_model: str
+    routing_reason: str
+    routing_confidence: float
+    latency_priority: float
+    context_priority: float
+    quality_priority: float
+    model_candidates: list[ModelRouteCandidate] = field(default_factory=list)
+    continuity_preserved: bool = True
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+# --- Phase 26 — bounded curiosity (structured internal prompts; no autonomous execution) ---
+
+
+@dataclass
+class CuriosityQuestion:
+    """Soft internal wording anchor for curiosity (not auto-spoken unless another layer chooses safely)."""
+
+    question_text: str = ""
+    anchor_theme: str = ""
+
+
+@dataclass
+class ExplorationSuggestion:
+    """Recommended exploration posture — observe, defer, or optional later clarification."""
+
+    kind: str = "none"
+    summary: str = ""
+
+
+@dataclass
+class CuriosityResult:
+    """Phase 26 — bounded curiosity snapshot for one perception tick."""
+
+    curiosity_triggered: bool = False
+    curiosity_theme: str = "no_curiosity_needed"
+    curiosity_question: str = ""
+    curiosity_reason: str = ""
+    curiosity_confidence: float = 0.0
+    exploration_mode: str = "none"
+    suggested_next_step: str = "no_exploration_needed"
+    internal_question: Optional[CuriosityQuestion] = None
+    exploration_suggestions: list[ExplorationSuggestion] = field(default_factory=list)
+    should_observe: bool = False
+    should_clarify: bool = False
+    should_defer: bool = False
+    boundedness_flags: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+# --- Phase 27 — outcome learning & advisory behavior adjustment signals ---
+
+
+@dataclass
+class OutcomeObservation:
+    """Single grounded cue feeding outcome learning for this tick."""
+
+    source: str = ""
+    signal_strength: float = 0.0
+    detail: str = ""
+
+
+@dataclass
+class BehaviorAdjustmentSuggestion:
+    """Soft recommendation posture — descriptive only unless a future phase applies it."""
+
+    posture: str = ""
+    summary: str = ""
+    target_subsystem: str = ""
+
+
+@dataclass
+class OutcomeLearningResult:
+    """Bounded outcome snapshot: what patterns seem to repeat and what adjustment *might* help."""
+
+    outcome_category: str = "no_adjustment_needed"
+    outcome_quality: str = "neutral"
+    repeated_outcome_pattern: bool = False
+    suggested_adjustment: str = ""
+    adjustment_confidence: float = 0.18
+    adjustment_target: str = ""
+    supporting_evidence: list[OutcomeObservation] = field(default_factory=list)
+    adjustment_suggestions: list[BehaviorAdjustmentSuggestion] = field(default_factory=list)
+    should_strengthen: bool = False
+    should_weaken: bool = False
+    should_keep: bool = True
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+# --- Phase 28 — conversational / emotional nuance (soft guidance; not a response engine) ---
+
+
+@dataclass
+class NuanceSignal:
+    """One evidence-weighted cue feeding tone and pacing decisions."""
+
+    source: str = ""
+    weight: float = 0.0
+    detail: str = ""
+
+
+@dataclass
+class ToneGuidanceProfile:
+    """Aggregated soft preferences in 0..1 (0.5 = neutral / leave to runtime prompt)."""
+
+    preferred_tone_category: str = "uncertain_neutral"
+    warmth_bias: float = 0.5
+    practicality_bias: float = 0.5
+    softness_bias: float = 0.5
+    seriousness_bias: float = 0.5
+    humor_tolerance: float = 0.35
+
+
+@dataclass
+class ConversationalNuanceResult:
+    """Structured interaction-style guidance for prompts and future style hooks only."""
+
+    nuance_tone: str = "uncertain_neutral"
+    warmth_level: float = 0.5
+    practicality_level: float = 0.5
+    softness_level: float = 0.5
+    seriousness_level: float = 0.5
+    humor_tolerance: float = 0.35
+    verbosity_bias: float = 0.52
+    pacing_bias: float = 0.5
+    restraint_bias: float = 0.48
+    emotional_pacing_hint: str = "steady"
+    nuance_summary: str = ""
+    confidence: float = 0.38
+    signals: list[NuanceSignal] = field(default_factory=list)
+    tone_profile: ToneGuidanceProfile = field(default_factory=ToneGuidanceProfile)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+# --- Phase 29 — multi-session strategic continuity (bounded carryover; guidance only) ---
+
+
+@dataclass
+class ContinuityThread:
+    """One prioritized carryover thread — short summary, not a memory blob."""
+
+    category: str = "no_relevant_carryover"
+    summary: str = ""
+    relevance: float = 0.0
+    scope: str = "none"  # immediate | recent | background | none
+    confidence: float = 0.0
+    source: str = ""
+    evidence_note: str = ""
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class SessionCarryoverSummary:
+    """Compact headline for logging and UI hooks (Phase 29)."""
+
+    headline: str = ""
+    thread_count: int = 0
+    top_category: str = "no_relevant_carryover"
+
+
+@dataclass
+class StrategicContinuityResult:
+    """
+    Cross-session continuity snapshot for one tick — descriptive only.
+
+    Does not persist or auto-execute; merges durable files with current pipeline evidence.
+    """
+
+    active_threads: list[ContinuityThread] = field(default_factory=list)
+    unfinished_threads: list[ContinuityThread] = field(default_factory=list)
+    strategic_priorities: list[str] = field(default_factory=list)
+    relationship_carryover: str = ""
+    maintenance_carryover: str = ""
+    recent_adjustment_carryover: str = ""
+    session_carryover: SessionCarryoverSummary = field(default_factory=SessionCarryoverSummary)
+    continuity_summary: str = ""
+    continuity_confidence: float = 0.0
+    continuity_scope: str = "none"
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+# --- Phase 30 — supervised self-improvement loop (descriptive only; no auto-approval) ---
+
+
+class ImprovementStepStatus:
+    """Valid ``loop_stage`` string values for :class:`ImprovementLoopResult` (Phase 30)."""
+
+    NO_ACTIVE_LOOP = "no_active_loop"
+    ISSUE_DETECTED = "issue_detected"
+    PROPOSAL_READY = "proposal_ready"
+    AWAITING_APPROVAL = "awaiting_approval"
+    APPROVED_READY_FOR_EXECUTION = "approved_ready_for_execution"
+    EXECUTION_IN_PROGRESS = "execution_in_progress"
+    EXECUTION_SUCCEEDED = "execution_succeeded"
+    EXECUTION_FAILED = "execution_failed"
+    ROLLBACK_AVAILABLE = "rollback_available"
+    ROLLBACK_USED = "rollback_used"
+    POST_EXECUTION_REFLECTION = "post_execution_reflection"
+    RESOLVED = "resolved"
+
+
+@dataclass
+class ImprovementCycle:
+    """One tracked improvement concern (may mirror workbench or continuity maintenance)."""
+
+    cycle_key: str = ""
+    headline: str = ""
+    source: str = ""
+    linked_proposal_id: str = ""
+    status_hint: str = ""
+
+
+@dataclass
+class ImprovementLoopResult:
+    """
+    Supervised maintenance / self-improvement snapshot for one tick.
+
+    Does not approve, execute, or mutate files — only structured situational awareness.
+    """
+
+    loop_active: bool = False
+    loop_stage: str = ImprovementStepStatus.NO_ACTIVE_LOOP
+    loop_summary: str = ""
+    active_issue: str = ""
+    active_proposal_id: str = ""
+    active_proposal_type: str = ""
+    awaiting_approval: bool = False
+    awaiting_execution: bool = False
+    execution_recently_succeeded: bool = False
+    execution_recently_failed: bool = False
+    rollback_recently_used: bool = False
+    suggested_next_supervised_step: str = ""
+    loop_confidence: float = 0.0
+    cycles: list[ImprovementCycle] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class ContinuityOutput:
     """Stage 5 — identity continuity / tracking + Phase 7 structured result."""
 
@@ -695,3 +1160,19 @@ class PerceptionPipelineBundle:
     reflection: Optional[ReflectionResult] = None
     # Phase 18 — bounded philosophical/internal contemplation
     contemplation: Optional[ContemplationResult] = None
+    # Phase 23 — social continuity / soft relationship modeling
+    social_continuity: Optional[SocialContinuityResult] = None
+    # Phase 24 — long-term memory refinement (additive on memory scoring)
+    memory_refinement: Optional[MemoryRefinementResult] = None
+    # Phase 25 — explainable model routing (Ollama “reasoning engine” selection)
+    model_routing: Optional[ModelRoutingResult] = None
+    # Phase 26 — bounded curiosity / exploratory intent (structured; non-executing)
+    curiosity: Optional[CuriosityResult] = None
+    # Phase 27 — outcome learning (advisory adjustment signals — no silent retuning)
+    outcome_learning: Optional[OutcomeLearningResult] = None
+    # Phase 28 — conversational / emotional nuance (guidance only)
+    conversational_nuance: Optional[ConversationalNuanceResult] = None
+    # Phase 29 — multi-session strategic continuity (bounded carryover)
+    strategic_continuity: Optional[StrategicContinuityResult] = None
+    # Phase 30 — supervised self-improvement loop (descriptive only)
+    improvement_loop: Optional[ImprovementLoopResult] = None

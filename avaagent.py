@@ -6088,6 +6088,24 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
     else:
         _rapport_hint = ""
 
+    _voice_conv = ""
+    try:
+        if globals().get("_voice_user_turn_priority"):
+            hint = str(getattr(perception, "voice_continuity_hint", "") or "")[:420]
+            vts = getattr(perception, "voice_turn_state", "idle")
+            vwait = bool(getattr(perception, "voice_should_wait", False))
+            vrd = float(getattr(perception, "voice_response_readiness", 0.5) or 0.5)
+            vint = bool(getattr(perception, "voice_interrupted", False))
+            _voice_conv = (
+                "\nVOICE TURN (microphone session — advisory pacing only):\n"
+                f"- turn_state={vts} readiness≈{vrd:.2f} bias_wait={vwait} interrupted={vint}\n"
+                + (f"- continuity_hint: {hint}\n" if hint else "")
+                + "Keep replies concise and speakable; if bias_wait is true or readiness is low, "
+                "prefer a short acknowledgment and invite the user to continue rather than dominating the floor.\n"
+            )
+    except Exception:
+        _voice_conv = ""
+
     self_model_summary = {
         "identity_statement": self_model.get("identity_statement", ""),
         "core_drives": self_model.get("core_drives", [])[:6],
@@ -6131,6 +6149,7 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
 ACTIVE PERSON:
 {json.dumps(profile_summary, indent=2)}
 {_rapport_hint}
+{_voice_conv}
 
 SELF MODEL:
 {json.dumps(self_model_summary, indent=2)}
@@ -6745,7 +6764,19 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
 
         try:
             print("[run_ava] llm_invoke start")
-            result = llm.invoke(messages)
+            _invoke_llm = llm
+            try:
+                _ws_st = workspace.state
+                _perc_r = getattr(_ws_st, "perception", None) if _ws_st is not None else None
+                _route_model = ""
+                if _perc_r is not None:
+                    _route_model = str(getattr(_perc_r, "routing_selected_model", "") or "").strip()
+                if _route_model and _route_model != LLM_MODEL:
+                    _invoke_llm = ChatOllama(model=_route_model, temperature=0.6)
+                    print(f"[run_ava] phase25_routing_model={_route_model}")
+            except Exception:
+                pass
+            result = _invoke_llm.invoke(messages)
             raw_reply = getattr(result, "content", str(result)).strip()
             if not raw_reply:
                 raw_reply = "I'm here."
@@ -7196,27 +7227,99 @@ def voice_fn(audio, history, image):
             recent_camera_events_text(limit=8),
         ))
 
-    note_user_interaction_for_initiative(text.strip(), interaction_kind="voice")
-    workspace.record_user_message()
-    workspace.tick(camera_manager, image, globals(), text.strip())
+    text_strip = text.strip()
+    from brain.voice_conversation import finalize_voice_turn_after_reply, prepare_voice_turn_for_globals
 
-    if should_ask_identity_when_no_camera_face(text.strip(), image):
-        reply = no_face_identity_prompt()
-        current_person_id = get_active_person_id()
-        log_chat("user", text.strip(), {"person_id": current_person_id, "person_name": load_profile_by_id(current_person_id)["name"]})
-        log_chat("assistant", reply, {"person_id": current_person_id, "person_name": load_profile_by_id(current_person_id)["name"], "actions": ["asked_identity_no_face"]})
+    _gvn = globals()
+    prepare_voice_turn_for_globals(
+        _gvn,
+        user_text=text_strip,
+        audio_path=audio if isinstance(audio, str) else None,
+    )
+    try:
+        note_user_interaction_for_initiative(text_strip, interaction_kind="voice")
+        workspace.record_user_message()
+        workspace.tick(camera_manager, image, globals(), text_strip)
+
+        if should_ask_identity_when_no_camera_face(text_strip, image):
+            reply = no_face_identity_prompt()
+            current_person_id = get_active_person_id()
+            log_chat("user", text_strip, {"person_id": current_person_id, "person_name": load_profile_by_id(current_person_id)["name"]})
+            log_chat("assistant", reply, {"person_id": current_person_id, "person_name": load_profile_by_id(current_person_id)["name"], "actions": ["asked_identity_no_face"]})
+            canon = list(_get_canonical_history())
+            canon.append({"role": "user", "content": text_strip})
+            canon.append({"role": "assistant", "content": reply})
+            _set_canonical_history(canon)
+            perc = build_perception(camera_manager, image, globals(), "")
+            recognized_text, recognized_person_id = recognize_face(image)
+            expr_state = update_expression_state(
+                image, recognized_person_id=recognized_person_id, visual_truth_trusted=perc.visual_truth_trusted
+            )
+            if perc.visual_truth_trusted:
+                process_camera_snapshot(
+                    image,
+                    recognized_text=recognized_text,
+                    recognized_person_id=recognized_person_id,
+                    expression_state=expr_state,
+                )
+            finalize_voice_turn_after_reply(_gvn, reply)
+            return scrub_chat_callback_result((
+                _chatbot_messages_out(),
+                None,
+                detect_face(image),
+                get_memory_status(),
+                get_mood_status_text(),
+                recognized_text,
+                get_expression_status_text(expr_state),
+                get_emotion_blend_text(),
+                get_time_status_text(),
+                get_active_profile_text(),
+                get_active_profile_summary(),
+                format_recent_memories_ui(list_recent_memories(current_person_id, 12)),
+                "asked_identity_no_face",
+                format_reflections_ui(load_recent_reflections(limit=15, person_id=current_person_id)),
+                format_self_model_ui(load_self_model()),
+                initiative_status_text(),
+                get_latest_annotated_snapshot_for_ui(),
+                get_camera_memory_status_text(),
+                recent_camera_events_text(limit=8),
+            ))
+
         canon = list(_get_canonical_history())
-        canon.append({"role": "user", "content": text.strip()})
-        canon.append({"role": "assistant", "content": reply})
+        canon.append({"role": "user", "content": text_strip})
         _set_canonical_history(canon)
-        perc = build_perception(camera_manager, image, globals(), "")
-        recognized_text, recognized_person_id = recognize_face(image)
-        expr_state = update_expression_state(
-            image, recognized_person_id=recognized_person_id, visual_truth_trusted=perc.visual_truth_trusted
+        reply, visual, active_profile, actions, _ = run_ava(text_strip, image, get_active_person_id())
+        finalize_voice_turn_after_reply(_gvn, reply)
+        print(
+            f"[voice_fn] run_ava done route={visual.get('turn_route')} "
+            f"actions={len(actions)} reply_chars={len(reply or '')}"
         )
-        if perc.visual_truth_trusted:
+
+        try:
+            msg_count = bump_session_message_count()
+            if msg_count % 10 == 0:
+                recent_n = load_recent_chat(limit=10, person_id=active_profile["person_id"])
+                summary = " ".join((r.get("content", "") or "")[:100] for r in recent_n[-5:])
+                mood = load_mood()
+                face_emo = load_expression_state().get("raw_emotion", "neutral")
+                update_self_narrative(globals(), summary, mood, face_emo)
+        except Exception as e:
+            print(f"[self-narrative] update failed: {e}")
+
+        recent = list_recent_memories(active_profile["person_id"], 12)
+        action_text = "\n".join(actions) if actions else "No action."
+        reflections_text = format_reflections_ui(load_recent_reflections(limit=15, person_id=active_profile["person_id"]))
+
+        perception_v = workspace.state.perception if workspace.state else build_perception(camera_manager, image, globals(), text_strip)
+        recognized_text, recognized_person_id = perception_v.recognized_text, perception_v.face_identity
+        expr_state = update_expression_state(
+            perception_v.frame,
+            recognized_person_id=recognized_person_id,
+            visual_truth_trusted=perception_v.visual_truth_trusted,
+        )
+        if perception_v.visual_truth_trusted:
             process_camera_snapshot(
-                image,
+                perception_v.frame,
                 recognized_text=recognized_text,
                 recognized_person_id=recognized_person_id,
                 expression_state=expr_state,
@@ -7224,18 +7327,18 @@ def voice_fn(audio, history, image):
         return scrub_chat_callback_result((
             _chatbot_messages_out(),
             None,
-            detect_face(image),
+            visual.get("face_status", perception_v.face_status),
             get_memory_status(),
             get_mood_status_text(),
-            recognized_text,
-            get_expression_status_text(expr_state),
+            visual.get("recognition_status", perception_v.recognized_text),
+            visual.get("expression_status", get_expression_status_text(expr_state)),
             get_emotion_blend_text(),
             get_time_status_text(),
-            get_active_profile_text(),
-            get_active_profile_summary(),
-            format_recent_memories_ui(list_recent_memories(current_person_id, 12)),
-            "asked_identity_no_face",
-            format_reflections_ui(load_recent_reflections(limit=15, person_id=current_person_id)),
+            f"{active_profile['name']} [{active_profile['person_id']}]",
+            json.dumps(active_profile, indent=2, ensure_ascii=False),
+            format_recent_memories_ui(recent),
+            action_text,
+            reflections_text,
             format_self_model_ui(load_self_model()),
             initiative_status_text(),
             get_latest_annotated_snapshot_for_ui(),
@@ -7243,65 +7346,10 @@ def voice_fn(audio, history, image):
             recent_camera_events_text(limit=8),
         ))
 
-    canon = list(_get_canonical_history())
-    canon.append({"role": "user", "content": text.strip()})
-    _set_canonical_history(canon)
-    reply, visual, active_profile, actions, _ = run_ava(text.strip(), image, get_active_person_id())
-    print(
-        f"[voice_fn] run_ava done route={visual.get('turn_route')} "
-        f"actions={len(actions)} reply_chars={len(reply or '')}"
-    )
+    finally:
+        _gvn.pop("_voice_user_turn_priority", None)
+        _gvn.pop("_voice_conversation", None)
 
-    try:
-        msg_count = bump_session_message_count()
-        if msg_count % 10 == 0:
-            recent_n = load_recent_chat(limit=10, person_id=active_profile["person_id"])
-            summary = " ".join((r.get("content", "") or "")[:100] for r in recent_n[-5:])
-            mood = load_mood()
-            face_emo = load_expression_state().get("raw_emotion", "neutral")
-            update_self_narrative(globals(), summary, mood, face_emo)
-    except Exception as e:
-        print(f"[self-narrative] update failed: {e}")
-
-    recent = list_recent_memories(active_profile["person_id"], 12)
-    action_text = "\n".join(actions) if actions else "No action."
-    reflections_text = format_reflections_ui(load_recent_reflections(limit=15, person_id=active_profile["person_id"]))
-
-    perception_v = workspace.state.perception if workspace.state else build_perception(camera_manager, image, globals(), text.strip())
-    recognized_text, recognized_person_id = perception_v.recognized_text, perception_v.face_identity
-    expr_state = update_expression_state(
-        perception_v.frame,
-        recognized_person_id=recognized_person_id,
-        visual_truth_trusted=perception_v.visual_truth_trusted,
-    )
-    if perception_v.visual_truth_trusted:
-        process_camera_snapshot(
-            perception_v.frame,
-            recognized_text=recognized_text,
-            recognized_person_id=recognized_person_id,
-            expression_state=expr_state,
-        )
-    return scrub_chat_callback_result((
-        _chatbot_messages_out(),
-        None,
-        visual.get("face_status", perception_v.face_status),
-        get_memory_status(),
-        get_mood_status_text(),
-        visual.get("recognition_status", perception_v.recognized_text),
-        visual.get("expression_status", get_expression_status_text(expr_state)),
-        get_emotion_blend_text(),
-        get_time_status_text(),
-        f"{active_profile['name']} [{active_profile['person_id']}]",
-        json.dumps(active_profile, indent=2, ensure_ascii=False),
-        format_recent_memories_ui(recent),
-        action_text,
-        reflections_text,
-        format_self_model_ui(load_self_model()),
-        initiative_status_text(),
-        get_latest_annotated_snapshot_for_ui(),
-        get_camera_memory_status_text(),
-        recent_camera_events_text(limit=8),
-    ))
 
 def debug_panel_refresh_fn() -> tuple[str, str, str, str]:
     try:

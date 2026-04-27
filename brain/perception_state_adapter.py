@@ -35,6 +35,30 @@ from .perception_types import (
 from .salience import salience_items_as_dicts
 
 
+def _finalize_perception_runtime_context(state: Any, bundle: PerceptionPipelineBundle, g: Any) -> Any:
+    """Attach Phase 22 voice through Phase 30 improvement loop (after strategic continuity)."""
+    from .conversational_nuance import apply_conversational_nuance_to_perception_state
+    from .self_improvement_loop import apply_improvement_loop_to_perception_state
+    from .session_continuity import apply_strategic_continuity_to_perception_state
+    from .curiosity import apply_curiosity_to_perception_state
+    from .memory_refinement import apply_memory_refinement_to_perception_state
+    from .model_routing import apply_model_routing_to_perception_state
+    from .outcome_learning import apply_outcome_learning_to_perception_state
+    from .relationship_model import apply_social_continuity_to_perception_state
+    from .voice_conversation import apply_voice_conversation_to_perception_state
+
+    apply_voice_conversation_to_perception_state(state, g)
+    apply_social_continuity_to_perception_state(state, bundle)
+    apply_memory_refinement_to_perception_state(state, bundle)
+    apply_model_routing_to_perception_state(state, bundle.model_routing)
+    apply_curiosity_to_perception_state(state, bundle)
+    apply_outcome_learning_to_perception_state(state, bundle)
+    apply_conversational_nuance_to_perception_state(state, bundle)
+    apply_strategic_continuity_to_perception_state(state, bundle)
+    apply_improvement_loop_to_perception_state(state, bundle)
+    return state
+
+
 def apply_cognitive_phases_from_bundle(state: Any, bundle: PerceptionPipelineBundle) -> None:
     """
     Map Phases 9–18 structured outputs from ``bundle`` onto ``state``.
@@ -522,7 +546,7 @@ def _apply_salience_structured_to_state(state: Any, interp: InterpretationOutput
     state.salience_combined_scalar = float(sr.combined_scalar)
 
 
-def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str) -> Any:
+def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str, g: Any = None) -> Any:
     """
     Map pipeline bundle to :class:`brain.perception.PerceptionState` (legacy shape for workspace / avaagent).
     """
@@ -540,7 +564,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
 
     if not bundle.acquisition.stage.ok or resolved is None:
         apply_cognitive_phases_from_bundle(state, bundle)
-        return state
+        return _finalize_perception_runtime_context(state, bundle, g)
 
     state.frame = resolved.frame
     state.vision_status = resolved.vision_status
@@ -572,7 +596,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
             f"trusted=False id_conf=0.0 (suppress identity/emotion/scene-as-current)"
         )
         apply_cognitive_phases_from_bundle(state, bundle)
-        return state
+        return _finalize_perception_runtime_context(state, bundle, g)
 
     if not resolved.visual_truth_trusted:
         if resolved.vision_status == "stale_frame":
@@ -614,7 +638,7 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
             f"(suppress identity/emotion/scene-as-current)"
         )
         apply_cognitive_phases_from_bundle(state, bundle)
-        return state
+        return _finalize_perception_runtime_context(state, bundle, g)
 
     state.face_status = d.face_status
     state.face_detected = d.face_detected
@@ -665,4 +689,4 @@ def bundle_to_perception_state(bundle: PerceptionPipelineBundle, user_text: str)
         f"scene={state.scene_overall_state!r} interp={state.interpretation_primary_event!r} "
         f"(base={base_sal:.2f} expr_q={q.quality_only_expression_scale:.2f} blur_interp={q.blur_interpretation_scale:.2f})"
     )
-    return state
+    return _finalize_perception_runtime_context(state, bundle, g)

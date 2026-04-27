@@ -1,13 +1,35 @@
 # Ava Agent v2 — Development Roadmap
-**Last updated:** April 2, 2026  
+**Last updated:** April 27, 2026  
 **Repo:** `Tzeke000/Ava-Agent-v2` (public)  
 **Based on:** Full repo audit + roadmap planning session
 
 ---
 
+## Executive status — April 27, 2026
+
+**The staged roadmap through Phase 30 is implemented in this repo**, including **Phase 16.5** (supervised execution, `brain/workbench_execute.py`) and **Phase 16.6** (approval / command layer, `brain/workbench_commands.py`). Later sections document **what was built**; **future / additive** work (prospective memory calendar, debug UI, etc.) is called out explicitly so completed phases are not re-listed as missing baseline.
+
+**What Ava is:** a local, camera-aware agent with a **staged perception pipeline**, **vector memory**, **profiles**, **goals**, **initiative**, **reflection/contemplation**, **social and multi-session continuity**, **bounded tone guidance**, and a **supervised** (human-approved) path from diagnostics → workbench proposals → execution/rollback — without claiming human consciousness.
+
+**Identity anchors (continuity policy):** `ava_core/IDENTITY.md` is Ava’s **core self** anchor; `ava_core/SOUL.md` is **values, boundaries, and self-guidance**; `ava_core/USER.md` is the **durable relationship** anchor for the user. `ava_core/BOOTSTRAP.md` is **first-run scaffolding only** and is **not** treated as ongoing primary self once IDENTITY/SOUL are established (see Phase 29). Runtime continuity layers **read** these for grounding; **editing** them remains a deliberate, reviewable concern—not casual prompt churn.
+
+---
+
+## Architecture baseline — Phases 1 through 30 complete
+
+**Foundation (Phases 1–20):** Staged **perception** (quality, blur, detection, recognition, salience, continuity, identity fallback, scene summary, interpretation layer), **perception memory**, **memory scoring**, **pattern learning**, **proactive triggers**, **self-tests**, **workbench proposals**, **reflection**, **contemplation**, **`bundle_to_perception_state`** modularization (**Phase 19** — mapping consolidated in `brain/perception_state_adapter.py` instead of inline in the pipeline), and centralized knobs in **`config/ava_tuning.py`** (**Phase 20**).
+
+**Post-foundation (Phases 21–30):** **Calibration / tuning** (21), **voice conversation & turn-taking hints** (22), **social continuity / relationship modeling** (23), **memory refinement** (24), **dynamic Ollama model routing** (25), **bounded curiosity** (26), **outcome learning** (advisory) (27), **conversational nuance** (28), **multi-session strategic continuity** with **ava_core** anchors (29), **supervised self-improvement loop** (30). **Workbench 16.5** and **16.6** ship alongside Phase 16 proposals.
+
+**Plain-language capability map (major areas):** perception stack • memory events / scoring / refinement • pattern learning • proactive triggers • self-tests • workbench proposals • supervised execution • approval/command flow • reflection • contemplation • social continuity • voice turn-taking • conversational nuance • multi-session continuity • dynamic model routing • supervised self-improvement loop • calibration/tuning • modular adapter cleanup (Phase 19).
+
+Further work **extends** this stack (calendar/prospective memory, richer event extraction, UI)—it does **not** replace the shipped architecture.
+
+---
+
 ## Vision: JARVIS, But As Human-Like As Possible
 
-Ava's technical foundation is already strong. The gap between "impressive AI" and "feels like a person who actually knows you" comes down to **continuity** — does she remember what you told her is coming, bring it up at the right moment, and connect past threads to the present? That's what this roadmap builds toward.
+Ava's technical foundation is already strong. The gap between "impressive AI" and "feels like a person who actually knows you" comes down to **continuity** — does she remember what you told her is coming, bring it up at the right moment, and connect past threads to the present? **Implemented layers** (profiles, social continuity, strategic continuity, outcome learning, nuance) move in that direction; **future** items below (prospective memory, social timing, life model) still represent the next leap.
 
 ---
 
@@ -27,16 +49,16 @@ Ava's technical foundation is already strong. The gap between "impressive AI" an
 
 ---
 
-## The 8 Missing "Human-Like Continuity" Pieces
+## The 8 Missing "Human-Like Continuity" Pieces (next-generation / additive)
 
-These are the real gaps between what Ava is now and what she needs to become.
+These are **not** claims that the baseline roadmap is unfinished—they are the **next** gaps between shipped continuity layers and a **full** JARVIS-like companion experience (calendar awareness, timing intelligence, richer memory writing, etc.).
 
 | Priority | Feature | Why It Matters | Status |
 |---|---|---|---|
 | 1 | **Prospective Memory / Commitments Calendar** | Tracks open loops ("John has football game tomorrow") and turns them into natural follow-ups | ❌ Not present |
 | 2 | **Event Extraction** | Auto-detects dates, future events, promises from conversation ("tomorrow", "next week", "my game is Friday") | ⚠️ Partial / weak |
 | 3 | **Social Timing Intelligence** | Knows when to bring something up — too soon / too late / gentle reminder window | ❌ Not present |
-| 4 | **Relationship Continuity / Thread Tracking** | Connects "you were stressed about work Tuesday" to "you seem more relaxed now" — not just profile notes but active threads | ⚠️ Partial (profiles exist) |
+| 4 | **Relationship Continuity / Thread Tracking** | Connects "you were stressed about work Tuesday" to "you seem more relaxed now" — not just profile notes but active threads | ⚠️ Partial — **Phase 23** social continuity + profiles + Phase 29 carryover; **full** arc tracking still future |
 | 5 | **Richer Memory Writing** | Memories written with emotional tone, context, future implications, and relationship impact — not just text dumps | ⚠️ Improving but incomplete |
 | 6 | **Mid-Session Narrative Updates** | `update_self_narrative` fires at shutdown — needs a mid-session trigger too (every 10 messages, or on significant emotional event) | ⚠️ Partially live |
 | 7 | **Life Model / World Model** | Understands Zeke's recurring activities, stress cycles, goals in progress, family/friends rhythm over time | ⚠️ Very early stage |
@@ -220,6 +242,116 @@ This is a development-only quality-of-life feature that makes tuning the system 
 - **Feature modules** import these singletons (e.g. **`brain/frame_quality`**, **`brain/reflection`**, **`brain/contemplation`**, proactive/self-test/workbench); **`summarize_tuning_config()`** returns a compact dict for occasional debug.
 - **`avaagent.run_ava`**: One-time log on first entry noting the tuning layer source path (non-spammy).
 - **Intent**: calibration readiness — fewer scattered magic numbers, clearer subsystem ownership, **no large external settings framework** and **no intentional pipeline semantic changes**.
+
+### Phase 21 — Real-world calibration and tuning *(live)*
+
+- **`brain/calibration.py`**: Session **counters and derived rates** from each **`run_perception_pipeline`** tick (trusted low-quality frames, blur penalty usage, identity states including **unknown_face** / **likely_identity_by_continuity**, **no_meaningful_change**, perception-memory **duplicate suppression**, proactive **suppression vs eligible**, workbench proposals, self-test warnings/failures, reflection uncertain/degraded categories).
+- **`brain/perception_types.py`**: **`CalibrationObservation`**, **`ThresholdReviewResult`**, **`CalibrationReport`** — structured diagnostic output (**no auto-retuning**).
+- **`summarize_calibration_state()`** / **`get_last_calibration_report()`**: Compact snapshots for debugging; **watchlist** suggests **`raise` / `lower` / `watch`** directions from observed rates (human review only).
+- **Logging**: Periodic **`[calibration] summary=...`** (every ~96 ticks, not per-tick spam); first-seen watch items log **`[calibration] subsystem=... metric=... direction=...`**.
+- **Intent**: **Evidence-based tuning workflow** after Phase 20 — measure skew (false-positive/negative *signals* via rates), document suggested review directions, **preserve** approval rules, bounded reflection/contemplation, identity hierarchy, and pipeline ordering.
+
+### Phase 22 — Natural voice conversation and turn-taking *(live)*
+
+- **`brain/voice_conversation.py`**: Soft **turn states** (listening / user_pause / assistant_ready / assistant_speaking / yielding / interrupted / idle), **response readiness** and **pause bias** from transcript shape + inter-turn gaps (Gradio **record-stop** — not streaming VAD), **overlap / interrupt hints**, **`continuity_hint`** carry-forward; **`prepare_voice_turn_for_globals`** / **`finalize_voice_turn_after_reply`** bracket **`voice_fn`**.
+- **`brain/perception_types.py`**: **`VoiceConversationResult`**, **`VoiceTimingDecision`**.
+- **`PerceptionState`** + **`bundle_to_perception_state(..., g)`**: **`voice_turn_state`**, **`voice_should_wait`**, **`voice_should_respond`**, **`voice_response_readiness`**, **`voice_interrupted`**, **`voice_continuity_hint`**, **`voice_pacing_meta`** — safe defaults when not in a voice cycle.
+- **`brain/proactive_triggers.py`**: **`voice_user_turn_priority`** gates proactive recommendations during an active microphone turn processing tick (**turn-taking safety**, not workbench approval changes).
+- **`build_prompt`**: Optional **VOICE TURN** guidance when **`_voice_user_turn_priority`** so replies stay concise when **bias_wait** / low readiness (**additive** — does not replace chat path).
+- **`brain/calibration.py`**: **`voice_calibration_hints`** counts surfaced in **`summarize_calibration_state()`** meta for later tuning.
+- **Intent**: more **human pacing** decisions (wait vs respond hints) and **session continuity** without claiming full duplex speech — **TTS generation unchanged** in this phase.
+
+### Phase 23 — Social continuity and relationship modeling *(live)*
+
+- **`brain/relationship_model.py`**: **`build_social_continuity_result()`** consumes contemplation, reflection, pattern learning, memory importance, proactive, interpretation layer, optional **profile** (`relationship_score`, unresolved **`threads`**), voice globals, and rolling **topic recurrence** (soft in-memory counts per person); outputs **`SocialContinuityResult`** with **`RelationshipSignal`** tags (**familiar / practical / warm / quiet / reflective / unfinished thread / uncertain**) — **probabilistic**, no stable “user is X” claims.
+- **`brain/perception_types.py`**: **`RelationshipSignal`**, **`InteractionStyleProfile`**, **`SocialContinuityResult`**; **`PerceptionPipelineBundle.social_continuity`**.
+- **`brain/perception_pipeline.py`**: Runs **after contemplation**, before package; **`[perception_pipeline] relationship=...`** log line.
+- **`PerceptionState`**: **`relationship_familiarity_score`**, **`relationship_trust_signal`**, **`relationship_summary`**, **`interaction_style_hint`**, **`unfinished_thread_present`**, **`recurring_topics`**, **`recent_social_tone`**, **`relationship_confidence`**, **`relationship_meta`** via **`bundle_to_perception_state`** finalize step.
+- **Intent**: grounded **interaction-style hints** and **unfinished-thread awareness** for prompts/routing hooks later — **does not** override safety, workbench approval, or user agency.
+
+### Phase 24 — Long-term memory refinement *(live)*
+
+- **`brain/memory_refinement.py`**: **`build_memory_refinement_result`** / **`build_memory_refinement_result_safe`** layers on Phase 11–12 outputs + Phase 23 **social continuity** + voice/interrupt hints — **`RefinedMemoryDecision`** with **`retention_strength`** / **`retrieval_priority`**, **`MemoryLinkSuggestion`** list (identity, topic, recurring topic, unfinished thread, pattern, reflection category), conservative **suppression** for weak duplicates, low-importance **no_meaningful_change**, uncertain reflection; **does not** replace **`brain.memory_scoring`** or durable storage writes.
+- **`brain/perception_types.py`**: **`MemoryLinkSuggestion`**, **`RefinedMemoryDecision`**, **`MemoryRefinementResult`**; **`PerceptionPipelineBundle.memory_refinement`**.
+- **`brain/perception_pipeline.py`**: Runs **after social continuity**; **`[perception_pipeline] memory_refined=...`** log line alongside **`[memory_refinement]`** detail lines (bounded verbosity).
+- **`PerceptionState`**: **`refined_memory_*`** fields (**class**, **worthy**, **retention**, **retrieval**, **unfinished_thread_candidate**, social/episodic/pattern relevance scalars, **`refined_memory_meta`** with link hints).
+- **Intent**: richer **classification / retention weighting / link suggestions** for future persistence and retrieval — **additive**, conservative, **no memory explosion** from weak cues.
+
+### Phase 25 — Dynamic Ollama model routing *(live)*
+
+- **Goal**: Choose among **available Ollama models** as different **reasoning engines** (latency vs depth vs coding repair vs memory maintenance vs perception-heavy turns) while **Ava stays one mind** — **identity, memory, values, relationship continuity, and reflection context** are **not** swapped when the inference tag changes.
+- **`config/ava_tuning.py`**: **`ModelRoutingConfig`** / **`MODEL_ROUTING_CONFIG`** — per–cognitive-mode model name strings (defaults: **all modes map to the same tag** as before, so behavior is unchanged until you configure distinct models and pull them in Ollama).
+- **`brain/model_routing.py`**: **`build_model_routing_result`** (conservative task signals from voice, workbench, memory refinement, reflection, contemplation, interpretation, user text heuristics) → **`ModelRoutingResult`** with **`routing_reason`**, **`routing_confidence`**, priorities, **`model_candidates`**, **`continuity_preserved`**. Lightweight **`/api/tags`** awareness with **graceful fallback** (never random; unknown tags → configured fallbacks). Future hooks: **`g["_routing_model_override"]`**, **`g["_routing_cognitive_mode_override"]`**.
+- **`brain/perception_types.py`**: **`ModelRouteCandidate`**, **`CognitiveModeResult`**, **`ModelRoutingResult`**; **`PerceptionPipelineBundle.model_routing`**.
+- **`brain/perception_pipeline.py`**: Runs **after memory refinement**; concise **`[model_routing]`** logs.
+- **`PerceptionState`**: **`cognitive_mode`**, **`routing_selected_model`**, **`routing_fallback_model`**, **`routing_reason`**, **`routing_confidence`**, **`routing_meta`** (priorities + classification signals).
+- **`avaagent.py`**: **`run_ava`** uses **`routing_selected_model`** when it **differs** from **`LLM_MODEL`** (otherwise reuses the shared **`ChatOllama`** instance — **no extra churn** on the default path).
+- **Stability & anti-thrashing**: **stickiness** + **switch cooldown** (tunable) + **social continuity resistance** — the previous effective Ollama tag is kept when the new mode’s **fit gain** is small, the **top-two mode margin** is weak, or the engine was switched very recently; **urgent** coding/reasoning modes and a **strong margin** can bypass cooldown.
+- **Live discovery**: **`/api/tags`** with **`ollama list`** CLI fallback; **capability registry** = `config` **profiles** (`ModelCapabilityProfileDef` + `DEFAULT_MODEL_CAPABILITY_PROFILES`) **∪** any **discovered** tag (neutral profile) **×** `available` bit. **Warm fallbacks** never require a specific name to exist in Ollama; best **fit** among available models is used when the config tag is missing.
+- **Metadata / light inspection**: optional digest from **`/api/show`** (non-blocking) for explainability; full registry slice in **`routing_meta`**.
+
+### Phase 26 — Bounded curiosity & exploration *(live)*
+
+- **Goal**: Notice **anomalies**, **gaps**, and **unfinished threads** with **structured internal questions** and **soft exploration hints** — **no automatic interrogation**, **no tool/file execution**, **no override** of voice turn-taking, workbench approval, or routing safety.
+- **`brain/curiosity.py`**: **`build_curiosity_result_safe`** ingests pattern learning, memory refinement, reflection, contemplation, social continuity, proactive trigger, self-tests, workbench, model routing, identity, interpretation, scene summary — outputs **`CuriosityResult`** with **`exploration_mode`**, **`should_observe` / `should_clarify` / `should_defer`**, **dedup** via **`g["_curiosity_sig_history"]`**, dampening under **voice** or **quiet** preference.
+- **`brain/perception_types.py`**: **`CuriosityQuestion`**, **`ExplorationSuggestion`**, **`CuriosityResult`**; **`PerceptionPipelineBundle.curiosity`**.
+- **`brain/perception_pipeline.py`**: Runs **after model routing**; **`[perception_pipeline] curiosity=...`** log line plus **`[curiosity]`** detail lines (bounded).
+- **`PerceptionState`**: **`curiosity_*`** surface fields + **`curiosity_meta`** (exploration suggestions, boundedness flags, score snapshot).
+
+### Phase 27 — Outcome learning & behavior adjustment *(live)*
+
+- **Goal**: Track **bounded, evidence-backed** hints about **what tended to work vs fail**, **blocked actions**, **suppressed initiative**, **noisy memory routing**, **perception uncertainty**, **voice interruption pressure**, **curiosity churn**, and related patterns — emitting **soft adjustment suggestions only** (**no silent config rewrite**, **no bypass of approvals/safety**, **no autonomous file changes**).
+- **`brain/outcome_learning.py`**: **`build_outcome_learning_result_safe`** merges proactive, workbench globals (`_last_workbench_execution_result` / `_last_workbench_command_result`), self-tests, reflection/contemplation, curiosity meta, routing meta, vision trust, interruption timing, memory refinement/importance — maintains **`g["_outcome_learning_tally"]`** for repetition-weighted confidence.
+- **`brain/perception_types.py`**: **`OutcomeObservation`**, **`BehaviorAdjustmentSuggestion`**, **`OutcomeLearningResult`**; **`PerceptionPipelineBundle.outcome_learning`**.
+- **`brain/perception_pipeline.py`**: Runs **after curiosity**; **`[perception_pipeline] outcome_learning=...`** plus **`[outcome_learning]`** detail lines.
+- **`PerceptionState`**: **`outcome_learning_*`**, **`suggested_behavior_adjustment`**, **`adjustment_confidence`**, **`adjustment_target`**, **`outcome_learning_meta`**.
+
+### Phase 28 — Human-style emotional and conversational nuance *(live)*
+
+- **Goal**: Make interaction feel **more naturally human** via **bounded**, **evidence-based** guidance — **warmth**, **practicality/directness**, **quiet restraint**, **softness**, **seriousness**, **humor tolerance**, **verbosity**, **emotional pacing**, and **restraint** — **without** inventing emotions, **without** rewriting replies in this phase, and **without** unstable personality swings or overrides of safety, approvals, or user control.
+- **`brain/conversational_nuance.py`**: **`build_conversational_nuance_safe`** consumes Phase 22–27 structured outputs (voice **`VoiceConversationResult`** when present, social continuity, reflection, contemplation, proactive suppression, pattern unusualness, interpretation/scene confidence, outcome learning, curiosity, routing meta, memory refinement social relevance, etc.) → **`ConversationalNuanceResult`** + **`ToneGuidanceProfile`**. **Prior-tone blending** and **mixed-evidence penalties** keep shifts conservative; humor/lightness requires **positive aggregate evidence**.
+- **`brain/perception_types.py`**: **`NuanceSignal`**, **`ToneGuidanceProfile`**, **`ConversationalNuanceResult`**; **`PerceptionPipelineBundle.conversational_nuance`**.
+- **`brain/perception_pipeline.py`**: Runs **after outcome learning**, before **`PackageOutput`**; concise **`[perception_pipeline] nuance=... tone=...`** plus **`[conversational_nuance]`** lines (two lines max per turn).
+- **`brain/perception_state_adapter.py`**: **`apply_conversational_nuance_to_perception_state`** in **`_finalize_perception_runtime_context`** **after** **`apply_outcome_learning_to_perception_state`**.
+- **`PerceptionState`**: **`nuance_tone`**, **`nuance_summary`**, **`nuance_confidence`**, scalar levels, **`nuance_meta`** (pacing hint, signal snapshot, tone profile subset) — safe defaults match idle **`ConversationalNuanceResult`** when bundle field is absent.
+
+### Phase 29 — Multi-session strategic continuity *(live)*
+
+- **Goal**: Carry **grounded** cross-session context — **unfinished threads**, **strategic goals**, **maintenance/repair** state, **outcome-learning adjustments**, **relationship/profile** lines, and **style/nuance** hints — as **short structured threads**, not memory dumps. **No** invented continuity, **no** auto workbench actions, **no** prompt bloating.
+- **Identity anchors (primary):** **`ava_core/IDENTITY.md`** (core self), **`ava_core/SOUL.md`** (values / boundaries / self-guidance), **`ava_core/USER.md`** (durable user relationship) load **first** every tick — bounded excerpts as **`identity_anchor_thread`** rows **before** goals / reflection / social layering. **`BOOTSTRAP.md`** is **first-run scaffolding only**: omitted once IDENTITY/SOUL have substantive content. **No** conflicting invented self vs these files — downstream should treat anchors as authoritative over speculative reflection. Runtime **never writes** these files here; IDENTITY/SOUL edits assume **elevated approval**; USER.md **reviewable** flows (see project conventions).
+- **`brain/session_continuity.py`**: **`build_strategic_continuity_safe`** reads **durable** anchors + `state/goal_system.json`, `profiles/<person>.json`, `memory/self reflection/self_model.json` (small slices) and merges **Phase 16–18, 23–28** pipeline results (social continuity, memory refinement link hints, workbench/self-tests, outcome learning, curiosity, nuance, reflection/contemplation when confident).
+- **`brain/perception_types.py`**: **`ContinuityThread`**, **`SessionCarryoverSummary`**, **`StrategicContinuityResult`**; **`PerceptionPipelineBundle.strategic_continuity`**.
+- **`brain/perception_pipeline.py`**: Runs **after conversational nuance**, before **`PackageOutput`**; **`[perception_pipeline] continuity_session=... conf=...`** plus two-line **`[session_continuity]`** cap.
+- **`PerceptionState`**: **`strategic_continuity_summary`**, **`strategic_continuity_confidence`** (distinct from Phase 7 temporal **`continuity_confidence`**), **`active_threads`**, **`strategic_priorities`**, **`relationship_carryover`**, **`maintenance_carryover`**, **`continuity_scope`**, **`continuity_meta`**.
+
+### Phase 30 — Supervised self-improvement loop *(live)*
+
+- **Goal**: One **structured**, **supervised** snapshot linking **self-tests**, **workbench proposals**, **`g`** execution/rollback hooks, **reflection**, **contemplation**, **outcome learning**, and **strategic continuity** — issue → proposal → approval → execution → reflection → carry-forward. **No** auto-approval, **no** auto-execute, **no** bypass of allowlists or elevated rules; **ava_core** identity anchors (Phase 29) remain **above** maintenance framing.
+- **`brain/self_improvement_loop.py`**: **`build_supervised_self_improvement_loop_safe`** → **`ImprovementLoopResult`** with **`ImprovementStepStatus`** stages; concise **`[self_improvement_loop]`** logs and **`[perception_pipeline] improvement_loop=...`**.
+- **`brain/perception_types.py`**: **`ImprovementCycle`**, **`ImprovementLoopResult`**, **`ImprovementStepStatus`**; **`PerceptionPipelineBundle.improvement_loop`**.
+- **`brain/perception_pipeline.py`**: Runs **after strategic continuity**, before **`PackageOutput`**.
+- **`PerceptionState`**: **`improvement_loop_*`** surface fields + **`improvement_loop_meta`** (rollback/await flags, identity-anchor respect bit).
+
+---
+
+## Post-foundation phase index (Phases 21–30) — shipped
+
+Work after Phase 20 **extended** the shipped architecture (calibration, voice, relationship depth, memory quality, routing, curiosity, outcomes, nuance, multi-session strategy, supervised improvement)—**not** a parallel rewrite. The per-phase subsections above are authoritative; this table is an index.
+
+| Phase | Theme |
+|---|---|
+| **21** | **Real-world calibration and tuning** *(live)* — measurement, watchlists, safer iteration on `config/ava_tuning.py` (`brain/calibration.py`) |
+| **22** | **Natural voice conversation and turn-taking** *(live)* — turn state, pause/readiness hints, interruption overlap signals, continuity; record-stop UX (not full streaming) |
+| **23** | **Social continuity and relationship modeling** *(live)* — soft familiarity/tone/style hints, unfinished-thread signal, recurring topics; bounded evidence |
+| **24** | **Long-term memory refinement** *(live)* — refined class/worthy/retention/retrieval + link hints on top of Phase 12; selective, bounded |
+| **25** | **Dynamic cognitive / model routing** *(live)* — switch among **available Ollama models** as different reasoning “brains” while **identity, memory, values, and continuity stay unified** (interchangeable inference layers under one mind) |
+| **26** | **Curiosity and bounded exploration** *(live)* — anomaly / gap awareness, structured internal prompts, non-intrusive exploration hints |
+| **27** | **Outcome learning and behavior adjustment** *(live)* — repeated success/failure pattern hints; **advisory** adjustment signals only — **no automatic behavior override** |
+| **28** | **Human-style emotional and conversational nuance** *(live)* — bounded tone guidance; pacing/restraint; warmth/practicality/seriousness balancing; **no unstable personality swings** |
+| **29** | **Multi-session strategic continuity** *(live)* — unfinished-thread carryover; strategic and maintenance carryover; bounded relationship continuity across sessions; **concise summaries, not memory dumps** |
+| **30** | **Supervised self-improvement loop** *(live)* — issue → proposal → approval → execution → reflection → continuity; **bounded and reviewable**; **no unsafe autonomous override** |
+
+**Phase 2 (Prospective Memory)** and other sections below describe **additive / future** capabilities on top of the completed baseline—not missing phases 1–30.
 
 ### P1-03 — Untrack Legacy `.tmp` Files
 

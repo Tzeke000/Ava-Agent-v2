@@ -433,6 +433,85 @@ class ContemplationConfig:
     priority_failed_silent_bonus: float = 0.12
 
 
+# ---------------------------------------------------------------------------
+# Phase 25 — Ollama model routing (``brain.model_routing``)
+# ---------------------------------------------------------------------------
+# Default: every cognitive mode maps to the **same** tag string so Phase 25 ships with
+# zero behavior change until you deliberately set distinct models here (and pull them in Ollama).
+# Add more :class:`ModelCapabilityProfileDef` rows for each local model you use; the runtime
+# registry is **filtered** by live ``/api/tags`` or ``ollama list`` discovery.
+
+_COGNITIVE_MODES_ALL: tuple[str, ...] = (
+    "social_chat_mode",
+    "deep_reasoning_mode",
+    "coding_repair_mode",
+    "memory_maintenance_mode",
+    "perception_support_mode",
+    "fallback_safe_mode",
+)
+
+
+@dataclass(frozen=True)
+class ModelCapabilityProfileDef:
+    """
+    Declarative capability profile for a model name (tendencies 0..1; lower ``fallback_priority`` = better last-resort).
+    Intentional modes list which cognitive routes this model is a good match for.
+    """
+
+    model_name: str
+    cognitive_modes: tuple[str, ...] = _COGNITIVE_MODES_ALL
+    latency_tendency: float = 0.5
+    reasoning_strength: float = 0.5
+    coding_suitability: float = 0.5
+    summarization_suitability: float = 0.5
+    fallback_priority: int = 100
+
+
+# Default: one neutral profile; extend with more ``ModelCapabilityProfileDef`` for your Ollama pulls.
+DEFAULT_MODEL_CAPABILITY_PROFILES: tuple[ModelCapabilityProfileDef, ...] = (
+    ModelCapabilityProfileDef(
+        model_name="llama3.1:8b",
+        cognitive_modes=_COGNITIVE_MODES_ALL,
+        latency_tendency=0.55,
+        reasoning_strength=0.62,
+        coding_suitability=0.58,
+        summarization_suitability=0.55,
+        fallback_priority=10,
+    ),
+)
+
+
+@dataclass(frozen=True)
+class ModelRoutingConfig:
+    """Per–cognitive-mode preferred models; fallback + global safety net."""
+
+    default_model: str = "llama3.1:8b"
+    social_chat_model: str = "llama3.1:8b"
+    deep_reasoning_model: str = "llama3.1:8b"
+    coding_repair_model: str = "llama3.1:8b"
+    memory_maintenance_model: str = "llama3.1:8b"
+    perception_support_model: str = "llama3.1:8b"
+    # Uncertain classification / conservative path — same default tag unless you tune it.
+    fallback_safe_model: str = "llama3.1:8b"
+    # When preferred + per-mode fallback are missing from Ollama's tag list.
+    global_fallback_model: str = "llama3.1:8b"
+    # Throttle for lightweight ``/api/tags`` polling.
+    ollama_tags_poll_seconds: float = 55.0
+    # --- routing stability (anti-thrashing; identity stays stable via prompts — engine stickiness here)
+    routing_min_switch_gain: float = 0.14
+    """Minimum capability-fit gain required to abandon the previous effective model."""
+    routing_weak_mode_margin_stick: float = 0.095
+    """When top-two cognitive-mode scores are closer than this, prefer staying on current model if viable."""
+    routing_social_stickiness_weight: float = 0.22
+    """Boost switch resistance when relationship context suggests conversational continuity."""
+    routing_switch_cooldown_seconds: float = 8.0
+    """Minimum wall time between engine switches unless bypassed by strong mode margin or urgency."""
+    routing_cooldown_bypass_margin: float = 0.22
+    """If top-two mode score gap exceeds this, cooldown may be bypassed."""
+    routing_suitability_floor: float = 0.38
+    """Minimum profile fit vs active mode for the previous model to be considered still “good enough”."""
+
+
 # Singletons (import these from feature code)
 QUALITY_CONFIG = QualityConfig()
 BLUR_CONFIG = BlurConfig()
@@ -450,6 +529,7 @@ SELFTEST_CONFIG = SelfTestConfig()
 WORKBENCH_CONFIG = WorkbenchConfig()
 REFLECTION_CONFIG = ReflectionConfig()
 CONTEMPLATION_CONFIG = ContemplationConfig()
+MODEL_ROUTING_CONFIG = ModelRoutingConfig()
 
 
 def summarize_tuning_config() -> dict[str, Any]:
@@ -487,5 +567,7 @@ def summarize_tuning_config() -> dict[str, Any]:
         "workbench": _serialize(WORKBENCH_CONFIG),
         "reflection": _serialize(REFLECTION_CONFIG),
         "contemplation": _serialize(CONTEMPLATION_CONFIG),
+        "model_routing": _serialize(MODEL_ROUTING_CONFIG),
+        "model_capability_profiles": [asdict(p) for p in DEFAULT_MODEL_CAPABILITY_PROFILES],
     }
     return out

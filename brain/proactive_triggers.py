@@ -83,6 +83,7 @@ def evaluate_proactive_triggers(
     cont: ContinuityOutput,
     acquisition_freshness: str,
     visual_truth_trusted: bool,
+    voice_user_turn_priority: bool = False,
 ) -> ProactiveTriggerResult:
     """Evaluate proactive trigger recommendation with conservative suppression gates."""
     try:
@@ -97,6 +98,7 @@ def evaluate_proactive_triggers(
             cont=cont,
             acquisition_freshness=acquisition_freshness,
             visual_truth_trusted=visual_truth_trusted,
+            voice_user_turn_priority=voice_user_turn_priority,
         )
     except Exception as e:
         print(f"[proactive_triggers] failed: {e}\n{traceback.format_exc()}")
@@ -127,7 +129,23 @@ def _evaluate_proactive_triggers_inner(
     cont: ContinuityOutput,
     acquisition_freshness: str,
     visual_truth_trusted: bool,
+    voice_user_turn_priority: bool = False,
 ) -> ProactiveTriggerResult:
+    if voice_user_turn_priority:
+        return ProactiveTriggerResult(
+            should_trigger=False,
+            trigger_type="no_trigger",
+            trigger_score=0.0,
+            trigger_priority=0.0,
+            trigger_reason="voice_user_turn_active",
+            suppression_reason="voice_user_turn_priority",
+            suggested_action="wait",
+            caution_flags=["voice_conversational_floor"],
+            supporting_evidence={},
+            candidates=[],
+            meta={"voice_gate": True},
+        )
+
     pm = perception_memory or PerceptionMemoryOutput(event=None, skipped=True, skip_reason="missing_memory_output")
     mi = memory_importance or MemoryImportanceResult()
     pl = pattern_learning or PatternLearningResult()
