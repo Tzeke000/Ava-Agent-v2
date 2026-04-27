@@ -10,7 +10,7 @@
   "likes": [],
   "dislikes": [],
   "ava_impressions": [],
-  "last_seen": "2026-04-26T02:33:57",
+  "last_seen": "2026-04-27T17:31:03",
   "created_at": "2026-04-01T20:47:21",
   "emotion_history": [
     "neutral",
@@ -25,20 +25,11 @@
     "neutral"
   ],
   "dominant_emotion": "neutral",
-  "relationship_score": 0.464,
-  "interaction_count": 12,
-  "last_seen_at": "2026-04-26T02:32:44",
-  "updated_at": "2026-04-26T02:33:57",
+  "relationship_score": 0.503,
+  "interaction_count": 14,
+  "last_seen_at": "2026-04-27T17:19:40",
+  "updated_at": "2026-04-27T17:31:03",
   "threads": [
-    {
-      "id": "bfa55e62-7920-4b2c-850b-7f0d85114ec8",
-      "topic": "ok ive given you a lot of updates so a lot of things have happened to you im gla",
-      "first_mentioned": "2026-04-03T05:19:35",
-      "last_mentioned": "2026-04-03T05:19:35",
-      "emotion": "concerned",
-      "resolved": false,
-      "notes": "ok ive given you a lot of updates so a lot of things have happened to you im glad you're feeling good Ava. im going to do a few more tests before we have some r…"
-    },
     {
       "id": "f037b938-fac5-4287-b300-5b1a60c4af06",
       "topic": "dont be worried Ava youll be better when you wake up",
@@ -52,10 +43,10 @@
       "id": "f177e909-58be-4509-87c0-56f34fdda51e",
       "topic": "lets talk about you or mostly what be can add to make you better",
       "first_mentioned": "2026-04-26T01:25:21",
-      "last_mentioned": "2026-04-26T01:25:21",
-      "emotion": "concerned",
+      "last_mentioned": "2026-04-27T17:15:11",
+      "emotion": "anxious",
       "resolved": false,
-      "notes": "lets talk about you or mostly what be can add to make you better."
+      "notes": "are you still worried about your camera?"
     },
     {
       "id": "56172c8e-303f-4a1f-a192-ebd40c7f2f58",
@@ -137,16 +128,25 @@
       "emotion": "concerned",
       "resolved": false,
       "notes": "ok Goodnight Ava"
+    },
+    {
+      "id": "2e904cf4-0a1d-4c79-b340-b671babe6a78",
+      "topic": "hello Ava how are you feeling?",
+      "first_mentioned": "2026-04-27T17:03:05",
+      "last_mentioned": "2026-04-27T17:03:05",
+      "emotion": "concerned",
+      "resolved": false,
+      "notes": "hello Ava how are you feeling?"
     }
   ],
   "cadence": {
-    "avg_days_between_sessions": 22.8,
+    "avg_days_between_sessions": 12.2,
     "longest_gap_days": 22.8,
-    "total_sessions": 2,
-    "last_gap_days": 22.8,
-    "_gap_count": 1,
-    "_sum_gap_days": 22.8024
+    "total_sessions": 3,
+    "last_gap_days": 1.6,
+    "_gap_count": 2,
+    "_sum_gap_days": 24.4067
   },
-  "last_activity_at": "2026-04-26T02:32:43",
-  "last_topic": "ok Goodnight Ava"
+  "last_activity_at": "2026-04-27T17:27:43",
+  "last_topic": "is that your way of saying yes"
 }

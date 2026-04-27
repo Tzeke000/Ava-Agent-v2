@@ -7793,6 +7793,18 @@ try:
     bootstrap_heartbeat_runtime(globals())
 except Exception as _hb_boot_e:
     print(f"[heartbeat] bootstrap skipped: {_hb_boot_e}")
+try:
+    from brain.runtime_presence import bootstrap_startup_resume
+
+    bootstrap_startup_resume(globals())
+except Exception as _rp_boot_e:
+    print(f"[startup_resume] skipped: {_rp_boot_e}")
+try:
+    from brain.concern_reconciliation import run_startup_concern_reconciliation
+
+    run_startup_concern_reconciliation(globals())
+except Exception as _cr_boot_e:
+    print(f"[concern_reconciliation] startup skipped: {_cr_boot_e}")
 seed_default_profiles()
 _AVA_IDENTITY_BLOCK = load_ava_identity()
 ensure_emotion_reference_file()

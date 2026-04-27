@@ -1,0 +1,61 @@
+{
+  "snapshot_id": "cam_20260427_172942_210082",
+  "timestamp": "2026-04-27T17:29:42",
+  "face_visible": false,
+  "recognized_person_id": null,
+  "recognized_name": "unknown",
+  "recognition_text": "No face detected",
+  "expression_label": "unknown",
+  "expression_confidence": 0.0,
+  "expression_stability": 0.0,
+  "raw_emotion": "unknown",
+  "ava_mood": "calmness",
+  "ava_primary_emotions": [
+    {
+      "name": "calmness",
+      "percent": 95
+    },
+    {
+      "name": "boredom",
+      "percent": 5
+    }
+  ],
+  "ava_dominant_style": "neutral",
+  "ava_behavior_modifiers": {
+    "warmth": 0.367,
+    "humor": 0.1,
+    "assertiveness": 0.329,
+    "caution": 0.203,
+    "initiative": 0.296,
+    "memory_sensitivity": 0.431,
+    "depth": 0.336
+  },
+  "importance": 0.33135000000000003,
+  "kept_permanently": false,
+  "reason_saved": "",
+  "reason_not_saved": "no_face_visible, no_meaningful_change",
+  "comparison_summary": "Something about the scene looks more active than earlier.",
+  "comparison_tags": [
+    "activity_change"
+  ],
+  "transition_summary": "",
+  "transition_tags": [],
+  "trend_summary": "",
+  "trend_tags": [],
+  "trend_tension_delta": 0.0,
+  "trend_calm_delta": 0.0,
+  "trend_engagement_delta": 0.0,
+  "trend_strength": 0.0,
+  "trend_family": "unknown",
+  "trend_persisting": false,
+  "stacked_state": "",
+  "pattern_summary": "",
+  "pattern_tags": [],
+  "interpretation_confidence": 0.12,
+  "transition_strength": 0.1269,
+  "action_confidence": 0.1116,
+  "change_reason": "scene_meaningfully_changed",
+  "rolling_saved": true,
+  "rolling_reason": "scene_meaningfully_changed",
+  "scene_similarity": 0.492
+}

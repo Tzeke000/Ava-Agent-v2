@@ -1,0 +1,11 @@
+{
+  "tick_id": 93,
+  "last_wallclock": 1777325454.991721,
+  "last_rich_learning_ts": 1777325454.991721,
+  "last_digest": "e8611349455db94f",
+  "silence_streak": 0,
+  "last_emit_sig": "314452f0ce755459",
+  "meta": {
+    "route_fallback_streak": 93
+  }
+}
