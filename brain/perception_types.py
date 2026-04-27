@@ -36,6 +36,7 @@ Downstream code adapts a :class:`PerceptionPipelineBundle` to :class:`perception
 - **Phase 28 conversational nuance** — :class:`NuanceSignal`, :class:`ToneGuidanceProfile`, :class:`ConversationalNuanceResult`; ``brain.conversational_nuance`` (bounded tone/pacing/restraint guidance — no direct response rewrite).
 - **Phase 29 multi-session continuity** — :class:`ContinuityThread`, :class:`SessionCarryoverSummary`, :class:`StrategicContinuityResult`; ``brain.session_continuity`` (bounded carryover; **ava_core/** ``IDENTITY.md`` / ``SOUL.md`` / ``USER.md`` read first as authoritative anchors — read-only here; ``BOOTSTRAP.md`` omitted once core identity is established).
 - **Phase 30 supervised self-improvement loop** — :class:`ImprovementCycle`, :class:`ImprovementLoopResult`, :class:`ImprovementStepStatus`; ``brain.self_improvement_loop`` (issue → proposal → approval → execution → reflection — **descriptive only**, no auto-approve/execute).
+- **Phase 31 heartbeat & adaptive learning** — :class:`HeartbeatEvent`, :class:`HeartbeatState`, :class:`HeartbeatTickResult`, :class:`AdaptiveLearningResult`; ``brain.heartbeat``, ``brain.adaptive_learning`` (quiet background continuity + bounded preference updates — **no** safety/approval bypass).
 """
 from __future__ import annotations
 
@@ -1090,6 +1091,74 @@ class ImprovementLoopResult:
     suggested_next_supervised_step: str = ""
     loop_confidence: float = 0.0
     cycles: list[ImprovementCycle] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+# --- Phase 31 — heartbeat runtime & bounded adaptive learning ---
+
+
+class HeartbeatMode:
+    """Soft operational modes for :class:`HeartbeatTickResult` (Phase 31)."""
+
+    IDLE_MONITORING = "idle_monitoring"
+    ACTIVE_PRESENCE = "active_presence"
+    CONVERSATION_ACTIVE = "conversation_active"
+    MAINTENANCE_WATCH = "maintenance_watch"
+    LEARNING_REVIEW = "learning_review"
+    QUIET_RECOVERY = "quiet_recovery"
+    NO_HEARTBEAT = "no_heartbeat"
+
+
+@dataclass
+class HeartbeatEvent:
+    """One heartbeat-relevant observation (bounded, descriptive)."""
+
+    kind: str = ""
+    detail: str = ""
+    significance: float = 0.0
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class HeartbeatState:
+    """Persisted heartbeat cadence counters (Phase 31)."""
+
+    tick_id: int = 0
+    last_wallclock: float = 0.0
+    last_rich_learning_ts: float = 0.0
+    last_digest: str = ""
+    silence_streak: int = 0
+    last_emit_sig: str = ""
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class HeartbeatTickResult:
+    """One heartbeat cycle snapshot — lightweight background continuity."""
+
+    heartbeat_active: bool = False
+    heartbeat_tick_id: int = 0
+    heartbeat_mode: str = HeartbeatMode.NO_HEARTBEAT
+    last_tick_time: float = 0.0
+    tick_reason: str = ""
+    important_state_change: bool = False
+    suggested_action: str = ""
+    should_remain_silent: bool = True
+    heartbeat_summary: str = ""
+    events: list[HeartbeatEvent] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AdaptiveLearningResult:
+    """Bounded adaptive preference adjustments — evidence-weighted, no safety rewrite."""
+
+    learning_update_applied: bool = False
+    learning_focus: str = ""
+    learning_summary: str = ""
+    learning_confidence: float = 0.0
     notes: list[str] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
 
