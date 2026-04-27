@@ -19,11 +19,14 @@ from typing import Any, Optional
 
 from .perception_types import (
     CuriosityResult,
+    HeartbeatCarryoverState,
     HeartbeatEvent,
     HeartbeatMode,
     HeartbeatState,
     HeartbeatTickResult,
     ImprovementLoopResult,
+    MemoryRefinementResult,
+    ModelRoutingResult,
     OutcomeLearningResult,
     SelfTestRunResult,
     SocialContinuityResult,
@@ -129,6 +132,30 @@ def bootstrap_heartbeat_runtime(g: dict[str, Any]) -> None:
         g["_heartbeat_boot_logged"] = True
 
 
+def _workbench_runtime_digest(g: dict[str, Any]) -> str:
+    return _digest(
+        f"{str(g.get('_last_workbench_execution_result'))[:800]}"
+        f"|{str(g.get('_last_workbench_command_result'))[:800]}"
+        f"|{str(g.get('_workbench_operator_approved_proposal_id') or '')}"
+    )
+
+
+def _update_route_fallback_streak(st: HeartbeatState, route: Optional[ModelRoutingResult]) -> int:
+    if route is None:
+        return int(st.meta.get("route_fallback_streak", 0) or 0)
+    sel = (str(getattr(route, "selected_model", "") or "")).strip()
+    fb = (str(getattr(route, "fallback_model", "") or "")).strip()
+    cont = bool(getattr(route, "continuity_preserved", True))
+    streak = int(st.meta.get("route_fallback_streak", 0) or 0)
+    using_fallback = bool(fb and sel and sel == fb)
+    if using_fallback or not cont:
+        streak += 1
+    else:
+        streak = 0
+    st.meta["route_fallback_streak"] = streak
+    return streak
+
+
 def _voice_snapshot(g: dict[str, Any]) -> tuple[str, bool, bool, str]:
     vc = g.get("_voice_conversation")
     if vc is None:
@@ -167,6 +194,8 @@ def _select_mode(
     improvement_loop: Optional[ImprovementLoopResult],
     social_continuity: Optional[SocialContinuityResult],
     outcome_learning: Optional[OutcomeLearningResult],
+    memory_refinement: Optional[MemoryRefinementResult],
+    route_fallback_streak: int,
 ) -> tuple[str, list[HeartbeatEvent], float]:
     events: list[HeartbeatEvent] = []
     urgency = 0.0
@@ -210,10 +239,35 @@ def _select_mode(
         return HeartbeatMode.MAINTENANCE_WATCH, events, max(urgency, 0.58)
 
     soc = social_continuity
-    if soc is not None and float(getattr(soc, "quiet_preference_signal", 0.5) or 0.5) >= 0.66:
-        events.append(HeartbeatEvent(kind="quiet_preference", detail="elevated_quiet_signal", significance=0.42))
-        if ut == "":
-            return HeartbeatMode.QUIET_RECOVERY, events, 0.38
+    if soc is not None:
+        if bool(getattr(soc, "unfinished_thread_present", False)):
+            events.append(
+                HeartbeatEvent(kind="unfinished_thread_social", detail="open_thread_signal", significance=0.48)
+            )
+            urgency = max(urgency, 0.42)
+        if float(getattr(soc, "quiet_preference_signal", 0.5) or 0.5) >= 0.66:
+            events.append(
+                HeartbeatEvent(kind="quiet_preference", detail="elevated_quiet_signal", significance=0.42)
+            )
+            if ut == "":
+                return HeartbeatMode.QUIET_RECOVERY, events, 0.38
+
+    mref = memory_refinement
+    if mref is not None and bool(getattr(mref.decision, "unfinished_thread_candidate", False)):
+        events.append(
+            HeartbeatEvent(kind="memory_unfinished_thread", detail="refinement_candidate", significance=0.5)
+        )
+        urgency = max(urgency, 0.44)
+
+    if route_fallback_streak >= 2:
+        events.append(
+            HeartbeatEvent(
+                kind="routing_recurrence",
+                detail=f"fallback_streak={route_fallback_streak}",
+                significance=_clamp01(0.34 + 0.08 * min(route_fallback_streak, 8)),
+            )
+        )
+        urgency = max(urgency, 0.48)
 
     sc = strategic_continuity
     if sc is not None:
@@ -271,6 +325,8 @@ def run_heartbeat_tick_safe(
     outcome_learning: Optional[OutcomeLearningResult],
     improvement_loop: Optional[ImprovementLoopResult],
     social_continuity: Optional[SocialContinuityResult],
+    model_routing: Optional[ModelRoutingResult] = None,
+    memory_refinement: Optional[MemoryRefinementResult] = None,
 ) -> HeartbeatTickResult:
     try:
         return _run_heartbeat_tick(
@@ -283,6 +339,8 @@ def run_heartbeat_tick_safe(
             outcome_learning=outcome_learning,
             improvement_loop=improvement_loop,
             social_continuity=social_continuity,
+            model_routing=model_routing,
+            memory_refinement=memory_refinement,
         )
     except Exception as e:
         print(f"[heartbeat] tick failed: {e}\n{traceback.format_exc()}")
@@ -306,6 +364,8 @@ def _run_heartbeat_tick(
     outcome_learning: Optional[OutcomeLearningResult],
     improvement_loop: Optional[ImprovementLoopResult],
     social_continuity: Optional[SocialContinuityResult],
+    model_routing: Optional[ModelRoutingResult],
+    memory_refinement: Optional[MemoryRefinementResult],
 ) -> HeartbeatTickResult:
     if g.get("_heartbeat_disabled"):
         return HeartbeatTickResult(
@@ -321,6 +381,8 @@ def _run_heartbeat_tick(
     now = time.time()
     st.tick_id += 1
 
+    route_streak = _update_route_fallback_streak(st, model_routing)
+
     force = bool(g.get("_heartbeat_force_tick"))
     event_hint = str(g.pop("_heartbeat_event_reason", "") or "").strip()
 
@@ -334,6 +396,8 @@ def _run_heartbeat_tick(
         improvement_loop=improvement_loop,
         social_continuity=social_continuity,
         outcome_learning=outcome_learning,
+        memory_refinement=memory_refinement,
+        route_fallback_streak=route_streak,
     )
 
     # Scheduled learning-review mode when not conversing / not maintenance
@@ -371,7 +435,19 @@ def _run_heartbeat_tick(
     sc_sig = ""
     if strategic_continuity is not None:
         sc_sig = str(strategic_continuity.session_carryover.headline or "")[:160]
-    sig = _digest(f"{st_test}|{wb_sig}|{sc_sig}|{mode}")
+    route_sig = ""
+    if model_routing is not None:
+        route_sig = (
+            f"{getattr(model_routing, 'selected_model', '')}:"
+            f"{getattr(model_routing, 'fallback_model', '')}:"
+            f"{getattr(model_routing, 'continuity_preserved', True)}"
+        )
+    mr_sig = ""
+    if memory_refinement is not None:
+        d = memory_refinement.decision
+        mr_sig = f"{bool(getattr(d, 'unfinished_thread_candidate', False))}:{float(getattr(d, 'retrieval_priority', 0)):.2f}"
+    g_wb = _workbench_runtime_digest(g)
+    sig = _digest(f"{st_test}|{wb_sig}|{sc_sig}|{route_sig}|{mr_sig}|{g_wb}|{mode}")
     important = sig != (st.last_digest or "") or force or bool(event_hint)
     if event_hint:
         events.insert(0, HeartbeatEvent(kind="operator", detail=event_hint, significance=0.75))
@@ -430,12 +506,24 @@ def _run_heartbeat_tick(
 
     st.last_wallclock = now
 
+    carry = HeartbeatCarryoverState(
+        last_recorded_mode=mode,
+        strategic_headline_digest=_digest(sc_sig),
+        model_route_fallback_streak=route_streak,
+        last_selected_model=str(getattr(model_routing, "selected_model", "") or "") if model_routing else "",
+        last_fallback_model=str(getattr(model_routing, "fallback_model", "") or "") if model_routing else "",
+        workbench_signal_digest=g_wb,
+        tick_id_at_snapshot=st.tick_id,
+        meta={"identity_anchors_read_only": True},
+    )
+
     meta = {
         "urgency": urg,
         "gap_seconds": gap,
         "due_rich": due_rich,
         "respect_identity_anchors": True,
         "identity_files_write_prohibited": True,
+        "route_fallback_streak": route_streak,
     }
 
     result = HeartbeatTickResult(
@@ -448,6 +536,7 @@ def _run_heartbeat_tick(
         suggested_action=_trunc(suggested, 200),
         should_remain_silent=bool(should_silent),
         heartbeat_summary=_trunc(f"{mode}; {summary}" if due_rich else f"{mode}; quiet", 320),
+        carryover=carry,
         events=events[:12],
         notes=[],
         meta=meta,
@@ -470,8 +559,11 @@ def _run_heartbeat_tick(
     if log_it:
         print(
             f"[heartbeat] mode={mode} reason={tick_reason} active=True "
-            f"tick={st.tick_id} important={bool(important and due_rich)} silent={should_silent}"
+            f"tick={st.tick_id} important_change={'yes' if important and due_rich else 'no'} "
+            f"silent={should_silent}"
         )
+    elif important and due_rich:
+        print(f"[heartbeat] important_change=yes silent={should_silent} mode={mode}")
     if important and due_rich and mode == HeartbeatMode.MAINTENANCE_WATCH:
         print(
             f"[heartbeat] important_change=yes maintenance signals present "
@@ -506,4 +598,16 @@ def apply_heartbeat_to_perception_state(state: Any, bundle: Any) -> None:
         for e in list(hb.events or [])[:10]
     ]
     m["notes"] = list(hb.notes or [])[:8]
+    co = getattr(hb, "carryover", None)
+    if co is not None:
+        m["carryover"] = {
+            "last_recorded_mode": co.last_recorded_mode,
+            "strategic_headline_digest": co.strategic_headline_digest,
+            "model_route_fallback_streak": co.model_route_fallback_streak,
+            "last_selected_model": co.last_selected_model[:120],
+            "last_fallback_model": co.last_fallback_model[:120],
+            "workbench_signal_digest": co.workbench_signal_digest[:48],
+            "tick_id_at_snapshot": co.tick_id_at_snapshot,
+            "meta": dict(co.meta or {}),
+        }
     state.heartbeat_meta = m

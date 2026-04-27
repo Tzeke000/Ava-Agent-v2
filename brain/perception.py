@@ -297,6 +297,21 @@ class PerceptionState:
     learning_focus: str = ""
     learning_summary: str = ""
     learning_confidence: float = 0.0
+    learning_preference_shifts: list[dict[str, Any]] = field(default_factory=list)
+    # Phase 32 — runtime presence / operator snapshot (descriptive)
+    runtime_presence_mode: str = "unknown"
+    runtime_ready_state: str = "steady"
+    runtime_active_issue_summary: str = ""
+    runtime_threads_summary: str = ""
+    runtime_maintenance_summary: str = ""
+    runtime_learning_summary: str = ""
+    runtime_operator_summary: str = ""
+    runtime_presence_meta: dict[str, Any] = field(default_factory=dict)
+    # Concern reconciliation (startup/runtime registry vs current evidence; advisory)
+    active_concern_count: int = 0
+    top_active_concern: str = ""
+    concern_reconciliation_summary: str = ""
+    concern_reconciliation_meta: dict[str, Any] = field(default_factory=dict)
 
 
 def _compute_salience(state: PerceptionState) -> float:
