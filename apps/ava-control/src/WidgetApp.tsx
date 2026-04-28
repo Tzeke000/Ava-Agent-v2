@@ -100,6 +100,11 @@ export default function WidgetApp() {
   const [emotion, emotionColor] = getEmotion(snap);
   const orbState = getState(snap, online);
 
+  // Phase 49: pointer morph when Ava is pointing at something
+  const widgetBlock = snap?.widget as Record<string, unknown> | undefined;
+  const isPointing = Boolean(widgetBlock?.pointing);
+  const shapeOverride = isPointing ? "pointer" : undefined;
+
   return (
     <div
       data-tauri-drag-region
@@ -117,6 +122,7 @@ export default function WidgetApp() {
         emotionColor={emotionColor}
         state={orbState}
         size={150}
+        shapeOverride={shapeOverride}
       />
     </div>
   );
