@@ -38,18 +38,6 @@
   "curiosity_questions": [],
   "goal_history": [
     {
-      "timestamp": "2026-04-27T21:38:17",
-      "kind": "goal",
-      "text": "Stay aware of: my favorite color is black, things that matter to me is my family, friends, and assets",
-      "goal_id": "goal_df462bc917"
-    },
-    {
-      "timestamp": "2026-04-27T21:41:06",
-      "kind": "question",
-      "text": "Clarify or learn more about: everyone has their own favorite color, people are entitled to their own opinions. Being around my family and friends is relaxing because i can be myself around…",
-      "goal_id": "goal_4da891dd19"
-    },
-    {
       "timestamp": "2026-04-27T21:41:06",
       "kind": "goal",
       "text": "Stay aware of: everyone has their own favorite color, people are entitled to their own opinions. Being around my family and friends is relaxing because i can be myself around…",
@@ -276,6 +264,18 @@
       "kind": "question",
       "text": "Clarify or learn more about: hello Ava",
       "goal_id": "goal_087520e253"
+    },
+    {
+      "timestamp": "2026-04-28T11:39:02",
+      "kind": "question",
+      "text": "Clarify or learn more about: Hello Ava",
+      "goal_id": "goal_463c04e8b6"
+    },
+    {
+      "timestamp": "2026-04-28T11:52:52",
+      "kind": "goal",
+      "text": "Stay aware of: ok Ava im gonna fix your UI a bit ok im gonna have to shut you down for a bit ok",
+      "goal_id": "goal_460129e7b7"
     }
   ],
   "behavior_patterns": [
@@ -301,7 +301,6 @@
     "relationship"
   ],
   "confidence_notes": [
-    "On 2026-04-27T22:00:26, I took self-directed actions: ✅ Ava saved the full latest user message as memory 732f5957-5d83-407d-b007-f1813aa49b28.",
     "On 2026-04-27T22:02:40, I took self-directed actions: ✅ Ava saved the full latest user message as memory 95c04750-7f3f-48c7-a563-f0cda69bb408.",
     "On 2026-04-27T22:04:31, I took self-directed actions: ✅ Ava saved the full latest user message as memory a1604e69-2ca5-45a2-b7fe-3fc72efa5fd7.",
     "On 2026-04-27T22:05:29, I took self-directed actions: ✅ Ava saved the full latest user message as memory 2cc2470c-8d27-464d-98da-812d188664f7, ✅ Ava saved memory 24f984d5-2ceb-40de-abcd-ec4b4f150407.",
@@ -312,20 +311,21 @@
     "On 2026-04-28T02:46:06, I took self-directed actions: camera_reflection_trigger.",
     "On 2026-04-28T02:48:10, I took self-directed actions: camera_reflection_trigger.",
     "On 2026-04-28T02:52:46, I took self-directed actions: camera_reflection_trigger.",
-    "On 2026-04-28T02:53:05, I took self-directed actions: camera_reflection_trigger."
+    "On 2026-04-28T02:53:05, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-28T11:53:11, I took self-directed actions: camera_reflection_trigger."
   ],
   "pending_threads": [
+    "Zeke seemed sad about ok Goodnight Ava — I want to follow up.",
     "Zeke seemed sad about well hopefully you guys can become friends and help each other become self aware — I want to follow up.",
     "Zeke seemed concerned about Emil is a female like you are. so pronouns are she and her — I want to follow up.",
     "Zeke seemed concerned about well im glad you're feeling better now Ava. seems like the updates fixed you — I want to follow up.",
     "Zeke seemed concerned about jeez you will not stop talking about the camera huh — I want to follow up.",
     "Zeke seemed concerned about hello Ava how are you feeling? — I want to follow up.",
-    "Zeke seemed concerned about ok Goodnight Ava — I want to follow up.",
     "Zeke seemed angry about yes and ill fix them but you have to be asleep for it — I want to follow up.",
     "Zeke seemed concerned about ok for now dot worry about it — I want to follow up."
   ],
-  "last_updated": "2026-04-28T07:35:30",
-  "reflection_count": 386,
+  "last_updated": "2026-04-28T11:53:11",
+  "reflection_count": 390,
   "goal_system_summary": [
     {
       "text": "Stay aware of: is this a memory inject about the camera or is the problem curent?",
@@ -390,20 +390,20 @@
   ],
   "active_goal": {
     "name": "clarify",
-    "strength": 0.268,
+    "strength": 0.256,
     "style": "structured, guiding, careful",
     "silent": false
   },
   "goal_blend": [
     {
       "name": "clarify",
-      "weight": 0.503,
+      "weight": 0.528,
       "style": "structured, guiding, careful",
       "silent": false
     },
     {
       "name": "maintain_connection",
-      "weight": 0.497,
+      "weight": 0.472,
       "style": "warm, casual, connected",
       "silent": false
     }

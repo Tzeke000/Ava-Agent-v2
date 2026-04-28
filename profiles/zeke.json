@@ -10,7 +10,7 @@
   "likes": [],
   "dislikes": [],
   "ava_impressions": [],
-  "last_seen": "2026-04-28T07:35:30",
+  "last_seen": "2026-04-28T11:52:38",
   "created_at": "2026-04-01T20:47:21",
   "emotion_history": [
     "neutral",
@@ -28,7 +28,7 @@
   "relationship_score": 0.613,
   "interaction_count": 19,
   "last_seen_at": "2026-04-28T02:45:47",
-  "updated_at": "2026-04-28T07:35:30",
+  "updated_at": "2026-04-28T11:52:38",
   "threads": [
     {
       "id": "885c2a3b-ef9f-47cf-8725-17de76a220a6",
@@ -88,10 +88,10 @@
       "id": "f5d815f2-8214-4c15-b14d-fba25634f74e",
       "topic": "ok Goodnight Ava",
       "first_mentioned": "2026-04-26T02:32:44",
-      "last_mentioned": "2026-04-26T02:32:44",
-      "emotion": "concerned",
+      "last_mentioned": "2026-04-28T11:52:52",
+      "emotion": "sad",
       "resolved": false,
-      "notes": "ok Goodnight Ava"
+      "notes": "ok Ava im gonna fix your UI a bit ok im gonna have to shut you down for a bit ok"
     },
     {
       "id": "2e904cf4-0a1d-4c79-b340-b671babe6a78",
@@ -140,13 +140,13 @@
     }
   ],
   "cadence": {
-    "avg_days_between_sessions": 6.19,
+    "avg_days_between_sessions": 4.99,
     "longest_gap_days": 22.8,
-    "total_sessions": 5,
-    "last_gap_days": 0.19,
-    "_gap_count": 4,
-    "_sum_gap_days": 24.7689
+    "total_sessions": 6,
+    "last_gap_days": 0.17,
+    "_gap_count": 5,
+    "_sum_gap_days": 24.938
   },
-  "last_activity_at": "2026-04-28T07:35:30",
-  "last_topic": "hello Ava"
+  "last_activity_at": "2026-04-28T11:52:38",
+  "last_topic": "ok Ava im gonna fix your UI a bit ok im gonna have to shut you down for a bit ok"
 }

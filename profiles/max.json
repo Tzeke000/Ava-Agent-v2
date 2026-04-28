@@ -7,7 +7,7 @@
   "likes": [],
   "dislikes": [],
   "ava_impressions": [],
-  "last_seen": "2026-04-27T21:49:15",
+  "last_seen": "2026-04-28T11:41:52",
   "relationship_score": 0.3,
   "interaction_count": 0,
   "last_seen_at": null,
@@ -24,12 +24,14 @@
     }
   ],
   "cadence": {
-    "avg_days_between_sessions": 0.0,
-    "longest_gap_days": 0.0,
-    "total_sessions": 1,
-    "last_gap_days": 0.0
+    "avg_days_between_sessions": 0.58,
+    "longest_gap_days": 0.58,
+    "total_sessions": 2,
+    "last_gap_days": 0.58,
+    "_gap_count": 1,
+    "_sum_gap_days": 0.5816
   },
-  "last_activity_at": "2026-04-27T21:44:19",
+  "last_activity_at": "2026-04-28T11:41:52",
   "emotion_history": [
     "neutral",
     "neutral",
@@ -43,6 +45,6 @@
     "neutral"
   ],
   "dominant_emotion": "neutral",
-  "updated_at": "2026-04-27T21:49:15",
-  "last_topic": "it just helps me relax"
+  "updated_at": "2026-04-28T11:41:52",
+  "last_topic": "Ava list the files in your workbench folder"
 }

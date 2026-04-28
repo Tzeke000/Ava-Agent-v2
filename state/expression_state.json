@@ -4,9 +4,9 @@
   "raw_emotion": "unknown",
   "confidence": 0.0,
   "stability": 0.0,
-  "visible_face": false,
+  "visible_face": true,
   "recognized_person_id": null,
   "history": [],
-  "last_updated": "2026-04-28T07:35:31",
-  "note": "Vision stabilizing — expression not treated as a current read"
+  "last_updated": "2026-04-28T11:53:02",
+  "note": "Expression unavailable: subprocess_error"
 }

@@ -1,6 +1,6 @@
 {
   "last_face_seen_ts": 1777359185.7465043,
-  "last_interaction_ts": 1777376120.8117976,
+  "last_interaction_ts": 1777391509.6201928,
   "last_initiation_ts": 1775208465.9840045,
   "last_initiation_message": "Hey Zeke! Good to have you back. How's everything going?",
   "last_initiated_topic": "return_greeting",
@@ -107,8 +107,8 @@
     }
   ],
   "consecutive_ignored_initiations": 0,
-  "last_user_message_length": 9,
-  "last_user_response_brief": true,
+  "last_user_message_length": 80,
+  "last_user_response_brief": false,
   "interaction_energy": 0.95,
   "face_visible": false,
   "face_left_at": "2026-04-28T07:30:49",

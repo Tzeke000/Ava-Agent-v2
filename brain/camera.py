@@ -142,6 +142,14 @@ class CameraManager:
             else:
                 source = "live"
                 live_used = True
+                # Keep a consistent RGB convention for higher-level UI/camera paths.
+                # Live OpenCV reads are BGR by default; callers that serialize with
+                # RGB->BGR conversion expect RGB input.
+                try:
+                    if hasattr(frame, "shape") and len(frame.shape) == 3 and int(frame.shape[2]) >= 3:
+                        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                except Exception:
+                    pass
                 frame_age_ms = max(0.0, (t_wall - float(cap_ts)) * 1000.0)
                 # Prefer store classification; re-classify if wall age drifted vs meta.age_sec
                 acquisition_freshness = classify_acquisition_freshness(

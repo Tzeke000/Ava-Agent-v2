@@ -1,10 +1,10 @@
 {
-  "snapshot_id": "cam_20260428_025304_568080",
-  "timestamp": "2026-04-28T02:53:04",
+  "snapshot_id": "cam_20260428_115310_948474",
+  "timestamp": "2026-04-28T11:53:10",
   "face_visible": true,
-  "recognized_person_id": "zeke",
-  "recognized_name": "Zeke",
-  "recognition_text": "Recognized: Zeke (63.4)",
+  "recognized_person_id": null,
+  "recognized_name": "unknown",
+  "recognition_text": "Unknown face (71.9)",
   "expression_label": "unknown",
   "expression_confidence": 0.0,
   "expression_stability": 0.0,
@@ -12,33 +12,35 @@
   "ava_mood": "calmness",
   "ava_primary_emotions": [
     {
-      "name": "calmness",
-      "percent": 90
+      "name": "interest",
+      "percent": 52
     },
     {
-      "name": "boredom",
-      "percent": 10
+      "name": "calmness",
+      "percent": 48
     }
   ],
-  "ava_dominant_style": "neutral",
+  "ava_dominant_style": "focused",
   "ava_behavior_modifiers": {
-    "warmth": 0.359,
-    "humor": 0.1,
-    "assertiveness": 0.328,
-    "caution": 0.2,
-    "initiative": 0.281,
-    "memory_sensitivity": 0.423,
-    "depth": 0.331
+    "warmth": 0.388,
+    "humor": 0.211,
+    "assertiveness": 0.345,
+    "caution": 0.22,
+    "initiative": 0.431,
+    "memory_sensitivity": 0.443,
+    "depth": 0.336
   },
-  "importance": 0.88035,
+  "importance": 0.76395,
   "kept_permanently": true,
-  "reason_saved": "face_visible, known_person_visible, person_changed, novel_view, goal_relevance, owner_present",
+  "reason_saved": "face_visible, unknown_face_visible, visibility_changed, novel_view, time_gap, goal_relevance",
   "reason_not_saved": "",
-  "comparison_summary": "",
-  "comparison_tags": [],
-  "transition_summary": "The visible identity looks clearer now — I think it's Zeke now.",
+  "comparison_summary": "Something about the scene looks more active than earlier.",
+  "comparison_tags": [
+    "activity_change"
+  ],
+  "transition_summary": "You just came back into view.",
   "transition_tags": [
-    "identity_resolved"
+    "returned_to_view"
   ],
   "trend_summary": "",
   "trend_tags": [],
@@ -49,15 +51,13 @@
   "trend_family": "unknown",
   "trend_persisting": false,
   "stacked_state": "",
-  "pattern_summary": "The same visible person has remained at the screen for a sustained stretch.",
-  "pattern_tags": [
-    "sustained_presence"
-  ],
-  "interpretation_confidence": 0.5953,
-  "transition_strength": 0.2894,
-  "action_confidence": 0.4926,
-  "change_reason": "face_visible, known_person_visible, person_changed, novel_view, goal_relevance, owner_present",
+  "pattern_summary": "",
+  "pattern_tags": [],
+  "interpretation_confidence": 0.6177,
+  "transition_strength": 0.279,
+  "action_confidence": 0.5073,
+  "change_reason": "face_visible, unknown_face_visible, visibility_changed, novel_view, time_gap, goal_relevance",
   "rolling_saved": true,
   "rolling_reason": "important_event",
-  "scene_similarity": 0.443
+  "scene_similarity": 0.422
 }

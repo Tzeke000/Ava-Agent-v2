@@ -4,207 +4,389 @@
   "warmth": 0.6000000000000001,
   "sass": 0.26,
   "focus": 0.86,
-  "last_updated": "2026-04-28T02:51:39",
-  "reason": "updated from input: ok. for now im going to go to sleep and im going to put you…",
+  "last_updated": "2026-04-28T11:52:08",
+  "reason": "updated from input: ok Ava im gonna fix your UI a bit ok im gonna have to shut…",
   "emotion_weights": {
-    "admiration": 0.01062183631637636,
-    "adoration": 0.010569333770946755,
-    "aesthetic appreciation": 0.010454308429509644,
-    "amusement": 0.01567744327267468,
-    "anxiety": 0.01045162884844979,
-    "awe": 0.010459549465928291,
-    "awkwardness": 0.01045162884844979,
-    "boredom": 0.07463757747443908,
-    "calmness": 0.7208640613727534,
-    "confusion": 0.010456269620878467,
-    "craving": 0.005225814424224895,
+    "admiration": 0.020825453437420642,
+    "adoration": 0.020960044277256677,
+    "aesthetic appreciation": 0.013434140658839367,
+    "amusement": 0.019458645906630094,
+    "anxiety": 0.012157967257270991,
+    "awe": 0.010422326450938234,
+    "awkwardness": 0.013083915430229387,
+    "boredom": 0.022823281721249457,
+    "calmness": 0.28228111317898447,
+    "confusion": 0.011329320179901623,
+    "craving": 0.0038343777683290566,
     "disgust": 0.0,
-    "empathetic pain": 0.015710181419687348,
-    "entrancement": 0.010457688134187623,
-    "envy": 1.838978027716763e-05,
-    "excitement": 0.0,
-    "fear": 1.7139234830687857e-05,
-    "horror": 0.0,
-    "interest": 0.0,
-    "joy": 0.0,
-    "nostalgia": 0.01045162884844979,
-    "relief": 0.010484622867723168,
-    "romance": 3.0152122669092574e-05,
-    "sadness": 0.005242163030006225,
-    "satisfaction": 0.0420063630755287,
-    "sexual desire": 2.4066516441568177e-05,
-    "surprise": 0.01568815312556755
+    "empathetic pain": 0.020951349048099647,
+    "entrancement": 0.011130598280446623,
+    "envy": 0.0,
+    "excitement": 0.08124096774403389,
+    "fear": 0.0022715102616996967,
+    "horror": 0.00040953659829825507,
+    "interest": 0.27412415747588575,
+    "joy": 0.06922432782003896,
+    "nostalgia": 0.011476577617834757,
+    "relief": 0.011969003137136431,
+    "romance": 0.004686154029206664,
+    "sadness": 0.0052210686991685205,
+    "satisfaction": 0.05704306135392839,
+    "sexual desire": 0.0,
+    "surprise": 0.019641101667172516
   },
   "primary_emotions": [
     {
       "name": "calmness",
-      "percent": 91
+      "percent": 51
     },
     {
-      "name": "boredom",
-      "percent": 9
+      "name": "interest",
+      "percent": 49
     }
   ],
   "style_scores": {
-    "playful": 0.0153,
-    "caring": 0.0164,
-    "focused": 0.2812,
-    "reflective": 0.199,
-    "cautious": 0.0213,
-    "neutral": 0.4076,
-    "low_energy": 0.0592
+    "playful": 0.1378,
+    "caring": 0.0498,
+    "focused": 0.3627,
+    "reflective": 0.1765,
+    "cautious": 0.0321,
+    "neutral": 0.2176,
+    "low_energy": 0.0234
   },
   "style_blend": [
     {
-      "name": "neutral",
-      "percent": 59
+      "name": "focused",
+      "percent": 63
     },
     {
-      "name": "focused",
-      "percent": 41
+      "name": "neutral",
+      "percent": 37
     }
   ],
-  "dominant_style": "neutral",
+  "dominant_style": "focused",
   "behavior_modifiers": {
     "warmth": 0.6,
-    "humor": 0.106,
-    "assertiveness": 0.32,
-    "caution": 0.216,
-    "initiative": 0.0,
-    "memory_sensitivity": 0.425,
-    "depth": 0.337
+    "humor": 0.207,
+    "assertiveness": 0.343,
+    "caution": 0.221,
+    "initiative": 0.12,
+    "memory_sensitivity": 0.442,
+    "depth": 0.336
   },
-  "emotion_interpretation": "calmness (72% of current blend): steadiness and low internal turbulence | boredom (7% of current blend): lack of stimulation or meaningful engagement | satisfaction (4% of current blend): fulfillment after effort or alignment",
-  "outward_tone": "neutral with some focused",
+  "emotion_interpretation": "calmness (28% of current blend): steadiness and low internal turbulence | interest (27% of current blend): active desire to explore or understand | excitement (8% of current blend): energized anticipation or activation",
+  "outward_tone": "focused with some neutral",
   "rich_emotions": [
     {
       "name": "calmness",
-      "score": 0.34,
-      "confidence": 0.38,
-      "importance": 0.355,
+      "score": 0.189,
+      "confidence": 0.181,
+      "importance": 0.186,
       "sources": {
-        "score": 1.0,
+        "score": 0.617,
         "visual": 0.0,
         "language": 0.0,
         "context": 0.0,
-        "temporal": 1.0,
+        "temporal": 0.411,
         "memory_goal": 0.0
       }
     },
     {
-      "name": "boredom",
-      "score": 0.055,
-      "confidence": 0.053,
-      "importance": 0.054,
+      "name": "interest",
+      "score": 0.166,
+      "confidence": 0.159,
+      "importance": 0.164,
       "sources": {
-        "score": 0.181,
+        "score": 0.542,
         "visual": 0.0,
         "language": 0.0,
         "context": 0.0,
-        "temporal": 0.12,
+        "temporal": 0.361,
+        "memory_goal": 0.0
+      }
+    },
+    {
+      "name": "excitement",
+      "score": 0.049,
+      "confidence": 0.047,
+      "importance": 0.048,
+      "sources": {
+        "score": 0.161,
+        "visual": 0.0,
+        "language": 0.0,
+        "context": 0.0,
+        "temporal": 0.107,
         "memory_goal": 0.0
       }
     },
     {
       "name": "adoration",
-      "score": 0.024,
-      "confidence": 0.06,
-      "importance": 0.038,
+      "score": 0.031,
+      "confidence": 0.066,
+      "importance": 0.044,
       "sources": {
-        "score": 0.024,
+        "score": 0.046,
         "visual": 0.0,
         "language": 0.0,
         "context": 0.12,
-        "temporal": 0.016,
-        "memory_goal": 0.0
-      }
-    },
-    {
-      "name": "admiration",
-      "score": 0.022,
-      "confidence": 0.045,
-      "importance": 0.031,
-      "sources": {
-        "score": 0.035,
-        "visual": 0.0,
-        "language": 0.0,
-        "context": 0.08,
-        "temporal": 0.023,
+        "temporal": 0.031,
         "memory_goal": 0.0
       }
     },
     {
       "name": "joy",
-      "score": 0.019,
-      "confidence": 0.018,
-      "importance": 0.018,
+      "score": 0.043,
+      "confidence": 0.041,
+      "importance": 0.042,
       "sources": {
-        "score": 0.061,
+        "score": 0.141,
         "visual": 0.0,
         "language": 0.0,
         "context": 0.0,
-        "temporal": 0.041,
+        "temporal": 0.094,
+        "memory_goal": 0.0
+      }
+    },
+    {
+      "name": "sadness",
+      "score": 0.032,
+      "confidence": 0.056,
+      "importance": 0.041,
+      "sources": {
+        "score": 0.011,
+        "visual": 0.0,
+        "language": 0.12,
+        "context": 0.0,
+        "temporal": 0.008,
         "memory_goal": 0.0
       }
     },
     {
       "name": "satisfaction",
-      "score": 0.013,
-      "confidence": 0.012,
-      "importance": 0.012,
+      "score": 0.038,
+      "confidence": 0.037,
+      "importance": 0.038,
       "sources": {
-        "score": 0.041,
+        "score": 0.124,
         "visual": 0.0,
         "language": 0.0,
         "context": 0.0,
-        "temporal": 0.027,
+        "temporal": 0.083,
+        "memory_goal": 0.0
+      }
+    },
+    {
+      "name": "admiration",
+      "score": 0.025,
+      "confidence": 0.049,
+      "importance": 0.034,
+      "sources": {
+        "score": 0.045,
+        "visual": 0.0,
+        "language": 0.0,
+        "context": 0.08,
+        "temporal": 0.03,
+        "memory_goal": 0.0
+      }
+    },
+    {
+      "name": "boredom",
+      "score": 0.015,
+      "confidence": 0.015,
+      "importance": 0.015,
+      "sources": {
+        "score": 0.05,
+        "visual": 0.0,
+        "language": 0.0,
+        "context": 0.0,
+        "temporal": 0.033,
         "memory_goal": 0.0
       }
     },
     {
       "name": "empathetic pain",
-      "score": 0.002,
-      "confidence": 0.002,
-      "importance": 0.002,
+      "score": 0.014,
+      "confidence": 0.013,
+      "importance": 0.014,
       "sources": {
-        "score": 0.007,
+        "score": 0.046,
         "visual": 0.0,
         "language": 0.0,
         "context": 0.0,
-        "temporal": 0.004,
+        "temporal": 0.03,
+        "memory_goal": 0.0
+      }
+    },
+    {
+      "name": "amusement",
+      "score": 0.013,
+      "confidence": 0.012,
+      "importance": 0.013,
+      "sources": {
+        "score": 0.042,
+        "visual": 0.0,
+        "language": 0.0,
+        "context": 0.0,
+        "temporal": 0.028,
+        "memory_goal": 0.0
+      }
+    },
+    {
+      "name": "surprise",
+      "score": 0.013,
+      "confidence": 0.013,
+      "importance": 0.013,
+      "sources": {
+        "score": 0.043,
+        "visual": 0.0,
+        "language": 0.0,
+        "context": 0.0,
+        "temporal": 0.029,
+        "memory_goal": 0.0
+      }
+    },
+    {
+      "name": "aesthetic appreciation",
+      "score": 0.009,
+      "confidence": 0.009,
+      "importance": 0.009,
+      "sources": {
+        "score": 0.029,
+        "visual": 0.0,
+        "language": 0.0,
+        "context": 0.0,
+        "temporal": 0.02,
+        "memory_goal": 0.0
+      }
+    },
+    {
+      "name": "awkwardness",
+      "score": 0.009,
+      "confidence": 0.008,
+      "importance": 0.009,
+      "sources": {
+        "score": 0.029,
+        "visual": 0.0,
+        "language": 0.0,
+        "context": 0.0,
+        "temporal": 0.019,
+        "memory_goal": 0.0
+      }
+    },
+    {
+      "name": "anxiety",
+      "score": 0.008,
+      "confidence": 0.008,
+      "importance": 0.008,
+      "sources": {
+        "score": 0.027,
+        "visual": 0.0,
+        "language": 0.0,
+        "context": 0.0,
+        "temporal": 0.018,
+        "memory_goal": 0.0
+      }
+    },
+    {
+      "name": "nostalgia",
+      "score": 0.008,
+      "confidence": 0.007,
+      "importance": 0.008,
+      "sources": {
+        "score": 0.025,
+        "visual": 0.0,
+        "language": 0.0,
+        "context": 0.0,
+        "temporal": 0.017,
         "memory_goal": 0.0
       }
     },
     {
       "name": "relief",
-      "score": 0.002,
-      "confidence": 0.002,
-      "importance": 0.002,
+      "score": 0.008,
+      "confidence": 0.008,
+      "importance": 0.008,
       "sources": {
-        "score": 0.007,
+        "score": 0.026,
         "visual": 0.0,
         "language": 0.0,
         "context": 0.0,
-        "temporal": 0.005,
+        "temporal": 0.017,
+        "memory_goal": 0.0
+      }
+    },
+    {
+      "name": "confusion",
+      "score": 0.008,
+      "confidence": 0.007,
+      "importance": 0.007,
+      "sources": {
+        "score": 0.025,
+        "visual": 0.0,
+        "language": 0.0,
+        "context": 0.0,
+        "temporal": 0.016,
+        "memory_goal": 0.0
+      }
+    },
+    {
+      "name": "awe",
+      "score": 0.007,
+      "confidence": 0.007,
+      "importance": 0.007,
+      "sources": {
+        "score": 0.023,
+        "visual": 0.0,
+        "language": 0.0,
+        "context": 0.0,
+        "temporal": 0.015,
+        "memory_goal": 0.0
+      }
+    },
+    {
+      "name": "entrancement",
+      "score": 0.007,
+      "confidence": 0.007,
+      "importance": 0.007,
+      "sources": {
+        "score": 0.024,
+        "visual": 0.0,
+        "language": 0.0,
+        "context": 0.0,
+        "temporal": 0.016,
+        "memory_goal": 0.0
+      }
+    },
+    {
+      "name": "craving",
+      "score": 0.003,
+      "confidence": 0.002,
+      "importance": 0.003,
+      "sources": {
+        "score": 0.008,
+        "visual": 0.0,
+        "language": 0.0,
+        "context": 0.0,
+        "temporal": 0.006,
         "memory_goal": 0.0
       }
     },
     {
       "name": "romance",
-      "score": 0.002,
-      "confidence": 0.002,
-      "importance": 0.002,
+      "score": 0.003,
+      "confidence": 0.003,
+      "importance": 0.003,
       "sources": {
-        "score": 0.006,
+        "score": 0.01,
         "visual": 0.0,
         "language": 0.0,
         "context": 0.0,
-        "temporal": 0.004,
+        "temporal": 0.007,
         "memory_goal": 0.0
       }
     },
     {
-      "name": "sexual desire",
+      "name": "fear",
       "score": 0.002,
       "confidence": 0.001,
       "importance": 0.001,
@@ -214,174 +396,6 @@
         "language": 0.0,
         "context": 0.0,
         "temporal": 0.003,
-        "memory_goal": 0.0
-      }
-    },
-    {
-      "name": "envy",
-      "score": 0.001,
-      "confidence": 0.001,
-      "importance": 0.001,
-      "sources": {
-        "score": 0.004,
-        "visual": 0.0,
-        "language": 0.0,
-        "context": 0.0,
-        "temporal": 0.003,
-        "memory_goal": 0.0
-      }
-    },
-    {
-      "name": "fear",
-      "score": 0.001,
-      "confidence": 0.001,
-      "importance": 0.001,
-      "sources": {
-        "score": 0.004,
-        "visual": 0.0,
-        "language": 0.0,
-        "context": 0.0,
-        "temporal": 0.002,
-        "memory_goal": 0.0
-      }
-    },
-    {
-      "name": "interest",
-      "score": 0.001,
-      "confidence": 0.001,
-      "importance": 0.001,
-      "sources": {
-        "score": 0.002,
-        "visual": 0.0,
-        "language": 0.0,
-        "context": 0.0,
-        "temporal": 0.002,
-        "memory_goal": 0.0
-      }
-    },
-    {
-      "name": "sadness",
-      "score": 0.001,
-      "confidence": 0.001,
-      "importance": 0.001,
-      "sources": {
-        "score": 0.003,
-        "visual": 0.0,
-        "language": 0.0,
-        "context": 0.0,
-        "temporal": 0.002,
-        "memory_goal": 0.0
-      }
-    },
-    {
-      "name": "surprise",
-      "score": 0.001,
-      "confidence": 0.001,
-      "importance": 0.001,
-      "sources": {
-        "score": 0.002,
-        "visual": 0.0,
-        "language": 0.0,
-        "context": 0.0,
-        "temporal": 0.001,
-        "memory_goal": 0.0
-      }
-    },
-    {
-      "name": "aesthetic appreciation",
-      "score": 0.0,
-      "confidence": 0.0,
-      "importance": 0.0,
-      "sources": {
-        "score": 0.001,
-        "visual": 0.0,
-        "language": 0.0,
-        "context": 0.0,
-        "temporal": 0.0,
-        "memory_goal": 0.0
-      }
-    },
-    {
-      "name": "amusement",
-      "score": 0.0,
-      "confidence": 0.0,
-      "importance": 0.0,
-      "sources": {
-        "score": 0.0,
-        "visual": 0.0,
-        "language": 0.0,
-        "context": 0.0,
-        "temporal": 0.0,
-        "memory_goal": 0.0
-      }
-    },
-    {
-      "name": "anxiety",
-      "score": 0.0,
-      "confidence": 0.0,
-      "importance": 0.0,
-      "sources": {
-        "score": 0.0,
-        "visual": 0.0,
-        "language": 0.0,
-        "context": 0.0,
-        "temporal": 0.0,
-        "memory_goal": 0.0
-      }
-    },
-    {
-      "name": "awe",
-      "score": 0.0,
-      "confidence": 0.0,
-      "importance": 0.0,
-      "sources": {
-        "score": 0.002,
-        "visual": 0.0,
-        "language": 0.0,
-        "context": 0.0,
-        "temporal": 0.001,
-        "memory_goal": 0.0
-      }
-    },
-    {
-      "name": "awkwardness",
-      "score": 0.0,
-      "confidence": 0.0,
-      "importance": 0.0,
-      "sources": {
-        "score": 0.0,
-        "visual": 0.0,
-        "language": 0.0,
-        "context": 0.0,
-        "temporal": 0.0,
-        "memory_goal": 0.0
-      }
-    },
-    {
-      "name": "confusion",
-      "score": 0.0,
-      "confidence": 0.0,
-      "importance": 0.0,
-      "sources": {
-        "score": 0.001,
-        "visual": 0.0,
-        "language": 0.0,
-        "context": 0.0,
-        "temporal": 0.001,
-        "memory_goal": 0.0
-      }
-    },
-    {
-      "name": "craving",
-      "score": 0.0,
-      "confidence": 0.0,
-      "importance": 0.0,
-      "sources": {
-        "score": 0.0,
-        "visual": 0.0,
-        "language": 0.0,
-        "context": 0.0,
-        "temporal": 0.0,
         "memory_goal": 0.0
       }
     },
@@ -400,21 +414,7 @@
       }
     },
     {
-      "name": "entrancement",
-      "score": 0.0,
-      "confidence": 0.0,
-      "importance": 0.0,
-      "sources": {
-        "score": 0.001,
-        "visual": 0.0,
-        "language": 0.0,
-        "context": 0.0,
-        "temporal": 0.001,
-        "memory_goal": 0.0
-      }
-    },
-    {
-      "name": "excitement",
+      "name": "envy",
       "score": 0.0,
       "confidence": 0.0,
       "importance": 0.0,
@@ -433,16 +433,16 @@
       "confidence": 0.0,
       "importance": 0.0,
       "sources": {
-        "score": 0.0,
+        "score": 0.001,
         "visual": 0.0,
         "language": 0.0,
         "context": 0.0,
-        "temporal": 0.0,
+        "temporal": 0.001,
         "memory_goal": 0.0
       }
     },
     {
-      "name": "nostalgia",
+      "name": "sexual desire",
       "score": 0.0,
       "confidence": 0.0,
       "importance": 0.0,
@@ -458,7 +458,7 @@
   ],
   "speakable_emotions": [],
   "askable_emotions": [],
-  "loneliness": 1.0,
-  "engagement": 0.0,
-  "_saved_at": "2026-04-28T07:35:31"
+  "loneliness": 0.8999999999999999,
+  "engagement": 0.12,
+  "_saved_at": "2026-04-28T11:53:02"
 }

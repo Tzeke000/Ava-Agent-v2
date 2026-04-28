@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -63,6 +64,7 @@ class ConceptGraph:
         self.nodes: dict[str, ConceptNode] = {}
         self.edges: list[ConceptEdge] = []
         self.last_updated: float = time.time()
+        self.last_bootstrap: float = 0.0
         self.version: int = 1
         self._load()
 
@@ -75,6 +77,7 @@ class ConceptGraph:
                 return
             self.version = int(payload.get("version", 1) or 1)
             self.last_updated = float(payload.get("last_updated") or time.time())
+            self.last_bootstrap = float(payload.get("last_bootstrap") or 0.0)
             for row in list(payload.get("nodes") or []):
                 if not isinstance(row, dict):
                     continue
@@ -118,6 +121,7 @@ class ConceptGraph:
             "nodes": [asdict(n) for n in self.nodes.values()],
             "edges": [asdict(e) for e in self.edges],
             "last_updated": self.last_updated,
+            "last_bootstrap": self.last_bootstrap,
             "version": self.version,
         }
         tmp = self.path.with_suffix(".json.tmp")
@@ -233,17 +237,32 @@ class ConceptGraph:
     def get_graph_data(self) -> dict[str, Any]:
         nodes = [asdict(n) for n in self.nodes.values()]
         edges = [asdict(e) for e in self.edges]
+        nodes_by_type = {k: 0 for k in TYPE_COLORS}
+        for node in nodes:
+            t = str(node.get("type") or "topic")
+            nodes_by_type[t] = nodes_by_type.get(t, 0) + 1
+        most_activated = ""
+        if nodes:
+            picked = max(nodes, key=lambda n: (int(n.get("activation_count") or 0), float(n.get("weight") or 0.0)))
+            most_activated = str(picked.get("label") or "")
         return {
             "nodes": nodes,
             "edges": edges,
             "last_updated": self.last_updated,
+            "last_bootstrap": self.last_bootstrap,
             "version": self.version,
             "stats": {
                 "total_nodes": len(nodes),
                 "total_edges": len(edges),
                 "active_nodes_30s": len(self.get_active_nodes(30)),
+                "nodes_by_type": nodes_by_type,
+                "most_activated": most_activated,
+                "last_bootstrap": self.last_bootstrap,
             },
         }
+
+    def bootstrap_from_existing_memory(self, host: dict[str, Any] | None = None) -> dict[str, Any]:
+        return bootstrap_from_existing_memory(self, host=host)
 
     def get_related_concepts(self, topic: str, max_hops: int = 2) -> list[dict[str, Any]]:
         start_id = _slugify(topic)
@@ -335,6 +354,116 @@ def _safe_read_json(path: Path) -> Any:
         return None
 
 
+def _safe_read_jsonl(path: Path, limit: int | None = None) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    out: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+            if isinstance(row, dict):
+                out.append(row)
+        except Exception:
+            continue
+    if isinstance(limit, int) and limit > 0:
+        return out[-limit:]
+    return out
+
+
+def _extract_keywords(text: str, max_items: int = 4) -> list[str]:
+    words = re.findall(r"[a-zA-Z][a-zA-Z0-9_\-']{2,}", str(text or "").lower())
+    stop = {
+        "the", "and", "that", "this", "with", "from", "have", "your", "about", "what", "when", "where", "which", "them",
+        "they", "were", "been", "into", "there", "their", "would", "could", "should", "just", "like", "more", "very",
+        "really", "than", "then", "over", "under", "also", "only", "dont", "cant", "im", "youre", "ava", "zeke", "max",
+    }
+    counts = Counter([w for w in words if w not in stop and len(w) >= 3])
+    return [w for w, _ in counts.most_common(max(1, int(max_items or 4)))]
+
+
+def _infer_emotions_from_text(text: str) -> list[str]:
+    low = str(text or "").lower()
+    lex = {
+        "concerned": ["concern", "worry", "worried", "issue", "problem", "bug"],
+        "frustration": ["frustrat", "annoy", "stuck", "broken"],
+        "curious": ["curious", "wonder", "question", "explore"],
+        "calmness": ["calm", "steady", "stable", "okay", "ok"],
+        "sad": ["sad", "goodnight", "sleep", "bye"],
+        "hopeful": ["hope", "improve", "better", "upgrade", "fix"],
+    }
+    out: list[str] = []
+    for emo, markers in lex.items():
+        if any(m in low for m in markers):
+            out.append(emo)
+    if not out:
+        out.append("neutral")
+    return out[:3]
+
+
+def _extract_turn_topics_batch_with_mistral(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not turns:
+        return []
+    prompt_rows = []
+    for idx, turn in enumerate(turns, start=1):
+        role = str(turn.get("role") or "")
+        content = " ".join(str(turn.get("content") or "").split()).strip()[:360]
+        prompt_rows.append(f"{idx}. {role}: {content}")
+    prompt = "\n".join(prompt_rows)
+    try:
+        llm = ChatOllama(model="mistral:7b", temperature=0.1)
+        result = llm.invoke(
+            [
+                SystemMessage(
+                    content=(
+                        "Return ONLY JSON array, one object per turn in order: "
+                        "{main_topic, sub_topics:[...], people:[...], emotions:[...]}."
+                    )
+                ),
+                HumanMessage(content=prompt[-7500:]),
+            ]
+        )
+        txt = (getattr(result, "content", None) or str(result)).strip()
+        left, right = txt.find("["), txt.rfind("]")
+        if left < 0 or right <= left:
+            raise ValueError("no json array")
+        arr = json.loads(txt[left : right + 1])
+        if not isinstance(arr, list):
+            raise ValueError("bad array")
+        out: list[dict[str, Any]] = []
+        for row in arr[: len(turns)]:
+            if not isinstance(row, dict):
+                out.append({})
+                continue
+            out.append(
+                {
+                    "main_topic": str(row.get("main_topic") or "").strip()[:120],
+                    "sub_topics": [str(x).strip()[:80] for x in list(row.get("sub_topics") or []) if str(x).strip()],
+                    "people": [str(x).strip()[:80] for x in list(row.get("people") or []) if str(x).strip()],
+                    "emotions": [str(x).strip()[:48] for x in list(row.get("emotions") or []) if str(x).strip()],
+                }
+            )
+        while len(out) < len(turns):
+            out.append({})
+        return out
+    except Exception:
+        out = []
+        for turn in turns:
+            content = str(turn.get("content") or "")
+            kws = _extract_keywords(content, max_items=4)
+            out.append(
+                {
+                    "main_topic": kws[0] if kws else "general",
+                    "sub_topics": kws[1:4],
+                    "people": [p for p in ["Zeke", "Max", "Ava", "Emil"] if p.lower() in content.lower()],
+                    "emotions": _infer_emotions_from_text(content),
+                }
+            )
+        return out
+
+
 def _extract_concepts_with_mistral(corpus: str) -> list[dict[str, str]]:
     if not corpus.strip():
         return []
@@ -393,14 +522,39 @@ def extract_concepts_from_text(corpus: str) -> list[dict[str, str]]:
     return out
 
 
-def bootstrap_from_existing_memory(graph: ConceptGraph, host: dict[str, Any] | None = None) -> int:
+def bootstrap_from_existing_memory(graph: ConceptGraph, host: dict[str, Any] | None = None) -> dict[str, Any]:
     host = host or {}
     base_dir = Path(host.get("BASE_DIR") or graph.base_dir)
-    if graph.nodes:
-        return 0
+    report_path = base_dir / "state" / "bootstrap_report.json"
+    now = time.time()
+    edges_before = len(graph.edges)
+    nodes_before = len(graph.nodes)
+    node_type_counter: Counter[str] = Counter()
+    person_nodes: dict[str, str] = {}
+    topic_nodes: dict[str, str] = {}
+    emotion_nodes: dict[str, str] = {}
+    memory_nodes: list[str] = []
+    self_nodes: list[str] = []
+    opinion_nodes: list[str] = []
+    curiosity_nodes: list[str] = []
 
-    created = 0
+    def register_node(label: str, ntype: NodeType, notes: str = "", weight: float | None = None) -> str:
+        node_id = graph.find_or_create(label, ntype)
+        node = graph.nodes.get(node_id)
+        if node is not None:
+            if notes and not node.notes:
+                node.notes = notes[:500]
+            if isinstance(weight, (int, float)):
+                node.weight = _clamp(float(weight), 0.0, 1.0)
+            node.archived = False
+            node.last_activated = now
+        node_type_counter[str(ntype)] += 1
+        return node_id
 
+    ava_id = register_node("Ava", "self", notes="Core self node from identity/soul.")
+    self_nodes.append(ava_id)
+
+    # A) PEOPLE nodes + profile threads as topics/memories/emotions.
     profiles_dir = base_dir / "profiles"
     if profiles_dir.is_dir():
         for profile_path in sorted(profiles_dir.glob("*.json")):
@@ -410,9 +564,195 @@ def bootstrap_from_existing_memory(graph: ConceptGraph, host: dict[str, Any] | N
             label = str(data.get("name") or profile_path.stem).strip()
             if not label:
                 continue
-            graph.find_or_create(label, "person")
-            created += 1
+            trust = float(data.get("relationship_score") or 0.0)
+            rel_type = str(data.get("relationship_to_zeke") or "known").strip()
+            notes = f"relationship={rel_type}; trust={trust:.2f}; interactions={int(data.get('interaction_count') or 0)}"
+            person_id = register_node(label, "person", notes=notes, weight=max(0.2, min(1.0, 0.3 + trust * 0.7)))
+            person_nodes[label.lower()] = person_id
+            graph.add_edge(ava_id, person_id, "knows", 0.85 if label.lower() == "zeke" else 0.55)
+            if label.lower() == "zeke":
+                graph.add_edge(ava_id, person_id, "created_by", 0.98)
+                graph.add_edge(ava_id, person_id, "trusts", 0.95)
+            for thread in list(data.get("threads") or []):
+                if not isinstance(thread, dict):
+                    continue
+                t_topic = str(thread.get("topic") or "").strip()
+                if not t_topic:
+                    continue
+                t_emotion = str(thread.get("emotion") or "").strip().lower() or "neutral"
+                topic_id = register_node(t_topic, "topic")
+                topic_nodes[t_topic.lower()] = topic_id
+                graph.add_edge(person_id, topic_id, "discussed_topic", 0.62)
+                mem_id = register_node(f"{label}: {t_topic[:96]}", "memory", notes=str(thread.get("notes") or ""))
+                memory_nodes.append(mem_id)
+                graph.add_edge(mem_id, person_id, "involves_person", 0.6)
+                graph.add_edge(mem_id, topic_id, "about_topic", 0.65)
+                emo_id = register_node(t_emotion, "emotion")
+                emotion_nodes[t_emotion] = emo_id
+                graph.add_edge(person_id, emo_id, "felt_around", 0.58)
+                graph.add_edge(mem_id, emo_id, "emotion_association", 0.52)
 
+    # B) SELF nodes from identity/soul/self-model.
+    identity_md = (base_dir / "ava_core" / "IDENTITY.md").read_text(encoding="utf-8", errors="replace") if (base_dir / "ava_core" / "IDENTITY.md").is_file() else ""
+    soul_md = (base_dir / "ava_core" / "SOUL.md").read_text(encoding="utf-8", errors="replace") if (base_dir / "ava_core" / "SOUL.md").is_file() else ""
+    self_model = _safe_read_json(base_dir / "memory" / "self reflection" / "self_model.json")
+    values = re.findall(r"-\s+(.+)", soul_md)
+    for value in values[:24]:
+        v = value.strip()
+        if not v:
+            continue
+        vid = register_node(v, "self")
+        self_nodes.append(vid)
+        graph.add_edge(ava_id, vid, "has_value", 0.88)
+    if isinstance(self_model, dict):
+        for drive in list(self_model.get("core_drives") or [])[:16]:
+            sid = register_node(str(drive), "self")
+            self_nodes.append(sid)
+            graph.add_edge(ava_id, sid, "has_trait", 0.86)
+        for trait in list(self_model.get("perceived_strengths") or [])[:24]:
+            sid = register_node(str(trait), "self")
+            self_nodes.append(sid)
+            graph.add_edge(ava_id, sid, "has_trait", 0.78)
+        chapter = str(self_model.get("active_goal", {}).get("name") if isinstance(self_model.get("active_goal"), dict) else "")
+        if chapter:
+            cid = register_node(f"chapter: {chapter}", "self")
+            self_nodes.append(cid)
+            graph.add_edge(ava_id, cid, "current_chapter", 0.9)
+        for q in list(self_model.get("curiosity_questions") or [])[:20]:
+            qid = register_node(str(q), "self")
+            self_nodes.append(qid)
+            graph.add_edge(ava_id, qid, "self_question", 0.72)
+    if identity_md:
+        for fact in _extract_keywords(identity_md, max_items=10):
+            fid = register_node(fact, "self")
+            self_nodes.append(fid)
+            graph.add_edge(ava_id, fid, "identity_anchor", 0.7)
+
+    # C) MEMORY nodes from reflections.
+    reflections = _safe_read_jsonl(base_dir / "memory" / "self reflection" / "reflection_log.jsonl")
+    emotion_freq: Counter[str] = Counter()
+    topic_to_memory: defaultdict[str, list[str]] = defaultdict(list)
+    for row in reflections:
+        summary = str(row.get("summary") or row.get("user_input") or row.get("ai_reply") or "").strip()
+        if not summary:
+            continue
+        importance = _clamp(float(row.get("importance") or 0.45), 0.05, 1.0)
+        tags = [str(t).strip().lower() for t in list(row.get("tags") or []) if str(t).strip()]
+        topic = tags[0] if tags else (_extract_keywords(summary, max_items=1)[0] if _extract_keywords(summary, max_items=1) else "reflection")
+        mem_id = register_node(f"memory: {summary[:96]}", "memory", notes=summary[:500], weight=importance)
+        memory_nodes.append(mem_id)
+        topic_id = register_node(topic, "topic")
+        topic_nodes[topic.lower()] = topic_id
+        topic_to_memory[topic.lower()].append(mem_id)
+        graph.add_edge(mem_id, topic_id, "about_topic", 0.62)
+        graph.add_edge(ava_id, mem_id, "remembers", 0.66)
+        person_id = person_nodes.get(str(row.get("person_id") or "").strip().lower()) or person_nodes.get("zeke")
+        if person_id:
+            graph.add_edge(mem_id, person_id, "involves_person", 0.63)
+            graph.add_edge(person_id, mem_id, "memory_of", 0.58)
+        emos = [t for t in tags if t in {"calmness", "curious", "concerned", "frustration", "sad", "hopeful", "neutral"}]
+        if not emos:
+            emos = _infer_emotions_from_text(summary)
+        for emo in emos[:2]:
+            emotion_freq[emo] += 1
+            emo_id = register_node(emo, "emotion")
+            emotion_nodes[emo] = emo_id
+            graph.add_edge(mem_id, emo_id, "felt_during", 0.58)
+            graph.add_edge(topic_id, emo_id, "emotional_association", 0.45)
+
+    # D) EMOTION nodes from mood + reflections.
+    mood_data = _safe_read_json(base_dir / "ava_mood.json")
+    if isinstance(mood_data, dict):
+        weights = mood_data.get("emotion_weights")
+        if isinstance(weights, dict):
+            for emo, val in sorted(weights.items(), key=lambda kv: float(kv[1] or 0.0), reverse=True)[:12]:
+                emo_name = str(emo).strip().lower()
+                emo_id = register_node(emo_name, "emotion", weight=_clamp(float(val or 0.0), 0.05, 1.0))
+                emotion_nodes[emo_name] = emo_id
+                graph.add_edge(ava_id, emo_id, "feels", 0.68)
+                emotion_freq[emo_name] += int(max(1, float(val or 0.0) * 10))
+    for emo, cnt in emotion_freq.most_common(14):
+        emo_id = register_node(emo, "emotion", weight=_clamp(0.25 + cnt * 0.04, 0.0, 1.0))
+        emotion_nodes[emo] = emo_id
+        graph.add_edge(ava_id, emo_id, "feels", 0.62)
+
+    # E) TOPIC nodes from chatlog + reflection using mistral:7b in batches of 10 turns.
+    chat_rows = _safe_read_jsonl(base_dir / "chatlog.jsonl", limit=100)
+    for idx in range(0, len(chat_rows), 10):
+        batch = chat_rows[idx : idx + 10]
+        extracted = _extract_turn_topics_batch_with_mistral(batch)
+        for turn, item in zip(batch, extracted):
+            main_topic = str(item.get("main_topic") or "").strip() or "general conversation"
+            main_id = register_node(main_topic, "topic")
+            topic_nodes[main_topic.lower()] = main_id
+            role = str(turn.get("role") or "").lower()
+            person_id = person_nodes.get("zeke") if role in {"user", "human"} else ava_id
+            graph.add_edge(person_id, main_id, "discussed_topic", 0.64)
+            for st in list(item.get("sub_topics") or [])[:5]:
+                sid = register_node(str(st), "topic")
+                topic_nodes[str(st).lower()] = sid
+                graph.add_edge(main_id, sid, "related_topic", 0.5)
+            for p in list(item.get("people") or [])[:4]:
+                pid = person_nodes.get(str(p).lower())
+                if pid:
+                    graph.add_edge(pid, main_id, "discussed_topic", 0.6)
+            emos = list(item.get("emotions") or [])[:3] or _infer_emotions_from_text(str(turn.get("content") or ""))
+            for emo in emos:
+                eid = register_node(str(emo).lower(), "emotion")
+                emotion_nodes[str(emo).lower()] = eid
+                graph.add_edge(main_id, eid, "emotional_association", 0.5)
+            mem_links = topic_to_memory.get(main_topic.lower(), [])
+            for mid in mem_links[:4]:
+                graph.add_edge(main_id, mid, "references_memory", 0.54)
+                graph.add_edge(mid, main_id, "memory_of_topic", 0.54)
+
+    topic_ids = [nid for nid, node in graph.nodes.items() if node.type == "topic"]
+    for i in range(len(topic_ids)):
+        left = graph.nodes.get(topic_ids[i])
+        if left is None:
+            continue
+        lw = set(_extract_keywords(left.label, max_items=4))
+        if not lw:
+            continue
+        for j in range(i + 1, min(i + 18, len(topic_ids))):
+            right = graph.nodes.get(topic_ids[j])
+            if right is None:
+                continue
+            rw = set(_extract_keywords(right.label, max_items=4))
+            overlap = len(lw & rw)
+            if overlap >= 1:
+                graph.add_edge(left.id, right.id, "co_occurs", 0.26 if overlap == 1 else 0.48)
+
+    # F) Curiosity nodes.
+    cur_state = _safe_read_json(base_dir / "state" / "curiosity_topics.json")
+    curiosity_rows: list[dict[str, Any]] = []
+    if isinstance(cur_state, dict):
+        for row in list(cur_state.get("topics") or []):
+            if isinstance(row, dict):
+                curiosity_rows.append(row)
+    if not curiosity_rows:
+        try:
+            from brain.curiosity_topics import get_current_curiosity
+
+            cur = get_current_curiosity(host)
+            if isinstance(cur, dict):
+                curiosity_rows.append(cur)
+        except Exception:
+            pass
+    for row in curiosity_rows:
+        topic = str(row.get("topic") or row.get("name") or "").strip()
+        if not topic:
+            continue
+        priority = _clamp(float(row.get("priority") or row.get("score") or 0.5), 0.05, 1.0)
+        cid = register_node(topic, "curiosity", weight=priority)
+        curiosity_nodes.append(cid)
+        graph.add_edge(ava_id, cid, "curious_about", 0.66)
+        for kw in _extract_keywords(topic, max_items=3):
+            tid = register_node(kw, "topic")
+            topic_nodes[kw] = tid
+            graph.add_edge(cid, tid, "related_topic", 0.48)
+
+    # G) Opinion nodes.
     opinions = _safe_read_json(base_dir / "state" / "opinions.json")
     if isinstance(opinions, dict):
         for row in list(opinions.get("opinions") or []):
@@ -420,69 +760,101 @@ def bootstrap_from_existing_memory(graph: ConceptGraph, host: dict[str, Any] | N
                 continue
             topic = str(row.get("topic") or "").strip()
             stance = str(row.get("stance") or "").strip()
-            if topic:
-                graph.find_or_create(topic, "opinion")
-                if stance:
-                    sid = graph.find_or_create(stance, "topic")
-                    tid = graph.find_or_create(topic, "opinion")
-                    graph.add_edge(sid, tid, "has_opinion_on", 0.6)
-                created += 1
+            confidence = _clamp(float(row.get("confidence") or 0.5), 0.05, 1.0)
+            if not topic:
+                continue
+            opinion_label = f"opinion: {topic} -> {stance or 'unspecified'}"
+            oid = register_node(opinion_label, "opinion", notes=str(row.get("reasoning") or ""), weight=confidence)
+            opinion_nodes.append(oid)
+            tid = register_node(topic, "topic")
+            topic_nodes[topic.lower()] = tid
+            graph.add_edge(oid, tid, "opinion_about", 0.62)
+            graph.add_edge(ava_id, oid, "holds_opinion", 0.66)
+            formed = str(row.get("formed_from") or "").strip()
+            if formed:
+                fid = register_node(f"memory: {formed[:96]}", "memory", notes=formed)
+                memory_nodes.append(fid)
+                graph.add_edge(oid, fid, "formed_from", 0.57)
+                graph.add_edge(fid, tid, "about_topic", 0.54)
 
+    # H) Inner monologue nodes.
     thoughts = _safe_read_json(base_dir / "state" / "inner_monologue.json")
     if isinstance(thoughts, dict):
-        for row in list(thoughts.get("thoughts") or [])[-30:]:
+        thought_rows = [r for r in list(thoughts.get("thoughts") or []) if isinstance(r, dict)]
+        thought_rows = thought_rows[-120:]
+        newest_ts = max((float(r.get("ts") or 0.0) for r in thought_rows), default=0.0)
+        for row in thought_rows:
             if isinstance(row, dict):
                 thought = str(row.get("thought") or "").strip()
                 if thought:
-                    graph.find_or_create(thought[:80], "memory")
-                    created += 1
+                    ts = float(row.get("ts") or 0.0)
+                    recency = 0.45
+                    if newest_ts > 0 and ts > 0:
+                        recency = _clamp(0.35 + ((ts / newest_ts) * 0.65), 0.1, 1.0)
+                    mid = register_node(f"thought: {thought[:96]}", "memory", notes=thought[:500], weight=recency)
+                    memory_nodes.append(mid)
+                    graph.add_edge(ava_id, mid, "inner_thought", 0.52)
+                    for kw in _extract_keywords(thought, max_items=4):
+                        tid = register_node(kw, "topic")
+                        topic_nodes[kw] = tid
+                        graph.add_edge(mid, tid, "about_topic", 0.46)
+                    for emo in _infer_emotions_from_text(thought):
+                        eid = register_node(emo, "emotion")
+                        emotion_nodes[emo] = eid
+                        graph.add_edge(mid, eid, "felt_during", 0.42)
 
-    self_model = _safe_read_json(base_dir / "state" / "self_model.json")
-    if isinstance(self_model, dict):
-        traits = self_model.get("traits")
-        if isinstance(traits, dict):
-            for trait_name, trait_data in traits.items():
-                notes = ""
-                if isinstance(trait_data, dict):
-                    notes = str(trait_data.get("description") or "")
-                graph.add_node(str(trait_name), "self", notes=notes)
-                created += 1
-
-    try:
-        from brain.curiosity_topics import get_current_curiosity
-
-        cur = get_current_curiosity(host)
-        if isinstance(cur, dict):
-            topic = str(cur.get("topic") or "").strip()
-            if topic:
-                graph.find_or_create(topic, "curiosity")
-                created += 1
-    except Exception:
-        pass
-
-    chat_path = base_dir / "chatlog.jsonl"
-    if chat_path.is_file():
-        lines = chat_path.read_text(encoding="utf-8", errors="replace").splitlines()[-50:]
-        corpus_rows: list[str] = []
-        for line in lines:
-            try:
-                row = json.loads(line)
-                role = str(row.get("role") or "")
-                content = " ".join(str(row.get("content") or "").split()).strip()
-                if content:
-                    corpus_rows.append(f"{role}: {content[:240]}")
-            except Exception:
+    # I) Relationship edge pass.
+    for pid in person_nodes.values():
+        graph.add_edge(ava_id, pid, "knows", 0.82 if pid == person_nodes.get("zeke") else 0.55)
+    for sid in set(self_nodes):
+        graph.add_edge(ava_id, sid, "has_trait", 0.84)
+    for mid in memory_nodes[:800]:
+        for pid in list(person_nodes.values())[:6]:
+            mem_node = graph.nodes.get(mid)
+            person_node = graph.nodes.get(pid)
+            if mem_node is None or person_node is None:
                 continue
-        extracted = _extract_concepts_with_mistral("\n".join(corpus_rows))
-        prev_id = ""
-        for item in extracted:
-            node_id = graph.find_or_create(item["label"], item["type"])  # type: ignore[arg-type]
-            created += 1
-            if prev_id and prev_id != node_id:
-                graph.add_edge(prev_id, node_id, item.get("relationship_to_previous") or "related_to", 0.55)
-            prev_id = node_id
+            if person_node.label.lower() in mem_node.label.lower() or person_node.label.lower() in mem_node.notes.lower():
+                graph.add_edge(mid, pid, "involves_person", 0.58)
+    for oid in opinion_nodes:
+        for pid in list(person_nodes.values()):
+            op = graph.nodes.get(oid)
+            person = graph.nodes.get(pid)
+            if op is None or person is None:
+                continue
+            if person.label.lower() in (op.label + " " + op.notes).lower():
+                graph.add_edge(oid, pid, "formed_with", 0.4)
 
+    # Weak distant associations.
+    topic_ids = [nid for nid, n in graph.nodes.items() if n.type == "topic"]
+    for i in range(0, min(len(topic_ids), 220), 3):
+        if i + 1 < len(topic_ids):
+            graph.add_edge(topic_ids[i], topic_ids[i + 1], "distant_association", 0.18)
+
+    graph.last_bootstrap = now
     graph.prune_old_nodes(max_nodes=500)
     graph._save()
-    return created
+    data = graph.get_graph_data()
+    nodes_by_type = dict((data.get("stats") or {}).get("nodes_by_type") or {})
+    report = {
+        "bootstrap_ts": now,
+        "nodes_before": nodes_before,
+        "edges_before": edges_before,
+        "nodes_after": len(data.get("nodes") or []),
+        "edges_after": len(data.get("edges") or []),
+        "nodes_created": max(0, len(data.get("nodes") or []) - nodes_before),
+        "edges_created": max(0, len(data.get("edges") or []) - edges_before),
+        "nodes_by_type": nodes_by_type,
+        "most_activated": (data.get("stats") or {}).get("most_activated", ""),
+        "last_bootstrap": graph.last_bootstrap,
+    }
+    try:
+        report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+    print(
+        f"[concept_graph] bootstrap complete nodes={report['nodes_after']} edges={report['edges_after']} "
+        f"created_nodes={report['nodes_created']} created_edges={report['edges_created']} by_type={nodes_by_type}"
+    )
+    return report
 
