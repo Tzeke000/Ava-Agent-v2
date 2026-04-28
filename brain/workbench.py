@@ -6,7 +6,9 @@ repair proposals. No automatic repair actions are executed in this phase.
 """
 from __future__ import annotations
 
+import json
 from collections import defaultdict
+from pathlib import Path
 from typing import Optional
 
 from config.ava_tuning import WORKBENCH_CONFIG
@@ -20,6 +22,22 @@ from .perception_types import (
 
 _warning_streaks: dict[str, int] = defaultdict(int)
 wbcfg = WORKBENCH_CONFIG
+_ROOT = Path(__file__).resolve().parents[1]
+_SUPPRESS_JSON = _ROOT / "state" / "workbench" / "suppress_proposals.json"
+
+
+def _suppressed_proposal_types() -> frozenset[str]:
+    s: set[str] = set(str(t).strip() for t in (wbcfg.suppress_proposal_types or ()) if str(t).strip())
+    try:
+        raw = json.loads(_SUPPRESS_JSON.read_text(encoding="utf-8"))
+        if isinstance(raw, dict):
+            for key in ("proposal_types", "types"):
+                v = raw.get(key)
+                if isinstance(v, list):
+                    s.update(str(x).strip() for x in v if str(x).strip())
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        pass
+    return frozenset(s)
 
 
 def _clamp01(v: float) -> float:
@@ -218,6 +236,10 @@ def build_workbench_proposals(
                 notes=["derived from proactive suppression evidence"],
             )
         )
+
+    suppressed = _suppressed_proposal_types()
+    if suppressed:
+        proposals = [p for p in proposals if getattr(p, "proposal_type", "") not in suppressed]
 
     if not proposals:
         noop = _mk_proposal(

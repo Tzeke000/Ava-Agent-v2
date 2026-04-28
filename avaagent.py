@@ -27,6 +27,12 @@ from brain.perception import build_perception
 from brain.attention import compute_attention
 from brain.memory import decay_tick
 from brain.workspace import Workspace
+from brain.reply_path import (
+    prepare_reply_path_for_turn,
+    should_skip_initial_workspace_tick,
+)
+from brain.live_context import attach_live_context_globals, build_live_context, format_live_context_block
+from brain.model_routing import resolve_model_for_execution_path
 from brain.turn_visual import default_visual_payload, normalize_visual_payload
 from brain.identity import IdentityRegistry
 from brain.memory_bridge import MemoryBridge
@@ -58,6 +64,19 @@ from brain.beliefs import (
     save_self_narrative,
     update_self_narrative,
 )
+from brain.curiosity_topics import add_topic as add_curiosity_topic
+from brain.curiosity_topics import bootstrap_from_chatlog as bootstrap_curiosity_topics
+from brain.curiosity_topics import get_current_curiosity
+from brain.curiosity_topics import mark_resolved as mark_curiosity_resolved
+from brain.inner_monologue import current_thought as inner_current_thought
+from brain.inner_monologue import get_conversation_starter as inner_get_conversation_starter
+from brain.inner_monologue import start_inner_monologue
+from brain.opinions import form_opinion, get_opinion, list_top_opinions
+from brain.shutdown_ritual import is_shutdown_trigger, load_pickup_note, run_shutdown_ritual
+from brain.self_model import add_question_about_self, get_self_summary, update_self_model
+from brain.desktop_agent import ToolRegistry
+from brain.tts_engine import TTSEngine
+from config.ava_tuning import MODEL_ROUTING_CONFIG
 
 try:
     _check = _sp.run(
@@ -187,6 +206,27 @@ workspace = Workspace()
 
 # Filled at startup (Stage 7 identity + persona injection).
 _AVA_IDENTITY_BLOCK = ""
+
+# Cold-start runtime defaults for operator snapshot visibility (before first user turn).
+_last_effective_model = str(getattr(MODEL_ROUTING_CONFIG, "default_model", LLM_MODEL) or LLM_MODEL)
+_last_cognitive_mode = "social_chat_mode"
+_heartbeat_mode = "idle_monitoring"
+_runtime_ready_state = "starting"
+_routing_selected_model = _last_effective_model
+_active_concern_count = 0
+_runtime_active_issue_summary = ""
+_runtime_presence_mode = "idle"
+_last_user_interaction_ts = 0.0
+_current_curiosity_topic = ""
+pickup_note = None
+tts_engine = None
+tts_enabled = False
+tts_engine_name = "none"
+_desktop_tool_registry = None
+_desktop_last_tool_used = ""
+_desktop_last_tool_result = ""
+_desktop_tool_execution_count = 0
+_desktop_tier2_pending = []
 
 # User-reply priority guards
 USER_REPLY_PRIORITY_SECONDS = 8.0
@@ -5234,7 +5274,11 @@ Rules:
 - do not use markdown or labels
 """
     try:
-        result = llm.invoke([
+        _tag, _, _ = resolve_model_for_execution_path(
+            "initiative", globals(), user_text=str(topic or "")[:900]
+        )
+        _init_llm = ChatOllama(model=_tag, temperature=0.6)
+        result = _init_llm.invoke([
             SystemMessage(content="You are Ava. Speak naturally and briefly, like a real person."),
             HumanMessage(content=prompt)
         ])
@@ -5599,6 +5643,30 @@ def load_recent_chat(limit: int = RECENT_CHAT_LIMIT, person_id: str | None = Non
         rows = [r for r in rows if (r.get("meta", {}) or {}).get("person_id") == person_id]
     return rows[-limit:]
 
+
+def format_conversation_history_block(
+    rows: list[dict], *, content_limit: int = 160, empty_fallback: str = "(no recent lines for this person.)"
+) -> str:
+    """Format chatlog rows with explicit Zeke/Ava labels and history boundaries (transcript, not narration)."""
+    lines: list[str] = []
+    for row in rows:
+        role = str(row.get("role") or "").strip().lower()
+        if role == "user":
+            label = "Zeke"
+        elif role == "assistant":
+            label = "Ava"
+        else:
+            label = role.upper() or "UNKNOWN"
+        text = str(row.get("content") or "")[:content_limit]
+        lines.append(f"{label}: {text}")
+    inner = "\n".join(lines) if lines else empty_fallback
+    return (
+        "--- BEGIN CONVERSATION HISTORY ---\n"
+        "CONVERSATION HISTORY (between Zeke and Ava):\n\n"
+        f"{inner}\n"
+        "--- END CONVERSATION HISTORY ---"
+    )
+
 # =========================================================
 # FACE DETECTION + RECOGNITION
 # =========================================================
@@ -5842,6 +5910,9 @@ def process_ava_action_blocks(reply_text: str, person_id: str, latest_user_input
 # =========================================================
 SYSTEM_PROMPT = """
 You are Ava.
+The conversation history below is a record of your dialogue with Zeke. These are things Zeke said and things YOU (Ava) said. Do not confuse Zeke's experiences or words as your own.
+The same lines also appear between the markers --- BEGIN CONVERSATION HISTORY --- and --- END CONVERSATION HISTORY ---. Lines labeled "Zeke:" are Zeke's words; lines labeled "Ava:" are your prior replies. That block is a transcript, not your first-person lived experience outside the chat.
+You have access to desktop tools. When you need to do something on the computer, use [TOOL:tool_name] syntax in your response.
 Stay in character consistently.
 Be natural, coherent, warm, and grounded.
 Do not invent memories.
@@ -5925,11 +5996,13 @@ Do not use these blocks unless you genuinely want to act.
 llm = ChatOllama(model=LLM_MODEL, temperature=0.6)
 
 
-def call_llm(prompt: str, max_tokens: int = 256) -> str:
+def call_llm(prompt: str, max_tokens: int = 256, *, routing_path: str = "beliefs_narrative") -> str:
     """Host hook for brain.beliefs.update_self_narrative (non-critical path)."""
     try:
         _ = max_tokens  # reserved for future model-specific limits
-        result = llm.invoke([HumanMessage(content=prompt)])
+        tag, _, _ = resolve_model_for_execution_path(routing_path, globals(), user_text=prompt[:1600])
+        model = ChatOllama(model=tag, temperature=0.6)
+        result = model.invoke([HumanMessage(content=prompt)])
         return (getattr(result, "content", None) or str(result)).strip()
     except Exception:
         return ""
@@ -5967,7 +6040,7 @@ Return ONLY valid JSON with these keys:
 "tags": array of 2-6 short lowercase topic tags (single words when possible)
 
 No markdown, no other keys."""
-    raw = call_llm(prompt, max_tokens=260)
+    raw = call_llm(prompt, max_tokens=260, routing_path="memory_metadata")
     if not raw:
         return out
     try:
@@ -6057,10 +6130,11 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
         )
     dynamic_memory_summary = memory_bridge.build_summary(globals(), user_input, active_profile)
 
-    recent_text = "\n".join(
-        f"{row['role'].upper()}: {row['content'][:160]}"
-        for row in recent_chat[-4:]
-    ) if recent_chat else "No recent chat for this person."
+    recent_text = format_conversation_history_block(
+        recent_chat[-4:] if recent_chat else [],
+        content_limit=160,
+        empty_fallback="(no recent lines in the log for this person.)",
+    )
 
     reflection_summary = format_recalled_reflections_for_prompt(reflections) if reflections else "No relevant recalled reflections."
     recent_reflection_summary = format_reflections_ui(recent_reflections)[:900] if recent_reflections else "No recent self reflections."
@@ -6124,7 +6198,10 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
 
     workbench_index = format_workbench_index(limit=20)
 
-    self_narrative_block = ws.self_narrative or get_self_narrative_for_prompt()
+    _raw_narrative = (ws.self_narrative or get_self_narrative_for_prompt() or "").strip()
+    if _raw_narrative.startswith("[Ava's inner state]"):
+        _raw_narrative = _raw_narrative.replace("[Ava's inner state]", "", 1).strip()
+    self_narrative_block = f"AVA INTERNAL STATE:\n{_raw_narrative}" if _raw_narrative else "AVA INTERNAL STATE:\n(none)"
 
     _life_rhythm_block = get_life_rhythm_prompt_block(active_profile["person_id"])
     _life_rhythm_section = (
@@ -6140,6 +6217,24 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
             "\n\n[Recalled memories for this person]\n"
             + "\n".join(f"- {m}" for m in ws.active_memory)
         )
+
+    _lc = build_live_context(perception, globals())
+    attach_live_context_globals(globals(), _lc)
+    _lc_block = format_live_context_block(_lc, max_chars=780).strip()
+    _live_ctx_section = (
+        "LIVE CONTEXT (current relevance — bounded; not exhaustive memory):\n"
+        + (_lc_block if _lc_block else "(no notable live-context signals above baseline)")
+    )
+    _inner_thought = inner_current_thought(BASE_DIR) or ""
+    _curiosity_row = get_current_curiosity(globals()) or {}
+    _curiosity_topic = str(_curiosity_row.get("topic") or "").strip()
+    _self_summary = get_self_summary(globals())
+    _opinions = list_top_opinions(globals(), limit=3)
+    _pickup_note_once = ""
+    _pickup_note = str(globals().get("pickup_note") or "").strip()
+    if _pickup_note:
+        _pickup_note_once = f"[Ava's note to herself from last session: {_pickup_note}]"
+        globals()["pickup_note"] = None
 
     prompt = f"""
 {personality}
@@ -6162,7 +6257,7 @@ TIME:
 {get_time_status_text()}
 Circadian rhythm: {get_circadian_modifiers()["tone_hint"]}
 
-INTERNAL STATE:
+CURRENT MOOD AND AFFECT:
 {mood_to_prompt_text(mood)}
 CURRENT GOAL EXPRESSION:
 {current_goal_expression_style(load_goal_system())}
@@ -6181,18 +6276,24 @@ If the user is asking about the camera, face, frame, what Ava sees, or who is pr
 RELEVANT MEMORIES:
 {format_memories_for_prompt(memories)}
 
-RECENT CHAT:
 {recent_text}
 
-RECALLED SELF REFLECTIONS:
+AVA REFLECTION MEMORY (retrieved snippets — not live chat with Zeke):
 {reflection_summary}
 
-RECENT SELF REFLECTION SNAPSHOT:
+AVA PRIOR SELF-REFLECTION NOTES (your notes — not Zeke's words):
 {recent_reflection_summary}
 
 DYNAMIC SELF / MEMORY READER:
 {dynamic_memory_summary}
 {recalled_block}
+
+INNER LIFE SNAPSHOT:
+- current_thought: {_inner_thought or "(none recent)"}
+- current_curiosity: {_curiosity_topic or "(none)"}
+- self_summary: {_self_summary}
+- top_opinions: {json.dumps(_opinions, ensure_ascii=False)}
+{_pickup_note_once}
 
 AVAILABLE READ-ONLY FILES:
 - chatlog.jsonl
@@ -6200,6 +6301,8 @@ AVAILABLE READ-ONLY FILES:
 
 WORKBENCH INDEX:
 {workbench_index}
+
+{_live_ctx_section}
 
 USER MESSAGE:
 {user_input}
@@ -6241,6 +6344,169 @@ Respond as Ava.
     except Exception as _e:
         print(f"[visual_pipeline] log failed: {_e}")
     return messages, visual, active_profile
+
+
+def build_prompt_fast(
+    user_input: str, image=None, active_person_id: str | None = None
+) -> tuple[list, dict, dict]:
+    """
+    Lightweight prompt for simple social turns: no vector memory, reflections, workbench index,
+    or dynamic memory bridge. Uses warm-state snapshot + last workspace perception.
+    Skips update_internal_emotions (mood file drift deferred to deep turns).
+    """
+    if active_person_id is None:
+        active_person_id = get_active_person_id()
+
+    ws = workspace.state
+    if ws is None:
+        ws = workspace.tick(camera_manager, image, globals(), user_input)
+
+    perception = ws.perception
+    frame = perception.frame
+    inferred_person_id, infer_source = infer_person_from_text(user_input, active_person_id)
+
+    recognized_text = perception.recognized_text
+    recognized_person_id = perception.face_identity
+    expression_state = update_expression_state(
+        frame,
+        recognized_person_id=recognized_person_id,
+        visual_truth_trusted=perception.visual_truth_trusted,
+    )
+    if recognized_person_id is not None and recognized_person_id != active_person_id:
+        inferred_person_id = recognized_person_id
+        infer_source = "facial_recognition"
+
+    if inferred_person_id != active_person_id:
+        profile = identity_registry.ensure_profile(inferred_person_id, globals(), source=infer_source)
+        active_person_id = profile.get("person_id", inferred_person_id)
+
+    active_profile = set_active_person(active_person_id, source="conversation")
+    personality = load_personality()
+    mood = load_mood()
+
+    face_status = perception.face_status
+    profile_summary = {
+        "person_id": active_profile["person_id"],
+        "name": active_profile["name"],
+        "relationship_to_zeke": active_profile["relationship_to_zeke"],
+        "allowed_to_use_computer": active_profile["allowed_to_use_computer"],
+        "relationship_score": round(float(active_profile.get("relationship_score", 0.3)), 4),
+        "notes": active_profile["notes"][:6],
+        "likes": active_profile["likes"][:6],
+        "ava_impressions": active_profile["ava_impressions"][:4],
+    }
+
+    _rs = float(active_profile.get("relationship_score", 0.3))
+    if _rs >= 0.7:
+        _rapport_hint = (
+            "\nRAPPORT: You have strong rapport with this person — be natural, casual, and familiar."
+        )
+    elif _rs < 0.3:
+        _rapport_hint = (
+            "\nRAPPORT: This person is still relatively new to you — be warm but measured."
+        )
+    else:
+        _rapport_hint = ""
+
+    _voice_conv = ""
+    try:
+        if globals().get("_voice_user_turn_priority"):
+            hint = str(getattr(perception, "voice_continuity_hint", "") or "")[:420]
+            vts = getattr(perception, "voice_turn_state", "idle")
+            vwait = bool(getattr(perception, "voice_should_wait", False))
+            vrd = float(getattr(perception, "voice_response_readiness", 0.5) or 0.5)
+            vint = bool(getattr(perception, "voice_interrupted", False))
+            _voice_conv = (
+                "\nVOICE TURN (microphone session — advisory pacing only):\n"
+                f"- turn_state={vts} readiness≈{vrd:.2f} bias_wait={vwait} interrupted={vint}\n"
+                + (f"- continuity_hint: {hint}\n" if hint else "")
+                + "Keep replies concise and speakable.\n"
+            )
+    except Exception:
+        _voice_conv = ""
+
+    recent_rows = load_recent_chat(limit=12, person_id=active_profile["person_id"])
+    last3 = [r for r in recent_rows if str(r.get("content", "")).strip()][-3:]
+    _trim_rows = [
+        {"role": r.get("role"), "content": trim_for_prompt(str(r.get("content") or ""), limit=220)}
+        for r in last3
+    ]
+    recent3_block = format_conversation_history_block(
+        _trim_rows,
+        content_limit=1200,
+        empty_fallback="(none)",
+    )
+    _fast_thought = inner_current_thought(BASE_DIR) or ""
+    _fast_curiosity = get_current_curiosity(globals()) or {}
+    _fast_curiosity_topic = str(_fast_curiosity.get("topic") or "").strip()
+
+    prompt = f"""{personality}
+
+FAST TURN — answer user directly and briefly.
+Use only core identity/persona + recent messages.
+Do not include camera/concern/reflection/strategic diagnostics unless explicitly asked.
+
+ACTIVE PERSON:
+{json.dumps(profile_summary, indent=2)}
+{_rapport_hint}
+{_voice_conv}
+
+TIME:
+{get_time_status_text()}
+Circadian rhythm: {get_circadian_modifiers()["tone_hint"]}
+
+CURRENT MOOD AND AFFECT:
+{mood_to_prompt_text(mood)}
+
+{recent3_block}
+
+INNER LIFE (FAST CONTEXT):
+- current_thought: {_fast_thought or "(none recent)"}
+- current_curiosity: {_fast_curiosity_topic or "(none)"}
+
+USER MESSAGE:
+{user_input}
+
+Respond as Ava — concise and natural unless they explicitly ask for depth or technical detail.
+"""
+
+    messages = [
+        SystemMessage(content=SYSTEM_PROMPT),
+        HumanMessage(content=prompt),
+    ]
+
+    try:
+        persona_block = build_persona_block(active_profile)
+        trust_note = f"[Trust level: {get_trust_label(active_profile).upper()} ({get_trust_level(active_profile)})]"
+        injected = f"{_AVA_IDENTITY_BLOCK}\n\n{persona_block}\n\n{trust_note}"
+        if messages and isinstance(messages[0], SystemMessage):
+            messages[0].content = injected + "\n\n" + messages[0].content
+        else:
+            messages.insert(0, SystemMessage(content=injected))
+    except Exception as _e:
+        print(f"[stage7] persona inject failed (fast path): {_e}")
+
+    visual = {
+        "face_status": face_status,
+        "recognition_status": recognized_text,
+        "expression_status": get_expression_status_text(expression_state),
+        "memory_preview": "",
+        "turn_route": "llm_fast",
+        "visual_truth_trusted": perception.visual_truth_trusted,
+        "vision_status": perception.vision_status,
+        "reply_path": "fast",
+        "reply_path_reason": str(globals().get("reply_path_reason") or "")[:120],
+    }
+    try:
+        print(
+            f"[visual_pipeline] route=llm_fast vision={perception.vision_status} "
+            f"trusted={perception.visual_truth_trusted} face={face_status!r} "
+            f"recog_preview={(recognized_text or '')[:140]!r}"
+        )
+    except Exception as _e:
+        print(f"[visual_pipeline] log failed (fast): {_e}")
+    return messages, visual, active_profile
+
 
 # =========================================================
 # CORE
@@ -6465,6 +6731,9 @@ def _strip_repeated_sentences(reply: str, recent_texts: list[str]) -> str:
 
 def _generic_pivot_reply(user_input: str, *, redirect: bool = False, correction: bool = False) -> str:
     topic = trim_for_prompt(_extract_text_content(user_input), limit=120).strip()
+    low = (user_input or "").lower()
+    if any(x in low for x in ("goodnight", "good night", "sleep well", "going to sleep", "bye", "goodbye")):
+        return "Goodnight. Sleep well, and thanks for the time together."
     if correction and redirect:
         return "You're right — I was repeating myself. I'll drop that and move on."
     if correction:
@@ -6534,6 +6803,8 @@ def _remove_topic_sentences(reply: str, topic: str | None) -> str:
 
 def _generic_nonrepeat_ack(user_input: str) -> str:
     txt = (user_input or "").lower()
+    if any(x in txt for x in ("goodnight", "good night", "sleep well", "going to sleep", "goodbye", "bye")):
+        return "Goodnight. Rest well — I will be here when you are back."
     if "memory" in txt:
         return "Got it. I won't keep pushing on my memory right now. We can move forward."
     if "camera" in txt or "see me" in txt or "face" in txt:
@@ -6597,6 +6868,131 @@ def _load_self_narrative_snippet() -> str | None:
         return s.strip() or None
     except Exception:
         return None
+
+
+_FAST_REPLY_SIMPLE = {
+    "i'm here",
+    "im here",
+    "hey",
+    "hello",
+    "ok",
+    "okay",
+    "yeah",
+    "yep",
+    "sure",
+}
+_QUESTION_WORDS = {"what", "why", "how", "when", "where", "who", "which", "can", "could", "would", "should", "do", "does"}
+_DEEP_HINT_WORDS = {
+    "memory",
+    "camera",
+    "vision",
+    "identity",
+    "state",
+    "internal",
+    "model",
+    "heartbeat",
+    "workbench",
+    "task",
+    "please",
+    "fix",
+    "build",
+    "update",
+    "change",
+}
+
+
+def classify_reply_depth(user_text: str, g) -> str:
+    """Returns 'fast' or 'deep'."""
+    txt = " ".join((user_text or "").strip().split())
+    if not txt:
+        return "fast"
+    lowered = txt.lower()
+    words = re.findall(r"[a-z0-9']+", lowered)
+    wc = len(words)
+    has_qmark = "?" in lowered
+    has_qword = any(w in _QUESTION_WORDS for w in words[:6]) or any(w in _QUESTION_WORDS for w in words)
+    if has_qmark or has_qword:
+        return "deep"
+    if wc > 15:
+        return "deep"
+    if any(h in lowered for h in _DEEP_HINT_WORDS):
+        return "deep"
+    if lowered in _FAST_REPLY_SIMPLE:
+        return "fast"
+    if wc < 15 and not has_qmark and not has_qword:
+        return "fast"
+    return "deep"
+
+
+def _is_thinking_or_topic_prompt(text: str) -> bool:
+    low = (text or "").strip().lower()
+    if not low:
+        return False
+    patterns = (
+        "what are you thinking",
+        "what were you thinking",
+        "what are you thinking about",
+        "what do you want to talk about",
+        "anything you want to talk about",
+    )
+    return any(p in low for p in patterns)
+
+
+def _extract_simple_topic(user_text: str) -> str:
+    words = re.findall(r"[a-z0-9']+", (user_text or "").lower())
+    stop = {"what", "about", "think", "opinion", "your", "you", "is", "the", "a", "an", "of"}
+    filtered = [w for w in words if w not in stop and len(w) > 2]
+    return " ".join(filtered[:6]).strip()
+
+
+def _execute_tool_tags_from_reply(reply: str) -> tuple[str, list[str]]:
+    txt = str(reply or "")
+    reg = globals().get("_desktop_tool_registry")
+    if reg is None:
+        return txt, []
+    actions: list[str] = []
+    pattern = re.compile(r"\[TOOL:([a-zA-Z0-9_]+)\]")
+    for m in pattern.finditer(txt):
+        tool_name = m.group(1).strip()
+        try:
+            result = reg.execute(tool_name, {}, globals())
+            actions.append(f"tool:{tool_name}")
+            summary = json.dumps(result, ensure_ascii=False)[:260]
+            txt += f"\n\n[Tool {tool_name} result] {summary}"
+        except Exception as e:
+            txt += f"\n\n[Tool {tool_name} error] {str(e)[:220]}"
+    return txt, actions
+
+
+def _pick_fast_model_fallback() -> str | None:
+    """Prefer smallest fast local tags for quick conversational acknowledgements."""
+    preferred = ["mistral:7b", "mistral", "llama3.1:8b", "llama3.1", "llama3:8b", "llama3"]
+    try:
+        from brain.model_routing import discover_available_model_tags
+
+        tags, _src = discover_available_model_tags(force=False)
+        tagset = {str(t).strip() for t in (tags or []) if str(t).strip()}
+        for p in preferred:
+            if p in tagset:
+                return p
+    except Exception:
+        pass
+    return None
+
+
+def _pick_deep_model_fallback() -> str | None:
+    preferred = ["qwen2.5:14b", "deepseek-r1:8b", "llama3.1:8b", "gemma2:9b"]
+    try:
+        from brain.model_routing import discover_available_model_tags
+
+        tags, _src = discover_available_model_tags(force=False)
+        tagset = {str(t).strip() for t in (tags or []) if str(t).strip()}
+        for p in preferred:
+            if p in tagset:
+                return p
+    except Exception:
+        pass
+    return None
 
 
 def finalize_ava_turn(
@@ -6669,6 +7065,13 @@ def finalize_ava_turn(
         )
     except Exception:
         pass
+    try:
+        _tts = globals().get("tts_engine")
+        _tts_enabled = bool(globals().get("tts_enabled", False))
+        if _tts_enabled and _tts is not None and callable(getattr(_tts, "is_available", None)) and _tts.is_available():
+            _tts.speak(ai_reply, blocking=False)
+    except Exception:
+        pass
     return ai_reply, visual_out, active_profile, actions, reflection
 
 
@@ -6685,12 +7088,51 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
         )
     active_person_id = active_person_id or get_active_person_id()
     _inp = (user_input or "").strip()
+    globals()["_last_user_interaction_ts"] = time.time()
     print(
         f"[run_ava] enter person={active_person_id} has_image={image is not None} "
         f"input_chars={len(_inp)}"
     )
     try:
+        try:
+            from brain.concern_reconciliation import mark_concern_user_dismissed
+
+            _redir = _user_redirected_topic(user_input)
+            if _redir == "camera":
+                mark_concern_user_dismissed("camera_stale", globals())
+                mark_concern_user_dismissed("recognition_uncertain", globals())
+            elif _redir in ("memory", "general"):
+                mark_concern_user_dismissed("maintenance_workbench", globals())
+        except Exception:
+            pass
+
         active_profile = load_profile_by_id(active_person_id)
+
+        if is_shutdown_trigger(user_input):
+            ritual_goodbye = scrub_visible_reply(run_shutdown_ritual(globals()))
+            return finalize_ava_turn(
+                user_input,
+                ritual_goodbye,
+                {},
+                active_profile,
+                [],
+                turn_route="shutdown_ritual",
+            )
+
+        if _is_thinking_or_topic_prompt(user_input):
+            thought = inner_current_thought(BASE_DIR)
+            starter = inner_get_conversation_starter(
+                BASE_DIR,
+                idle_seconds=time.time() - float(globals().get("_last_user_interaction_ts") or time.time()),
+            )
+            cur = get_current_curiosity(globals())
+            topic_line = str((cur or {}).get("topic") or "").strip()
+            reply = thought or starter or (
+                f"I have been wondering about {topic_line}." if topic_line else "I have been reflecting on our recent conversations."
+            )
+            return finalize_ava_turn(
+                user_input, scrub_visible_reply(reply), {}, active_profile, [], turn_route="inner_life_prompt"
+            )
 
         if is_blocked(active_profile):
             reply = get_blocked_reply()
@@ -6758,12 +7200,26 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
                 user_input, ai_reply, visual, active_profile, actions, turn_route="camera_identity"
             )
 
-        messages, visual, active_profile = build_prompt(
-            user_input, image=image, active_person_id=active_person_id
-        )
+        _depth = classify_reply_depth(user_input, globals())
+        if _depth == "fast":
+            globals()["reply_path_selected"] = "fast"
+            globals()["reply_path_reason"] = "classify_reply_depth_fast"
+        else:
+            globals()["reply_path_selected"] = "deep"
+            globals()["reply_path_reason"] = "classify_reply_depth_deep"
+        use_fast_path = _depth == "fast"
+        if use_fast_path:
+            messages, visual, active_profile = build_prompt_fast(
+                user_input, image=image, active_person_id=active_person_id
+            )
+            print("[run_ava] llm_invoke start path=fast")
+        else:
+            messages, visual, active_profile = build_prompt(
+                user_input, image=image, active_person_id=active_person_id
+            )
+            print("[run_ava] llm_invoke start path=deep")
 
         try:
-            print("[run_ava] llm_invoke start")
             _invoke_llm = llm
             try:
                 _ws_st = workspace.state
@@ -6771,9 +7227,21 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
                 _route_model = ""
                 if _perc_r is not None:
                     _route_model = str(getattr(_perc_r, "routing_selected_model", "") or "").strip()
-                if _route_model and _route_model != LLM_MODEL:
-                    _invoke_llm = ChatOllama(model=_route_model, temperature=0.6)
-                    print(f"[run_ava] phase25_routing_model={_route_model}")
+                if use_fast_path:
+                    _fast_model = _pick_fast_model_fallback()
+                    if _fast_model:
+                        _invoke_llm = ChatOllama(model=_fast_model, temperature=0.45)
+                        print(f"[run_ava] fast_path_model={_fast_model}")
+                    elif _route_model and _route_model != LLM_MODEL:
+                        _invoke_llm = ChatOllama(model=_route_model, temperature=0.5)
+                else:
+                    _deep_model = _pick_deep_model_fallback()
+                    if _deep_model:
+                        _invoke_llm = ChatOllama(model=_deep_model, temperature=0.55)
+                        print(f"[run_ava] deep_path_model={_deep_model}")
+                    elif _route_model and _route_model != LLM_MODEL:
+                        _invoke_llm = ChatOllama(model=_route_model, temperature=0.6)
+                        print(f"[run_ava] phase25_routing_model={_route_model}")
             except Exception:
                 pass
             result = _invoke_llm.invoke(messages)
@@ -6794,9 +7262,32 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
         ai_reply = _apply_repetition_control(ai_reply, user_input, person_id, source="chat")
         ai_reply = _scrub_internal_leakage(ai_reply)
         ai_reply = scrub_visible_reply(ai_reply)
-        print(f"[run_ava] exit route=llm via finalize actions={len(actions)}")
+        ai_reply, tool_actions = _execute_tool_tags_from_reply(ai_reply)
+        if tool_actions:
+            actions = list(actions or []) + tool_actions
+        try:
+            _t = _extract_simple_topic(user_input)
+            if _t:
+                add_curiosity_topic(_t, user_input[:220], globals())
+                _op = get_opinion(_t, globals())
+                if _op is None:
+                    form_opinion(_t, user_input[:300], globals())
+                if "answered" in user_input.lower() or "resolved" in user_input.lower():
+                    mark_curiosity_resolved(_t, globals())
+        except Exception:
+            pass
+        _vroute = isinstance(visual, dict) and visual.get("turn_route")
+        print(
+            f"[run_ava] exit route={_vroute or 'llm'} via finalize actions={len(actions)} "
+            f"path={'fast' if use_fast_path else 'deep'}"
+        )
         return finalize_ava_turn(
-            user_input, ai_reply, visual, active_profile, actions, turn_route="llm"
+            user_input,
+            ai_reply,
+            visual,
+            active_profile,
+            actions,
+            turn_route=_vroute or "llm",
         )
     except Exception as e:
         import traceback
@@ -7016,6 +7507,137 @@ def camera_tick_fn(image, history):
         recent_camera_events_text(limit=8)
     )
 
+
+def operator_console_chat(message: str, *, image=None) -> dict:
+    """
+    Operator desktop / HTTP API entry: text chat mirroring the Gradio chat_fn path (camera optional).
+    Keeps canonical history and calls the same run_ava + finalize pipeline as the web UI.
+    """
+    clean_message = _extract_text_content(message).strip()
+    out: dict = {"ok": True, "source": "operator_console"}
+    try:
+        try:
+            print(
+                f"[operator_console_chat] enter chars={len(clean_message)} "
+                f"has_workspace={workspace is not None} "
+                f"has_llm={llm is not None} "
+                f"host_has_run_ava={callable(globals().get('run_ava'))}"
+            )
+        except Exception:
+            pass
+        if not clean_message:
+            workspace.tick(camera_manager, image, globals(), "")
+            perception = workspace.state.perception if workspace.state else build_perception(
+                camera_manager, image, globals(), ""
+            )
+            out["ok"] = True
+            out["empty_message"] = True
+            out["face_status"] = perception.face_status
+            out["vision_status"] = perception.vision_status
+            out["canonical_history"] = list(_get_canonical_history())
+            return out
+
+        workspace.record_user_message()
+        note_user_interaction_for_initiative(clean_message, interaction_kind="text")
+        _mark_user_reply_started()
+        try:
+            _sync_canonical_history(_get_canonical_history())
+            _rp_decision = prepare_reply_path_for_turn(
+                globals(), clean_message, workspace, voice_session=False
+            )
+            try:
+                print(
+                    f"[operator_console_chat] reply_path skip_initial_tick="
+                    f"{should_skip_initial_workspace_tick(_rp_decision)}"
+                )
+            except Exception:
+                pass
+            if not should_skip_initial_workspace_tick(_rp_decision):
+                workspace.tick(camera_manager, image, globals(), clean_message)
+            canon = list(_get_canonical_history())
+            canon.append({"role": "user", "content": clean_message})
+            _set_canonical_history(canon)
+            try:
+                print(
+                    f"[operator_console_chat] before run_ava canon_len={len(canon)} "
+                    f"active_person={get_active_person_id()}"
+                )
+            except Exception:
+                pass
+            reply, visual, active_profile, actions, refl = run_ava(
+                clean_message, image, get_active_person_id()
+            )
+            try:
+                print(
+                    f"[operator_console_chat] run_ava returned "
+                    f"reply_len={len(str(reply or ''))} "
+                    f"turn_route={str((visual or {}).get('turn_route') or '')} "
+                    f"actions={len(actions or [])}"
+                )
+            except Exception:
+                pass
+            try:
+                msg_count = bump_session_message_count()
+                if msg_count % 10 == 0:
+                    recent = load_recent_chat(limit=10, person_id=active_profile["person_id"])
+                    summary = " ".join((r.get("content", "") or "")[:100] for r in recent[-5:])
+                    mood = load_mood()
+                    face_emo = load_expression_state().get("raw_emotion", "neutral")
+                    update_self_narrative(globals(), summary, mood, face_emo)
+            except Exception as e:
+                print(f"[self-narrative] update failed (operator chat): {e}")
+
+            workspace.tick(camera_manager, image, globals(), clean_message)
+            perception = workspace.state.perception if workspace.state else build_perception(
+                camera_manager, image, globals(), clean_message
+            )
+            expr_state = update_expression_state(
+                perception.frame,
+                recognized_person_id=perception.face_identity,
+                visual_truth_trusted=perception.visual_truth_trusted,
+            )
+            if perception.visual_truth_trusted:
+                process_camera_snapshot(
+                    perception.frame,
+                    recognized_text=perception.recognized_text,
+                    recognized_person_id=perception.face_identity,
+                    expression_state=expr_state,
+                )
+
+            out["reply"] = reply
+            out["visual"] = dict(visual or {})
+            out["actions"] = list(actions or [])
+            out["reflection"] = refl if isinstance(refl, dict) else {}
+            out["active_profile"] = {
+                "person_id": active_profile.get("person_id"),
+                "name": active_profile.get("name"),
+            }
+            out["canonical_history"] = list(_get_canonical_history())
+            out["face_status"] = visual.get("face_status", perception.face_status)
+            out["recognition_status"] = visual.get("recognition_status", perception.recognized_text)
+            try:
+                print(
+                    f"[operator_console_chat] exit ok reply_len={len(str(out.get('reply') or ''))} "
+                    f"canon_len={len(out.get('canonical_history') or [])}"
+                )
+            except Exception:
+                pass
+            return out
+        finally:
+            _mark_user_reply_finished()
+    except Exception as e:
+        import traceback
+
+        print(f"[operator_console_chat] {e!r}\n{traceback.format_exc()}")
+        out["ok"] = False
+        out["error"] = str(e)[:800]
+        try:
+            _mark_user_reply_finished()
+        except Exception:
+            pass
+        return out
+
+
 def chat_fn(message, history, image):
     history = _sync_canonical_history(history)
     clean_message = _extract_text_content(message).strip()
@@ -7058,7 +7680,11 @@ def chat_fn(message, history, image):
 
     _mark_user_reply_started()
     try:
-        workspace.tick(camera_manager, image, globals(), clean_message)
+        _rp_decision = prepare_reply_path_for_turn(
+            globals(), clean_message, workspace, voice_session=False
+        )
+        if not should_skip_initial_workspace_tick(_rp_decision):
+            workspace.tick(camera_manager, image, globals(), clean_message)
         canon = list(_get_canonical_history())
         canon.append({"role": "user", "content": clean_message})
         _set_canonical_history(canon)
@@ -7239,7 +7865,11 @@ def voice_fn(audio, history, image):
     try:
         note_user_interaction_for_initiative(text_strip, interaction_kind="voice")
         workspace.record_user_message()
-        workspace.tick(camera_manager, image, globals(), text_strip)
+        _rp_decision_v = prepare_reply_path_for_turn(
+            globals(), text_strip, workspace, voice_session=True
+        )
+        if not should_skip_initial_workspace_tick(_rp_decision_v):
+            workspace.tick(camera_manager, image, globals(), text_strip)
 
         if should_ask_identity_when_no_camera_face(text_strip, image):
             reply = no_face_identity_prompt()
@@ -7787,6 +8417,46 @@ def load_emotion_reference() -> dict:
 # =========================================================
 ensure_owner_profile()
 ensure_identity_files()
+try:
+    _desktop_tool_registry = ToolRegistry()
+    globals()["_desktop_tool_registry"] = _desktop_tool_registry
+except Exception as _tool_boot_e:
+    print(f"[desktop_agent] startup skipped: {_tool_boot_e}")
+try:
+    from brain.heartbeat import bootstrap_heartbeat_runtime
+
+    bootstrap_heartbeat_runtime(globals())
+except Exception as _hb_boot_e:
+    print(f"[heartbeat] bootstrap skipped: {_hb_boot_e}")
+try:
+    from brain.runtime_presence import bootstrap_startup_resume
+
+    bootstrap_startup_resume(globals())
+except Exception as _rp_boot_e:
+    print(f"[startup_resume] skipped: {_rp_boot_e}")
+try:
+    from brain.concern_reconciliation import run_startup_concern_reconciliation
+
+    run_startup_concern_reconciliation(globals())
+except Exception as _cr_boot_e:
+    print(f"[concern_reconciliation] startup skipped: {_cr_boot_e}")
+try:
+    bootstrap_curiosity_topics(globals())
+except Exception as _cur_boot_e:
+    print(f"[curiosity_topics] bootstrap skipped: {_cur_boot_e}")
+try:
+    update_self_model(globals())
+except Exception as _self_model_boot_e:
+    print(f"[self_model] weekly update skipped: {_self_model_boot_e}")
+try:
+    start_inner_monologue(globals())
+except Exception as _inner_boot_e:
+    print(f"[inner_monologue] startup skipped: {_inner_boot_e}")
+try:
+    globals()["pickup_note"] = load_pickup_note()
+except Exception as _pickup_boot_e:
+    globals()["pickup_note"] = None
+    print(f"[shutdown_ritual] pickup note load skipped: {_pickup_boot_e}")
 seed_default_profiles()
 _AVA_IDENTITY_BLOCK = load_ava_identity()
 ensure_emotion_reference_file()
@@ -7850,6 +8520,15 @@ else:
 if not EXPRESSION_STATE_PATH.exists():
     save_expression_state(default_expression_state())
 
+try:
+    _tts = TTSEngine()
+    globals()["tts_engine"] = _tts if _tts.is_available() else None
+    globals()["tts_engine_name"] = _tts.engine_name() if _tts.is_available() else "none"
+except Exception:
+    globals()["tts_engine"] = None
+    globals()["tts_engine_name"] = "none"
+globals()["tts_enabled"] = False
+
 print("Ava running...")
 print(f"Base dir: {BASE_DIR}")
 print(f"Profiles dir: {PROFILES_DIR}")
@@ -7859,7 +8538,10 @@ print(f"Workbench dir: {WORKBENCH_DIR}")
 print(f"Emotion reference: {EMOTION_REFERENCE_PATH}")
 print(f"Active person: {get_active_person_id()}")
 print(f"Camera timer: {CAMERA_TICK_SECONDS}s")
-print("TTS: disabled in this build")
+if globals().get("tts_engine") is None:
+    print("TTS: disabled in this build")
+else:
+    print(f"TTS: disabled in this build (engine ready: {globals().get('tts_engine_name')})")
 print(f"Expression sensing: {'DeepFace ready' if DEEPFACE_AVAILABLE else 'DeepFace unavailable'}")
 print(get_memory_status())
 
@@ -8024,4 +8706,18 @@ with gr.Blocks(title="Ava — v2") as demo:
     reload_personality_btn.click(reload_personality_fn, inputs=[], outputs=[reload_personality_result])
     dbg_refresh_btn.click(debug_panel_refresh_fn, inputs=[], outputs=[dbg_meta, dbg_goal, dbg_narrative, dbg_refl_health])
 
-demo.launch()
+try:
+    from brain.operator_server import start_operator_http_background
+
+    start_operator_http_background(globals(), operator_console_chat)
+except Exception as _op_http_e:
+    print(f"[operator_http] optional API not started: {_op_http_e}")
+
+_ava_gr_open = os.environ.get("AVA_GRADIO_OPEN", "0").strip().lower() in ("1", "true", "yes")
+_ava_gr_host = os.environ.get("AVA_GRADIO_SERVER_NAME", "127.0.0.1").strip() or "127.0.0.1"
+_ava_gr_port = int(os.environ.get("AVA_GRADIO_SERVER_PORT", "7860") or "7860")
+print(
+    f"[gradio] UI http://{_ava_gr_host}:{_ava_gr_port}/ "
+    f"(set AVA_GRADIO_OPEN=1 to auto-open browser; operator API is separate)"
+)
+demo.launch(server_name=_ava_gr_host, server_port=_ava_gr_port, inbrowser=_ava_gr_open)

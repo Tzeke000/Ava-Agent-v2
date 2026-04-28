@@ -4,9 +4,9 @@
   "raw_emotion": "unknown",
   "confidence": 0.0,
   "stability": 0.0,
-  "visible_face": true,
-  "recognized_person_id": "zeke",
+  "visible_face": false,
+  "recognized_person_id": null,
   "history": [],
-  "last_updated": "2026-04-26T02:33:48",
-  "note": "Expression unavailable: subprocess_error"
+  "last_updated": "2026-04-28T07:35:31",
+  "note": "Vision stabilizing — expression not treated as a current read"
 }

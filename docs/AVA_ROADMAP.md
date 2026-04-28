@@ -7,7 +7,7 @@
 
 ## Executive status — April 27, 2026
 
-**The staged roadmap through Phase 30 is implemented in this repo**, including **Phase 16.5** (supervised execution, `brain/workbench_execute.py`) and **Phase 16.6** (approval / command layer, `brain/workbench_commands.py`). Later sections document **what was built**; **future / additive** work (prospective memory calendar, debug UI, etc.) is called out explicitly so completed phases are not re-listed as missing baseline.
+**The staged roadmap through Phase 31 is implemented in this repo**, including **Phase 16.5** (supervised execution, `brain/workbench_execute.py`) and **Phase 16.6** (approval / command layer, `brain/workbench_commands.py`). Later sections document **what was built**; **future / additive** work (prospective memory calendar, debug UI, etc.) is called out explicitly so completed phases are not re-listed as missing baseline.
 
 **What Ava is:** a local, camera-aware agent with a **staged perception pipeline**, **vector memory**, **profiles**, **goals**, **initiative**, **reflection/contemplation**, **social and multi-session continuity**, **bounded tone guidance**, and a **supervised** (human-approved) path from diagnostics → workbench proposals → execution/rollback — without claiming human consciousness.
 
@@ -15,13 +15,13 @@
 
 ---
 
-## Architecture baseline — Phases 1 through 30 complete
+## Architecture baseline — Phases 1 through 31 complete
 
 **Foundation (Phases 1–20):** Staged **perception** (quality, blur, detection, recognition, salience, continuity, identity fallback, scene summary, interpretation layer), **perception memory**, **memory scoring**, **pattern learning**, **proactive triggers**, **self-tests**, **workbench proposals**, **reflection**, **contemplation**, **`bundle_to_perception_state`** modularization (**Phase 19** — mapping consolidated in `brain/perception_state_adapter.py` instead of inline in the pipeline), and centralized knobs in **`config/ava_tuning.py`** (**Phase 20**).
 
-**Post-foundation (Phases 21–30):** **Calibration / tuning** (21), **voice conversation & turn-taking hints** (22), **social continuity / relationship modeling** (23), **memory refinement** (24), **dynamic Ollama model routing** (25), **bounded curiosity** (26), **outcome learning** (advisory) (27), **conversational nuance** (28), **multi-session strategic continuity** with **ava_core** anchors (29), **supervised self-improvement loop** (30). **Workbench 16.5** and **16.6** ship alongside Phase 16 proposals.
+**Post-foundation (Phases 21–31):** **Calibration / tuning** (21), **voice conversation & turn-taking hints** (22), **social continuity / relationship modeling** (23), **memory refinement** (24), **dynamic Ollama model routing** (25), **bounded curiosity** (26), **outcome learning** (advisory) (27), **conversational nuance** (28), **multi-session strategic continuity** with **ava_core** anchors (29), **supervised self-improvement loop** (30), **resident heartbeat + bounded adaptive learning** (31 — quiet background continuity between perception ticks; **no** unsafe autonomy). **Workbench 16.5** and **16.6** ship alongside Phase 16 proposals.
 
-**Plain-language capability map (major areas):** perception stack • memory events / scoring / refinement • pattern learning • proactive triggers • self-tests • workbench proposals • supervised execution • approval/command flow • reflection • contemplation • social continuity • voice turn-taking • conversational nuance • multi-session continuity • dynamic model routing • supervised self-improvement loop • calibration/tuning • modular adapter cleanup (Phase 19).
+**Plain-language capability map (major areas):** perception stack • memory events / scoring / refinement • pattern learning • proactive triggers • self-tests • workbench proposals • supervised execution • approval/command flow • reflection • contemplation • social continuity • voice turn-taking • conversational nuance • multi-session continuity • dynamic model routing • supervised self-improvement loop • heartbeat / adaptive preferences • calibration/tuning • modular adapter cleanup (Phase 19).
 
 Further work **extends** this stack (calendar/prospective memory, richer event extraction, UI)—it does **not** replace the shipped architecture.
 
@@ -332,11 +332,20 @@ This is a development-only quality-of-life feature that makes tuning the system 
 - **`brain/perception_pipeline.py`**: Runs **after strategic continuity**, before **`PackageOutput`**.
 - **`PerceptionState`**: **`improvement_loop_*`** surface fields + **`improvement_loop_meta`** (rollback/await flags, identity-anchor respect bit).
 
+### Phase 31 — Continuous heartbeat runtime & bounded adaptive learning *(live)*
+
+- **Goal**: Move Ava from **pure turn-based** perception toward a **quiet resident loop** — each **`run_perception_pipeline`** tick can advance **heartbeat continuity**, observe **meaningful deltas** (self-tests, workbench, strategic carryover, voice floor, curiosity, outcomes), and apply **evidence-weighted preference drift** — **without** chatting autonomously, **without** approving workbench actions, **without** rewriting **`ava_core/IDENTITY.md`**, **`SOUL.md`**, or **`USER.md`**, and **without** bypassing supervision.
+- **Heartbeat (`brain/heartbeat.py`)**: **`run_heartbeat_tick_safe`** → **`HeartbeatTickResult`** (`HeartbeatMode`: `idle_monitoring`, `active_presence`, `conversation_active`, `maintenance_watch`, `learning_review`, `quiet_recovery`, `no_heartbeat`). Wall-clock **cadence** skips heavy work when idle; **`g["_heartbeat_force_tick"]`** / **`g["_heartbeat_event_reason"]`** allow **event-driven** wakeups. Persisted counters in **`state/heartbeat/heartbeat_state.json`**. **`bootstrap_heartbeat_runtime(globals())`** from **`avaagent.py`** loads carryover once at startup (one concise log). **`[heartbeat]`** lines are **throttled** (not every camera frame).
+- **Adaptive learning (`brain/adaptive_learning.py`)**: **`run_adaptive_learning_safe`** → **`AdaptiveLearningResult`**; bounded **EWMA** scores per **`LearningFocus`** (pacing, interruption/yield, curiosity, memory, proactive triggers, repair proposals, social continuity, response-style tendency, user comfort). Reads Phase 27–28 / social / voice evidence — **structured aggregation**, not trial-and-error autonomy. Preferences in **`state/learning/adaptive_preferences.json`** (lightweight, rebuild-safe). **`[adaptive_learning]`** logs only on meaningful updates.
+- **`brain/perception_types.py`**: **`HeartbeatEvent`**, **`HeartbeatState`**, **`HeartbeatTickResult`**, **`AdaptiveLearningResult`**, **`HeartbeatMode`**; **`PerceptionPipelineBundle.heartbeat`** + **`adaptive_learning`**.
+- **`brain/perception_pipeline.py`**: Runs **after Phase 30**, before **`PackageOutput`** / **`record_calibration_tick`**.
+- **`PerceptionState`**: **`heartbeat_*`**, **`learning_*`**, and **`heartbeat_meta`** (includes nested **`learning`** summary from adaptive pass when present).
+
 ---
 
-## Post-foundation phase index (Phases 21–30) — shipped
+## Post-foundation phase index (Phases 21–31) — shipped
 
-Work after Phase 20 **extended** the shipped architecture (calibration, voice, relationship depth, memory quality, routing, curiosity, outcomes, nuance, multi-session strategy, supervised improvement)—**not** a parallel rewrite. The per-phase subsections above are authoritative; this table is an index.
+Work after Phase 20 **extended** the shipped architecture (calibration, voice, relationship depth, memory quality, routing, curiosity, outcomes, nuance, multi-session strategy, supervised improvement, heartbeat/adaptive preferences)—**not** a parallel rewrite. The per-phase subsections above are authoritative; this table is an index.
 
 | Phase | Theme |
 |---|---|
@@ -350,6 +359,7 @@ Work after Phase 20 **extended** the shipped architecture (calibration, voice, r
 | **28** | **Human-style emotional and conversational nuance** *(live)* — bounded tone guidance; pacing/restraint; warmth/practicality/seriousness balancing; **no unstable personality swings** |
 | **29** | **Multi-session strategic continuity** *(live)* — unfinished-thread carryover; strategic and maintenance carryover; bounded relationship continuity across sessions; **concise summaries, not memory dumps** |
 | **30** | **Supervised self-improvement loop** *(live)* — issue → proposal → approval → execution → reflection → continuity; **bounded and reviewable**; **no unsafe autonomous override** |
+| **31** | **Heartbeat runtime & adaptive learning** *(live)* — resident cadence inside the perception pipeline; event-aware wakeups; bounded preference drift; **identity anchors preserved**; **no autonomous speech or approval bypass** |
 
 **Phase 2 (Prospective Memory)** and other sections below describe **additive / future** capabilities on top of the completed baseline—not missing phases 1–30.
 

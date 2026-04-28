@@ -116,11 +116,23 @@ def _read_utf8_limited(path: Path, *, max_bytes: int = 196_608) -> str:
 
 
 def _anchor_excerpt(text: str, *, max_chars: int = 400) -> str:
-    """First substantive lines (skip leading # titles), bounded length."""
+    """Use first H1 title if present, then body (skip subsequent # lines until prose starts)."""
+    lines = (text or "").splitlines()
+    h1 = ""
+    rest_i = 0
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("#") and not s.startswith("##"):
+            h1 = s.lstrip("#").strip()
+            rest_i = i + 1
+            break
+
     buf: list[str] = []
     total = 0
     started = False
-    for line in (text or "").splitlines():
+    for line in lines[rest_i:]:
         s = line.strip()
         if not s:
             if started:
@@ -133,7 +145,11 @@ def _anchor_excerpt(text: str, *, max_chars: int = 400) -> str:
         total += len(s) + 1
         if total >= max_chars:
             break
-    out = " ".join(buf)
+    body = " ".join(buf).strip()
+    if h1:
+        out = f"{h1} — {body}" if body else h1
+    else:
+        out = body
     return _trunc(out, max_chars)
 
 

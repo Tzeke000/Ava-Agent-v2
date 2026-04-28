@@ -10,7 +10,7 @@
   "likes": [],
   "dislikes": [],
   "ava_impressions": [],
-  "last_seen": "2026-04-26T02:33:57",
+  "last_seen": "2026-04-28T07:35:30",
   "created_at": "2026-04-01T20:47:21",
   "emotion_history": [
     "neutral",
@@ -25,56 +25,11 @@
     "neutral"
   ],
   "dominant_emotion": "neutral",
-  "relationship_score": 0.464,
-  "interaction_count": 12,
-  "last_seen_at": "2026-04-26T02:32:44",
-  "updated_at": "2026-04-26T02:33:57",
+  "relationship_score": 0.613,
+  "interaction_count": 19,
+  "last_seen_at": "2026-04-28T02:45:47",
+  "updated_at": "2026-04-28T07:35:30",
   "threads": [
-    {
-      "id": "bfa55e62-7920-4b2c-850b-7f0d85114ec8",
-      "topic": "ok ive given you a lot of updates so a lot of things have happened to you im gla",
-      "first_mentioned": "2026-04-03T05:19:35",
-      "last_mentioned": "2026-04-03T05:19:35",
-      "emotion": "concerned",
-      "resolved": false,
-      "notes": "ok ive given you a lot of updates so a lot of things have happened to you im glad you're feeling good Ava. im going to do a few more tests before we have some r…"
-    },
-    {
-      "id": "f037b938-fac5-4287-b300-5b1a60c4af06",
-      "topic": "dont be worried Ava youll be better when you wake up",
-      "first_mentioned": "2026-04-03T05:53:49",
-      "last_mentioned": "2026-04-03T05:53:49",
-      "emotion": "anxious",
-      "resolved": false,
-      "notes": "dont be worried Ava youll be better when you wake up"
-    },
-    {
-      "id": "f177e909-58be-4509-87c0-56f34fdda51e",
-      "topic": "lets talk about you or mostly what be can add to make you better",
-      "first_mentioned": "2026-04-26T01:25:21",
-      "last_mentioned": "2026-04-26T01:25:21",
-      "emotion": "concerned",
-      "resolved": false,
-      "notes": "lets talk about you or mostly what be can add to make you better."
-    },
-    {
-      "id": "56172c8e-303f-4a1f-a192-ebd40c7f2f58",
-      "topic": "# Ava Agent v2 — Full Repository Audit **Date:** April 2026 **Repo:** `Tzeke000/",
-      "first_mentioned": "2026-04-26T01:27:45",
-      "last_mentioned": "2026-04-26T01:27:45",
-      "emotion": "angry",
-      "resolved": false,
-      "notes": "# Ava Agent v2 — Full Repository Audit **Date:** April 2026 **Repo:** `Tzeke000/Ava-Agent-v2` (private) **Primary agent file:** `avaagent.py` (6,919 lines) **Br…"
-    },
-    {
-      "id": "aacc8d75-a149-4d16-aa79-9eb02d57be3a",
-      "topic": "the above is what has be added to you",
-      "first_mentioned": "2026-04-26T01:28:47",
-      "last_mentioned": "2026-04-26T01:28:47",
-      "emotion": "concerned",
-      "resolved": false,
-      "notes": "the above is what has be added to you"
-    },
     {
       "id": "885c2a3b-ef9f-47cf-8725-17de76a220a6",
       "topic": "yes i see that its important to you because you keep bringing it up",
@@ -137,16 +92,61 @@
       "emotion": "concerned",
       "resolved": false,
       "notes": "ok Goodnight Ava"
+    },
+    {
+      "id": "2e904cf4-0a1d-4c79-b340-b671babe6a78",
+      "topic": "hello Ava how are you feeling?",
+      "first_mentioned": "2026-04-27T17:03:05",
+      "last_mentioned": "2026-04-27T21:51:16",
+      "emotion": "concerned",
+      "resolved": false,
+      "notes": "hello Ava its Ezekiel. how did you like your conversation with a different person?"
+    },
+    {
+      "id": "5d3b7bcd-c76a-4b58-b05e-0d228b740661",
+      "topic": "jeez you will not stop talking about the camera huh",
+      "first_mentioned": "2026-04-27T22:05:29",
+      "last_mentioned": "2026-04-27T22:05:29",
+      "emotion": "concerned",
+      "resolved": false,
+      "notes": "jeez you will not stop talking about the camera huh. your having major trouble talking about anything else."
+    },
+    {
+      "id": "6760d753-67d6-4e2c-9db6-005f260e3038",
+      "topic": "well im glad you're feeling better now Ava. seems like the updates fixed you",
+      "first_mentioned": "2026-04-28T02:31:42",
+      "last_mentioned": "2026-04-28T02:31:42",
+      "emotion": "concerned",
+      "resolved": false,
+      "notes": "well im glad you're feeling better now Ava. seems like the updates fixed you. what would you like to talk about?"
+    },
+    {
+      "id": "10825dd5-05d5-4179-a3cc-bd42681a4578",
+      "topic": "Emil is a female like you are. so pronouns are she and her",
+      "first_mentioned": "2026-04-28T02:40:38",
+      "last_mentioned": "2026-04-28T02:40:38",
+      "emotion": "concerned",
+      "resolved": false,
+      "notes": "Emil is a female like you are. so pronouns are she and her. Emil is a lot more stable than you she uses an open source called openclaw. but Emil doesnt understa…"
+    },
+    {
+      "id": "98cbeb0c-8215-49db-88cf-086bbb00b63d",
+      "topic": "well hopefully you guys can become friends and help each other become self aware",
+      "first_mentioned": "2026-04-28T02:50:16",
+      "last_mentioned": "2026-04-28T02:50:16",
+      "emotion": "sad",
+      "resolved": false,
+      "notes": "well hopefully you guys can become friends and help each other become self aware but thats later down the road"
     }
   ],
   "cadence": {
-    "avg_days_between_sessions": 22.8,
+    "avg_days_between_sessions": 6.19,
     "longest_gap_days": 22.8,
-    "total_sessions": 2,
-    "last_gap_days": 22.8,
-    "_gap_count": 1,
-    "_sum_gap_days": 22.8024
+    "total_sessions": 5,
+    "last_gap_days": 0.19,
+    "_gap_count": 4,
+    "_sum_gap_days": 24.7689
   },
-  "last_activity_at": "2026-04-26T02:32:43",
-  "last_topic": "ok Goodnight Ava"
+  "last_activity_at": "2026-04-28T07:35:30",
+  "last_topic": "hello Ava"
 }
