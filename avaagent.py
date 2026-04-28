@@ -91,6 +91,7 @@ from brain.deep_self import (
     update_mind_model_async,
 )
 from brain.tts_engine import TTSEngine
+from brain.model_evaluator import get_evaluator
 from config.ava_tuning import MODEL_ROUTING_CONFIG
 
 try:
@@ -7435,12 +7436,15 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
                 if _perc_r is not None:
                     _route_model = str(getattr(_perc_r, "routing_selected_model", "") or "").strip()
                 if use_fast_path:
-                    _fast_model = _pick_fast_model_fallback()
-                    if _fast_model:
-                        _invoke_llm = ChatOllama(model=_fast_model, temperature=0.45)
-                        print(f"[run_ava] fast_path_model={_fast_model}")
-                    elif _route_model and _route_model != LLM_MODEL:
-                        _invoke_llm = ChatOllama(model=_route_model, temperature=0.5)
+                    # Phase 44: respect Phase 25 routing result first (ava-personal for social chat)
+                    if _route_model and _route_model != LLM_MODEL:
+                        _invoke_llm = ChatOllama(model=_route_model, temperature=0.45)
+                        print(f"[run_ava] fast_path_routed_model={_route_model}")
+                    else:
+                        _fast_model = _pick_fast_model_fallback()
+                        if _fast_model:
+                            _invoke_llm = ChatOllama(model=_fast_model, temperature=0.45)
+                            print(f"[run_ava] fast_path_model={_fast_model}")
                 else:
                     _deep_model = _pick_deep_model_fallback()
                     if _deep_model:
@@ -7456,6 +7460,16 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
             if not raw_reply:
                 raw_reply = "I'm here."
             print(f"[run_ava] llm_invoke ok reply_raw_chars={len(raw_reply)}")
+            # Phase 44: submit social-chat responses for self-evaluation
+            try:
+                _used_model = str(getattr(_invoke_llm, "model", "") or "")
+                if "ava-personal" in _used_model:
+                    _base_dir = globals().get("BASE_DIR") or Path(".")
+                    get_evaluator(Path(_base_dir)).submit_for_evaluation(
+                        user_input, raw_reply, _used_model
+                    )
+            except Exception:
+                pass
         except Exception as e:
             raw_reply = f"I hit an internal error: {e}"
             print(f"[run_ava] llm_invoke failed: {e!r}")
