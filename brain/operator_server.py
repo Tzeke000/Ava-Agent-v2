@@ -313,6 +313,12 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         models_block["available_models"] = []
         models_block["discovery_error"] = str(e)[:200]
 
+    try:
+        from brain.model_evaluator import get_evaluator
+        models_block["p44_eval"] = get_evaluator().get_status()
+    except Exception:
+        pass
+
     vision_block = {
         "perception": _perception_dict(perception),
         "llava_scene_description": str(host.get("_llava_scene_description") or "")[:700],
