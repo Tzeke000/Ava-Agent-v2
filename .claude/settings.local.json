@@ -9,7 +9,9 @@
       "Bash(git push *)",
       "Bash(py -3.11 -m py_compile brain/concept_graph.py)",
       "Bash(py -3.11 -m py_compile brain/heartbeat.py)",
-      "Bash(git commit -m 'phase 45: concept graph evolution — decay, richer relations, prompt injection, bootstrap *)"
+      "Bash(git commit -m 'phase 45: concept graph evolution — decay, richer relations, prompt injection, bootstrap *)",
+      "Bash(py -3.11 -m py_compile tools/tool_registry.py)",
+      "Bash(git commit -m 'phase 46: hot-reload tool registry + tools/reload endpoint *)"
     ]
   }
 }
