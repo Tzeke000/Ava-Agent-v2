@@ -1085,3 +1085,17 @@ def apply_model_routing_to_perception_state(state: Any, routing: ModelRoutingRes
         "notes": list(routing.notes),
         **dict(routing.meta or {}),
     }
+
+
+
+def propose_routing_adjustment(mode: str, adjustment: str, reason: str, g: dict) -> dict:
+    """Phase 68: Ava suggests a routing adjustment. Stored for Zeke review."""
+    import json, time
+    from pathlib import Path
+    base = Path(g.get("BASE_DIR") or ".")
+    proposal = {"ts": time.time(), "mode": mode, "adjustment": adjustment[:300], "reason": reason[:300], "status": "pending"}
+    p = base / "state" / "routing_proposals.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(proposal, ensure_ascii=False) + "\n")
+    return {"ok": True, "proposal": proposal}

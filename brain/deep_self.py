@@ -235,6 +235,47 @@ def pop_pending_repair(g: dict[str, Any]) -> str:
     return str((row or {}).get("note") or "")
 
 
+def propose_identity_addition(text: str, g: dict[str, Any]) -> dict[str, Any]:
+    """
+    Phase 68: Ava proposes adding something to her identity.
+    Stored in state/identity_proposals.jsonl for Zeke to review.
+    Approved proposals are appended to state/identity_extensions.md.
+    """
+    base = Path(g.get("BASE_DIR") or Path.cwd())
+    proposal = {
+        "ts": time.time(),
+        "text": str(text or "")[:500],
+        "status": "pending",  # pending | approved | rejected
+    }
+    q_path = base / "state" / "identity_proposals.jsonl"
+    q_path.parent.mkdir(parents=True, exist_ok=True)
+    with q_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(proposal, ensure_ascii=False) + "\n")
+    return {"ok": True, "proposal": proposal["text"][:100], "status": "pending_review"}
+
+
+def approve_identity_addition(proposal_text: str, g: dict[str, Any]) -> dict[str, Any]:
+    """Apply an approved identity proposal to identity_extensions.md."""
+    base = Path(g.get("BASE_DIR") or Path.cwd())
+    ext_path = base / "state" / "identity_extensions.md"
+    ext_path.parent.mkdir(parents=True, exist_ok=True)
+    with ext_path.open("a", encoding="utf-8") as f:
+        f.write(f"\n<!-- approved {time.strftime('%Y-%m-%d')} -->\n{proposal_text}\n")
+    return {"ok": True, "appended": proposal_text[:100]}
+
+
+def load_identity_extensions(g: dict[str, Any]) -> str:
+    """Returns identity_extensions.md content to inject into prompts."""
+    base = Path(g.get("BASE_DIR") or Path.cwd())
+    ext_path = base / "state" / "identity_extensions.md"
+    if not ext_path.is_file():
+        return ""
+    try:
+        return ext_path.read_text(encoding="utf-8").strip()[:2000]
+    except Exception:
+        return ""
+
+
 def deep_self_snapshot(g: dict[str, Any]) -> dict[str, Any]:
     base = Path(g.get("BASE_DIR") or Path.cwd())
     mind = _load_json(_path(base, "zeke_mind_model.json"), {})
