@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -127,10 +128,29 @@ def bootstrap_from_chatlog(g: dict[str, Any]) -> None:
         return
     lines = p.read_text(encoding="utf-8", errors="replace").splitlines()[-20:]
     corpus = []
+    skip_terms = (
+        "goodbye",
+        "good night",
+        "goodnight",
+        "going sleep",
+        "going to sleep",
+        "sleep now",
+        "bye for now",
+    )
     for line in lines:
         try:
             row = json.loads(line)
-            corpus.append(f"{row.get('role')}: {str(row.get('content') or '')[:220]}")
+            content = " ".join(str(row.get("content") or "").split()).strip()
+            if len(content.split()) < 10:
+                continue
+            low = content.lower()
+            if any(t in low for t in skip_terms):
+                continue
+            if re.match(r"^[\[\(\*].*[\]\)\*]$", content):
+                continue
+            if not re.search(r"[a-zA-Z]{4,}", content):
+                continue
+            corpus.append(f"{row.get('role')}: {content[:220]}")
         except Exception:
             continue
     if not corpus:
@@ -149,7 +169,15 @@ def bootstrap_from_chatlog(g: dict[str, Any]) -> None:
         if isinstance(arr, list):
             for t in arr[:5]:
                 if isinstance(t, str):
-                    add_topic(t, "startup_chatlog_scan", g)
+                    tt = " ".join(t.split()).strip()
+                    if len(tt.split()) < 3:
+                        continue
+                    tl = tt.lower()
+                    if any(s in tl for s in skip_terms):
+                        continue
+                    if re.match(r"^(sleep|goodnight|goodbye|bye)\b", tl):
+                        continue
+                    add_topic(tt, "startup_chatlog_scan", g)
     except Exception:
         for t in ["What helps Zeke most during focused work?", "How should I pace proactive check-ins?"]:
             add_topic(t, "startup_fallback", g)

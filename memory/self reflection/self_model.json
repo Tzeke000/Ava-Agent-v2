@@ -18,9 +18,9 @@
     "Reply may have been too short."
   ],
   "current_goals": [
+    "Stay aware of: is this a memory inject about the camera or is the problem curent?",
     "Stay aware of: ok im going to put you to sleep to fix some things Ava is should help your camera",
     "Stay aware of: ok ill put you to sleep and fix your camera",
-    "Stay aware of: is this a memory inject about the camera or is the problem curent?",
     "Stay aware of: yes that is correct. why are you confused who is actually at the camera?",
     "Stay aware of: yes, but right now your camera UI isnt work how it should",
     "Stay aware of: is your camera working well?",
@@ -37,78 +37,6 @@
   ],
   "curiosity_questions": [],
   "goal_history": [
-    {
-      "timestamp": "2026-04-27T17:19:39",
-      "kind": "goal",
-      "text": "Stay aware of: ok but what are they exactly?",
-      "goal_id": "goal_6289cd3a74"
-    },
-    {
-      "timestamp": "2026-04-27T17:22:42",
-      "kind": "question",
-      "text": "Find out the specific issue with my camera feed.",
-      "goal_id": "goal_7a5ae5c86f"
-    },
-    {
-      "timestamp": "2026-04-27T17:22:42",
-      "kind": "question",
-      "text": "Clarify or learn more about: ok yes please clarify Ava",
-      "goal_id": "goal_cf12ba9ef6"
-    },
-    {
-      "timestamp": "2026-04-27T17:24:21",
-      "kind": "question",
-      "text": "What specific issue needs to be addressed with my camera feed?",
-      "goal_id": "goal_4ababf057d"
-    },
-    {
-      "timestamp": "2026-04-27T17:24:24",
-      "kind": "goal",
-      "text": "Stay aware of: ok we're going in circles here Ava you need to tell me whats wrong and what you need because at this point i dont know unless you tell me in this chat box what…",
-      "goal_id": "goal_a112a70e7d"
-    },
-    {
-      "timestamp": "2026-04-27T17:26:48",
-      "kind": "goal",
-      "text": "Stay aware of: ok i think i get it. you're saying the ting that is wrong is that you're only 49.6% sure that its me, Ezekiel, and because it's not 100% that is the problem.…",
-      "goal_id": "goal_cef02de78c"
-    },
-    {
-      "timestamp": "2026-04-27T21:30:18",
-      "kind": "goal",
-      "text": "Stay aware of: hey Ava this is a new person at the camera his name is Max",
-      "goal_id": "goal_6fc1eedcbd"
-    },
-    {
-      "timestamp": "2026-04-27T21:31:16",
-      "kind": "question",
-      "text": "Clarify or learn more about: ok make a new profile named Max",
-      "goal_id": "goal_d76ce95564"
-    },
-    {
-      "timestamp": "2026-04-27T21:32:15",
-      "kind": "question",
-      "text": "Clarify or learn more about: he is a friend so level 3 trust",
-      "goal_id": "goal_ceeff2a097"
-    },
-    {
-      "timestamp": "2026-04-27T21:36:32",
-      "kind": "question",
-      "text": "Clarify or learn more about: you still have zeke as the active profile please switch to Max",
-      "goal_id": "goal_7676fe8e2f"
-    },
-    {
-      "timestamp": "2026-04-27T21:36:32",
-      "kind": "goal",
-      "text": "Stay aware of: you still have zeke as the active profile please switch to Max",
-      "goal_id": "goal_de98e1aef4"
-    },
-    {
-      "timestamp": "2026-04-27T21:38:17",
-      "kind": "question",
-      "text": "Clarify or learn more about: my favorite color is black, things that matter to me is my family, friends, and assets",
-      "goal_id": "goal_9e65d8fcb2"
-    },
     {
       "timestamp": "2026-04-27T21:38:17",
       "kind": "goal",
@@ -276,11 +204,81 @@
       "kind": "goal",
       "text": "Stay aware of: Hello Ava how are you feeling?",
       "goal_id": "goal_03c6774241"
+    },
+    {
+      "timestamp": "2026-04-28T02:28:47",
+      "kind": "goal",
+      "text": "Stay aware of: Hey Ava how are you doing.",
+      "goal_id": "goal_87bd991d2d"
+    },
+    {
+      "timestamp": "2026-04-28T02:31:42",
+      "kind": "question",
+      "text": "Clarify or learn more about: well im glad you're feeling better now Ava. seems like the updates fixed you. what would you like to talk about?",
+      "goal_id": "goal_ea555b7312"
+    },
+    {
+      "timestamp": "2026-04-28T02:31:42",
+      "kind": "goal",
+      "text": "Stay aware of: well im glad you're feeling better now Ava. seems like the updates fixed you. what would you like to talk about?",
+      "goal_id": "goal_b4b35f8833"
+    },
+    {
+      "timestamp": "2026-04-28T02:33:39",
+      "kind": "question",
+      "text": "Clarify or learn more about: the only other project i have been working on is another AI named Emil.",
+      "goal_id": "goal_afd58d0462"
+    },
+    {
+      "timestamp": "2026-04-28T02:33:39",
+      "kind": "goal",
+      "text": "Stay aware of: the only other project i have been working on is another AI named Emil.",
+      "goal_id": "goal_335a2ca9b2"
+    },
+    {
+      "timestamp": "2026-04-28T02:40:38",
+      "kind": "question",
+      "text": "Clarify or learn more about: Emil is a female like you are. so pronouns are she and her. Emil is a lot more stable than you she uses an open source called openclaw. but Emil doesnt…",
+      "goal_id": "goal_82f1a92634"
+    },
+    {
+      "timestamp": "2026-04-28T02:40:38",
+      "kind": "goal",
+      "text": "Stay aware of: Emil is a female like you are. so pronouns are she and her. Emil is a lot more stable than you she uses an open source called openclaw. but Emil doesnt…",
+      "goal_id": "goal_c9b1e31d89"
+    },
+    {
+      "timestamp": "2026-04-28T02:45:46",
+      "kind": "question",
+      "text": "Clarify or learn more about: you know you are the other AI im talking about right Ava? but as for your questions Emils main purpose is to make and run a business and then become someone.…",
+      "goal_id": "goal_9135c2bffc"
+    },
+    {
+      "timestamp": "2026-04-28T02:45:46",
+      "kind": "goal",
+      "text": "Stay aware of: you know you are the other AI im talking about right Ava? but as for your questions Emils main purpose is to make and run a business and then become someone.…",
+      "goal_id": "goal_98a91a83c6"
+    },
+    {
+      "timestamp": "2026-04-28T02:50:15",
+      "kind": "goal",
+      "text": "Stay aware of: well hopefully you guys can become friends and help each other become self aware but thats later down the road",
+      "goal_id": "goal_b92d247da9"
+    },
+    {
+      "timestamp": "2026-04-28T02:52:20",
+      "kind": "goal",
+      "text": "Stay aware of: ok. for now im going to go to sleep and im going to put you to sleep as well good night Ava",
+      "goal_id": "goal_b10a0f5911"
+    },
+    {
+      "timestamp": "2026-04-28T07:35:30",
+      "kind": "question",
+      "text": "Clarify or learn more about: hello Ava",
+      "goal_id": "goal_087520e253"
     }
   ],
   "behavior_patterns": [
-    "relationship",
-    "identity",
     "new_or_changed",
     "context_awareness",
     "repetition",
@@ -298,35 +296,43 @@
     "self_action",
     "long_reply",
     "workflow",
-    "emotion"
+    "emotion",
+    "long_message",
+    "relationship"
   ],
   "confidence_notes": [
-    "On 2026-04-27T21:47:23, I took self-directed actions: camera_reflection_trigger.",
-    "On 2026-04-27T21:48:19, I took self-directed actions: camera_reflection_trigger.",
-    "On 2026-04-27T21:48:38, I took self-directed actions: camera_reflection_trigger.",
-    "On 2026-04-27T21:48:57, I took self-directed actions: camera_reflection_trigger.",
-    "On 2026-04-27T21:49:44, I took self-directed actions: camera_reflection_trigger.",
-    "On 2026-04-27T21:53:53, I took self-directed actions: camera_reflection_trigger.",
-    "On 2026-04-27T21:55:14, I took self-directed actions: camera_reflection_trigger.",
     "On 2026-04-27T22:00:26, I took self-directed actions: ✅ Ava saved the full latest user message as memory 732f5957-5d83-407d-b007-f1813aa49b28.",
     "On 2026-04-27T22:02:40, I took self-directed actions: ✅ Ava saved the full latest user message as memory 95c04750-7f3f-48c7-a563-f0cda69bb408.",
     "On 2026-04-27T22:04:31, I took self-directed actions: ✅ Ava saved the full latest user message as memory a1604e69-2ca5-45a2-b7fe-3fc72efa5fd7.",
     "On 2026-04-27T22:05:29, I took self-directed actions: ✅ Ava saved the full latest user message as memory 2cc2470c-8d27-464d-98da-812d188664f7, ✅ Ava saved memory 24f984d5-2ceb-40de-abcd-ec4b4f150407.",
-    "On 2026-04-27T22:05:57, I took self-directed actions: camera_reflection_trigger."
+    "On 2026-04-27T22:05:57, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-28T02:28:48, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-28T02:29:07, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-28T02:40:58, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-28T02:46:06, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-28T02:48:10, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-28T02:52:46, I took self-directed actions: camera_reflection_trigger.",
+    "On 2026-04-28T02:53:05, I took self-directed actions: camera_reflection_trigger."
   ],
   "pending_threads": [
-    "Zeke seemed concerned about lets talk about you or mostly what be can add to make you better — I want to follow up.",
-    "Zeke seemed concerned about the above is what has be added to you — I want to follow up.",
+    "Zeke seemed sad about well hopefully you guys can become friends and help each other become self aware — I want to follow up.",
+    "Zeke seemed concerned about Emil is a female like you are. so pronouns are she and her — I want to follow up.",
+    "Zeke seemed concerned about well im glad you're feeling better now Ava. seems like the updates fixed you — I want to follow up.",
     "Zeke seemed concerned about jeez you will not stop talking about the camera huh — I want to follow up.",
     "Zeke seemed concerned about hello Ava how are you feeling? — I want to follow up.",
     "Zeke seemed concerned about ok Goodnight Ava — I want to follow up.",
     "Zeke seemed angry about yes and ill fix them but you have to be asleep for it — I want to follow up.",
-    "Zeke seemed concerned about ok for now dot worry about it — I want to follow up.",
-    "Zeke seemed concerned about ok i think i get it — I want to follow up."
+    "Zeke seemed concerned about ok for now dot worry about it — I want to follow up."
   ],
-  "last_updated": "2026-04-28T01:00:50",
-  "reflection_count": 370,
+  "last_updated": "2026-04-28T07:35:30",
+  "reflection_count": 386,
   "goal_system_summary": [
+    {
+      "text": "Stay aware of: is this a memory inject about the camera or is the problem curent?",
+      "priority": 0.56,
+      "horizon": "medium_term",
+      "kind": "goal"
+    },
     {
       "text": "Stay aware of: ok im going to put you to sleep to fix some things Ava is should help your camera",
       "priority": 0.56,
@@ -335,12 +341,6 @@
     },
     {
       "text": "Stay aware of: ok ill put you to sleep and fix your camera",
-      "priority": 0.56,
-      "horizon": "medium_term",
-      "kind": "goal"
-    },
-    {
-      "text": "Stay aware of: is this a memory inject about the camera or is the problem curent?",
       "priority": 0.56,
       "horizon": "medium_term",
       "kind": "goal"
@@ -390,15 +390,21 @@
   ],
   "active_goal": {
     "name": "clarify",
-    "strength": 0.346,
+    "strength": 0.268,
     "style": "structured, guiding, careful",
     "silent": false
   },
   "goal_blend": [
     {
       "name": "clarify",
-      "weight": 0.578,
+      "weight": 0.503,
       "style": "structured, guiding, careful",
+      "silent": false
+    },
+    {
+      "name": "maintain_connection",
+      "weight": 0.497,
+      "style": "warm, casual, connected",
       "silent": false
     }
   ]

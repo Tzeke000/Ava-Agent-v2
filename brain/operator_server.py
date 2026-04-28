@@ -6,7 +6,6 @@ Does not replace Gradio; complements it with JSON/chat for the Tauri UI.
 """
 from __future__ import annotations
 
-import asyncio
 from dataclasses import asdict
 import json
 import os
@@ -17,6 +16,7 @@ from typing import Any, Callable, Optional
 
 _HOST: dict[str, Any] | None = None
 _CHAT_FN: Optional[Callable[..., dict[str, Any]]] = None
+_CHAT_CALL_LOCK = threading.Lock()
 
 
 def configure_operator_runtime(host: dict[str, Any], chat_fn: Callable[..., dict[str, Any]]) -> None:
@@ -273,6 +273,13 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         else {},
     }
 
+    tools_block = {
+        "last_tool_used": str(host.get("_desktop_last_tool_used") or ""),
+        "last_tool_result": str(host.get("_desktop_last_tool_result") or "")[:200],
+        "tool_execution_count": int(host.get("_desktop_tool_execution_count", 0) or 0),
+        "pending_tier2_proposals": len(list(host.get("_desktop_tier2_pending") or [])),
+    }
+
     inner_life = {
         "current_thought": "",
         "current_curiosity": None,
@@ -304,6 +311,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "workbench": wb_block,
         "improvement_loop": loop_block,
         "concerns": concerns_block,
+        "tools": tools_block,
         "inner_life": inner_life,
         "reply_path": host.get("reply_path_meta") if isinstance(host.get("reply_path_meta"), dict) else {},
     }
@@ -317,6 +325,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "workbench": wb_block,
         "improvement_loop": loop_block,
         "concerns": concerns_block,
+        "tools": tools_block,
         "inner_life": inner_life,
         "debug": debug_human,
         "ts": __import__("time").time(),
@@ -511,7 +520,7 @@ def _build_workbench_result_from_host(host: dict[str, Any]):
 
 
 def create_app():
-    from fastapi import FastAPI
+    from fastapi import Body, FastAPI
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse, PlainTextResponse
     from pydantic import BaseModel
@@ -600,15 +609,16 @@ def create_app():
         }
 
     @app.post("/api/v1/chat")
-    async def operator_chat(body: OpChatIn) -> dict[str, Any]:
+    async def operator_chat(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
         if _CHAT_FN is None:
             return {"ok": False, "error": "chat_not_configured", "reply": "", "debug_reply_source": "empty"}
         try:
-
-            def _run() -> Any:
-                return _CHAT_FN(body.message)
-
-            raw = await asyncio.to_thread(_run)
+            message = ""
+            if isinstance(body, dict):
+                message = str(body.get("message") or "")
+            # Keep operator chat in the same server thread with a lock to avoid racey global-state turns.
+            with _CHAT_CALL_LOCK:
+                raw = _CHAT_FN(message)
             try:
                 print(f"[operator_http] /api/v1/chat raw_return_type={type(raw).__name__} raw_return={repr(raw)[:2000]}")
             except Exception:
