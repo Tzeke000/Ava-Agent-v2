@@ -19,6 +19,8 @@ from typing import Any, Callable, Optional
 _HOST: dict[str, Any] | None = None
 _CHAT_FN: Optional[Callable[..., dict[str, Any]]] = None
 _CHAT_CALL_LOCK = threading.Lock()
+_STT_LOCK = threading.Lock()
+_STT_STATE: dict[str, Any] = {"ready": True, "processing": False, "text": "", "error": ""}
 
 _DEFAULT_STYLE = {
     "orb_base_size": 180,
@@ -404,6 +406,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "available": bool(getattr(tts_obj, "is_available", lambda: False)()) if tts_obj is not None else False,
         "enabled": bool(host.get("tts_enabled", False)),
         "engine": str(host.get("tts_engine_name") or "none"),
+        "voice": str(getattr(tts_obj, "voice_name", lambda: "unknown")()) if tts_obj is not None else "unknown",
     }
     mood_block = _load_mood_block(host)
     style_block = _load_style(host)
@@ -778,6 +781,9 @@ def create_app():
     class BrainActivateIn(BaseModel):
         concept: str = ""
 
+    class TTSSpeakIn(BaseModel):
+        text: str = ""
+
     @app.get("/api/v1/health")
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "ava-operator"}
@@ -1042,6 +1048,76 @@ def create_app():
             "available": available,
             "engine": str(h.get("tts_engine_name") or "none"),
         }
+
+    @app.post("/api/v1/tts/speak")
+    def tts_speak(body: TTSSpeakIn) -> dict[str, Any]:
+        h = _g()
+        tts_obj = h.get("tts_engine")
+        text = str(body.text or "").strip()
+        if not text:
+            return {"ok": False, "error": "empty_text"}
+        if tts_obj is None or not callable(getattr(tts_obj, "is_available", None)) or not tts_obj.is_available():
+            return {"ok": False, "error": "tts_unavailable"}
+        try:
+            tts_obj.speak(text, blocking=False)
+            return {"ok": True, "queued": True, "chars": len(text), "engine": str(h.get("tts_engine_name") or "none")}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:220]}
+
+    @app.post("/api/v1/stt/listen")
+    def stt_listen() -> dict[str, Any]:
+        h = _g()
+        with _STT_LOCK:
+            if bool(_STT_STATE.get("processing", False)):
+                return {"ok": True, "listening": True, "busy": True}
+            _STT_STATE.update({"ready": False, "processing": True, "text": "", "error": ""})
+
+        def _run_stt() -> None:
+            text = ""
+            error = ""
+            try:
+                stt_obj = h.get("stt_engine")
+                if stt_obj is None:
+                    try:
+                        from brain.stt_engine import STTEngine
+
+                        stt_obj = STTEngine()
+                        h["stt_engine"] = stt_obj
+                    except Exception as e:
+                        error = f"stt_init_failed: {e}"
+                        stt_obj = None
+                if stt_obj is None or not callable(getattr(stt_obj, "is_available", None)) or not stt_obj.is_available():
+                    if not error:
+                        error = "stt_unavailable"
+                else:
+                    out = stt_obj.listen_once()
+                    text = str(out or "").strip()
+            except Exception as e:
+                error = str(e)
+            finally:
+                with _STT_LOCK:
+                    _STT_STATE.update(
+                        {
+                            "ready": True,
+                            "processing": False,
+                            "text": text,
+                            "error": error[:220] if error else "",
+                        }
+                    )
+
+        threading.Thread(target=_run_stt, daemon=True, name="ava-stt-listen-once").start()
+        return {"ok": True, "listening": True}
+
+    @app.get("/api/v1/stt/result")
+    def stt_result() -> dict[str, Any]:
+        with _STT_LOCK:
+            return {
+                "ok": True,
+                "ready": bool(_STT_STATE.get("ready", False)),
+                "processing": bool(_STT_STATE.get("processing", False)),
+                "text": str(_STT_STATE.get("text", "") or ""),
+                "error": str(_STT_STATE.get("error", "") or ""),
+            }
 
     @app.post("/api/v1/shutdown")
     def shutdown() -> dict[str, Any]:

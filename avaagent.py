@@ -7266,7 +7266,13 @@ def finalize_ava_turn(
         _tts = globals().get("tts_engine")
         _tts_enabled = bool(globals().get("tts_enabled", False))
         if _tts_enabled and _tts is not None and callable(getattr(_tts, "is_available", None)) and _tts.is_available():
-            _tts.speak(ai_reply, blocking=False)
+            _reply_text = str(ai_reply or "")
+            _clean = re.sub(r"[*_`#\[\]()]", "", _reply_text)
+            _clean = re.sub(r"\s+", " ", _clean).strip()
+            if len(_clean) > 300:
+                _clean = _clean[:300].rstrip()
+            if _clean and re.search(r"[A-Za-z0-9]", _clean):
+                _tts.speak(_clean, blocking=False)
     except Exception:
         pass
     return ai_reply, visual_out, active_profile, actions, reflection

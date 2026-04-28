@@ -177,6 +177,8 @@ export default function App() {
   const [chatThinking, setChatThinking] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const [cameraTick, setCameraTick] = useState(() => Date.now());
+  const [sttListening, setSttListening] = useState(false);
+  const [sttProcessing, setSttProcessing] = useState(false);
   const [cameraFrameOk, setCameraFrameOk] = useState(false);
   const [presenceCameraOk, setPresenceCameraOk] = useState(false);
   const [brainGraph, setBrainGraph] = useState<{ nodes: BrainNode[]; edges: BrainEdge[]; stats?: Record<string, unknown> }>({
@@ -230,6 +232,7 @@ export default function App() {
   const [cameraOverlayOpen, setCameraOverlayOpen] = useState(false);
   const prevOnlineRef = useRef<boolean | null>(null);
   const appStartedAtRef = useRef(Date.now());
+  const sttPollRef = useRef<number | null>(null);
 
   const pushEvent = useCallback((message: string) => {
     const row = { ts: new Date().toISOString(), message };
@@ -336,6 +339,14 @@ export default function App() {
     return () => window.clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    return () => {
+      if (sttPollRef.current !== null) {
+        window.clearInterval(sttPollRef.current);
+      }
+    };
+  }, []);
+
   const pollBrainGraph = useCallback(async (reason = "interval") => {
     setBrainLoading(true);
     setBrainGraphError("");
@@ -367,6 +378,48 @@ export default function App() {
       setBrainLoading(false);
     }
   }, [pushEvent]);
+
+  const startSttListen = async () => {
+    if (sttListening || sttProcessing || inputMuted) return;
+    setSttListening(true);
+    setSttProcessing(false);
+    try {
+      await postJson<{ ok?: boolean; listening?: boolean }>("/api/v1/stt/listen", {});
+      if (sttPollRef.current !== null) {
+        window.clearInterval(sttPollRef.current);
+      }
+      sttPollRef.current = window.setInterval(() => {
+        void (async () => {
+          try {
+            const res = await getJson<{ text?: string; ready?: boolean; processing?: boolean; error?: string }>(
+              "/api/v1/stt/result"
+            );
+            setSttProcessing(Boolean(res.processing));
+            if (!res.ready) return;
+            if (sttPollRef.current !== null) {
+              window.clearInterval(sttPollRef.current);
+              sttPollRef.current = null;
+            }
+            setSttListening(false);
+            setSttProcessing(false);
+            const text = String(res.text ?? "").trim();
+            if (text) {
+              setChatInput(text);
+              await sendChatText(text);
+            } else if (res.error) {
+              setLastChatErr(String(res.error));
+            }
+          } catch {
+            // keep polling until ready
+          }
+        })();
+      }, 500);
+    } catch (e) {
+      setSttListening(false);
+      setSttProcessing(false);
+      setLastChatErr(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const pollBrainActive = useCallback(async () => {
     try {
@@ -478,9 +531,9 @@ export default function App() {
   const toolsBlock = asRecord(snap?.tools);
   const toolsRegistry = asRecord(toolsBlock?.tools_registry);
 
-  const sendChat = async () => {
+  const sendChatText = async (rawText: string) => {
     if (inputMuted) return;
-    const t = chatInput.trim();
+    const t = rawText.trim();
     if (!t) return;
     setChatBusy(true);
     setChatThinking(true);
@@ -565,6 +618,11 @@ export default function App() {
       setChatBusy(false);
       setChatThinking(false);
     }
+  };
+
+  const sendChat = async () => {
+    await sendChatText(chatInput);
+    setChatInput("");
   };
 
   const applyModelOverride = async () => {
@@ -1377,13 +1435,21 @@ export default function App() {
                 </p>
               </Section>
               <Section title="Voice controls">
-                <button type="button" className="btn primary voice-mic-btn" disabled={inputMuted}>
-                  Mic
+                <button
+                  type="button"
+                  className="btn primary voice-mic-btn"
+                  disabled={inputMuted || sttListening || sttProcessing}
+                  onClick={() => void startSttListen()}
+                >
+                  {sttListening ? "Listening..." : sttProcessing ? "Processing..." : "Mic"}
                 </button>
                 <div className="row-gap">
                   <button type="button" className="btn ghost" onClick={() => void toggleTts()}>
                     TTS {Boolean(tts?.enabled) ? "On" : "Off"}
                   </button>
+                  <span className="op-muted">
+                    {sttListening ? "Listening..." : sttProcessing ? "Processing..." : "Voice input idle"}
+                  </span>
                   <span className="op-muted">Voice activity: {Boolean(tts?.enabled) ? "speaking ready" : "idle"}</span>
                   <span className="op-muted">Engine: {String(tts?.engine ?? "none")}</span>
                 </div>

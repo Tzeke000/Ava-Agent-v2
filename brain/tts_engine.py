@@ -111,11 +111,12 @@ class TTSEngine:
         self._lock = threading.Lock()
         self._player_thread: threading.Thread | None = None
         self._last_wav: str | None = None
-        self._engine = "none"
+        self._engine_name = "none"
         self._available = False
         self._speaker_id = 0
         self._bridge_path = self._ensure_bridge_script()
         self._pyttsx3 = None
+        self._voice_name = "unknown"
         self._init_engine()
 
     def _log(self, message: str) -> None:
@@ -139,11 +140,34 @@ class TTSEngine:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
     def _init_engine(self) -> None:
+        try:
+            import pyttsx3  # type: ignore
+
+            engine = pyttsx3.init()
+            selected_name = "default"
+            voices = engine.getProperty("voices") or []
+            for voice in voices:
+                voice_name = str(getattr(voice, "name", "") or "")
+                if any(x in voice_name.lower() for x in ("zira", "hazel", "female")):
+                    engine.setProperty("voice", str(getattr(voice, "id", "") or ""))
+                    selected_name = voice_name
+                    break
+            engine.setProperty("rate", 175)
+            engine.setProperty("volume", 0.9)
+            self._pyttsx3 = engine
+            self._voice_name = selected_name
+            self._engine_name = "pyttsx3"
+            self._available = True
+            self._log(f"Using pyttsx3 (voice={selected_name}).")
+            return
+        except Exception as e:
+            self._log(f"pyttsx3 init failed: {e}")
+
         melo_err = ""
         try:
             res = self._run_py311([str(self._bridge_path), "--mode", "check"], timeout=30.0)
             if res.returncode == 0:
-                self._engine = "melotts"
+                self._engine_name = "melotts"
                 self._available = True
                 self._log("MeloTTS available via Python 3.11 bridge.")
                 return
@@ -152,26 +176,19 @@ class TTSEngine:
         except Exception:
             melo_err = "bridge invocation exception"
             self._log("MeloTTS check failed: bridge invocation exception.")
-
-        try:
-            import pyttsx3  # type: ignore
-
-            self._pyttsx3 = pyttsx3.init()
-            self._engine = "pyttsx3"
-            self._available = True
-            self._log("Using pyttsx3 fallback (active).")
-        except Exception as e:
-            self._engine = "none"
-            self._available = False
-            self._log(f"pyttsx3 fallback init failed: {e}")
-            if melo_err:
-                self._log(f"TTS unavailable. Melo failure: {melo_err}")
+        self._engine_name = "none"
+        self._available = False
+        if melo_err:
+            self._log(f"TTS unavailable. Melo failure: {melo_err}")
 
     def is_available(self) -> bool:
         return bool(self._available)
 
     def engine_name(self) -> str:
-        return self._engine
+        return self._engine_name
+
+    def voice_name(self) -> str:
+        return self._voice_name
 
     def _play_wav_blocking(self, wav_path: str) -> None:
         if winsound is None:
@@ -219,7 +236,7 @@ class TTSEngine:
         if not clean:
             return
         with self._lock:
-            if self._engine == "melotts":
+            if self._engine_name == "melotts":
                 wav_path = Path(tempfile.gettempdir()) / f"ava_tts_{int(time.time()*1000)}.wav"
                 try:
                     res = self._run_py311(
@@ -246,14 +263,18 @@ class TTSEngine:
                             try:
                                 import pyttsx3  # type: ignore
 
-                                self._pyttsx3 = pyttsx3.init()
+                                engine = pyttsx3.init()
+                                engine.setProperty("rate", 175)
+                                engine.setProperty("volume", 0.9)
+                                self._pyttsx3 = engine
+                                self._voice_name = "default"
                                 self._log("Initialized pyttsx3 after MeloTTS failure.")
                             except Exception:
                                 self._available = False
-                                self._engine = "none"
+                                self._engine_name = "none"
                                 self._log("pyttsx3 fallback initialization failed after MeloTTS synthesis error.")
                                 return
-                        self._engine = "pyttsx3"
+                        self._engine_name = "pyttsx3"
                         self._available = True
                         self._log("Switched active TTS engine to pyttsx3 fallback.")
                         self._speak_pyttsx3(clean, blocking)
@@ -264,12 +285,12 @@ class TTSEngine:
                 except Exception as e:
                     self._log(f"MeloTTS runtime exception: {e}")
                     if self._pyttsx3 is not None:
-                        self._engine = "pyttsx3"
+                        self._engine_name = "pyttsx3"
                         self._available = True
                         self._log("Switched active TTS engine to pyttsx3 fallback after runtime exception.")
                         self._speak_pyttsx3(clean, blocking)
                     return
-            if self._engine == "pyttsx3":
+            if self._engine_name == "pyttsx3":
                 self._speak_pyttsx3(clean, blocking)
 
     def stop(self) -> None:
