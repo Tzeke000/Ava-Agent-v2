@@ -4,10 +4,12 @@ import * as THREE from "three";
 interface OrbProps {
   emotion: string;
   emotionColor: string;
-  state: "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "offline";
+  state: "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "offline" | "listening";
   size?: number;
   /** Phase 49: override shape for pointer morph */
   shapeOverride?: string;
+  /** Phase 50: speaking amplitude 0-1 for particle pulse */
+  amplitude?: number;
 }
 
 const EMOTION_CONFIG: Record<string, {
@@ -70,7 +72,7 @@ function createGlowTex(color: string): THREE.Texture {
   return new THREE.CanvasTexture(c);
 }
 
-export default function OrbCanvas({ emotion, state, size = 320, shapeOverride }: OrbProps) {
+export default function OrbCanvas({ emotion, state, size = 320, shapeOverride, amplitude = 0 }: OrbProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const disposeRef = useRef<()=>void>(()=>{});
 
@@ -197,13 +199,26 @@ export default function OrbCanvas({ emotion, state, size = 320, shapeOverride }:
         my+=gy*0.2;
         mz+=tx*oy*0.3;
         mx+=vel[i*3]*30; my+=vel[i*3+1]*30; mz+=vel[i*3+2]*30;
+
+        // Phase 50: amplitude-driven pulse wave when speaking
+        if(amplitude > 0.05 && state==="speaking"){
+          const wave = Math.sin(t * (4 + amplitude * 8) + dist * 6) * amplitude * 0.35;
+          const wScale = 1 + wave;
+          mx *= wScale; my *= wScale; mz *= wScale;
+        }
+        // Phase 50: listening state — particles spiral inward
+        if(state==="listening"){
+          const inward = 0.85 + Math.sin(t * 1.5 + dist * 4) * 0.1;
+          mx *= inward; my *= inward; mz *= inward;
+        }
+
         pa.setXYZ(i,mx,my,mz);
       }
       pa.needsUpdate=true;
     }
 
     function spd() {
-      return {thinking:2.5,deep:5.0,speaking:1.8,bored:0.3,excited:7.0,offline:0.1,idle:1.0}[state]||1.0;
+      return {thinking:2.5,deep:5.0,speaking:1.8,bored:0.3,excited:7.0,offline:0.1,idle:1.0,listening:0.8}[state]||1.0;
     }
 
     function animate(){

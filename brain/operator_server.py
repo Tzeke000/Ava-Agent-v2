@@ -413,8 +413,8 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "enabled": bool(host.get("tts_enabled", False)),
         "engine": str(host.get("tts_engine_name") or "none"),
         "voice": str(getattr(tts_obj, "voice_name", lambda: "unknown")()) if tts_obj is not None else "unknown",
-        "tts_speaking": bool(host.get("_tts_speaking", False)),
-        "tts_amplitude": float(host.get("_tts_amplitude", 0.0) or 0.0),
+        "tts_speaking": bool(getattr(tts_obj, "speaking", False)) if tts_obj is not None else bool(host.get("_tts_speaking", False)),
+        "tts_amplitude": float(getattr(tts_obj, "amplitude", 0.0)) if tts_obj is not None else float(host.get("_tts_amplitude", 0.0) or 0.0),
     }
     # Phase 49: pointing state for widget orb
     widget_block = {
