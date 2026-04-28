@@ -118,6 +118,12 @@ class TTSEngine:
         self._pyttsx3 = None
         self._init_engine()
 
+    def _log(self, message: str) -> None:
+        try:
+            print(f"[tts] {message}")
+        except Exception:
+            pass
+
     def _ensure_bridge_script(self) -> Path:
         state_dir = Path(__file__).resolve().parent.parent / "state"
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -133,14 +139,19 @@ class TTSEngine:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
     def _init_engine(self) -> None:
+        melo_err = ""
         try:
             res = self._run_py311([str(self._bridge_path), "--mode", "check"], timeout=30.0)
             if res.returncode == 0:
                 self._engine = "melotts"
                 self._available = True
+                self._log("MeloTTS available via Python 3.11 bridge.")
                 return
+            melo_err = (res.stderr or res.stdout or "").strip() or f"bridge returned code {res.returncode}"
+            self._log(f"MeloTTS check failed: {melo_err}")
         except Exception:
-            pass
+            melo_err = "bridge invocation exception"
+            self._log("MeloTTS check failed: bridge invocation exception.")
 
         try:
             import pyttsx3  # type: ignore
@@ -148,9 +159,13 @@ class TTSEngine:
             self._pyttsx3 = pyttsx3.init()
             self._engine = "pyttsx3"
             self._available = True
-        except Exception:
+            self._log("Using pyttsx3 fallback (active).")
+        except Exception as e:
             self._engine = "none"
             self._available = False
+            self._log(f"pyttsx3 fallback init failed: {e}")
+            if melo_err:
+                self._log(f"TTS unavailable. Melo failure: {melo_err}")
 
     def is_available(self) -> bool:
         return bool(self._available)
@@ -223,22 +238,36 @@ class TTSEngine:
                     )
                     if res.returncode != 0 or not wav_path.is_file():
                         # Melo failed mid-session; pivot to pyttsx3 when available.
+                        err_text = (res.stderr or res.stdout or "").strip()
+                        self._log(
+                            f"MeloTTS synthesis failed (code={res.returncode}, wav_exists={wav_path.is_file()}): {err_text or 'no error output'}"
+                        )
                         if self._pyttsx3 is None:
                             try:
                                 import pyttsx3  # type: ignore
 
                                 self._pyttsx3 = pyttsx3.init()
+                                self._log("Initialized pyttsx3 after MeloTTS failure.")
                             except Exception:
                                 self._available = False
                                 self._engine = "none"
+                                self._log("pyttsx3 fallback initialization failed after MeloTTS synthesis error.")
                                 return
                         self._engine = "pyttsx3"
+                        self._available = True
+                        self._log("Switched active TTS engine to pyttsx3 fallback.")
                         self._speak_pyttsx3(clean, blocking)
                         return
                     self._last_wav = str(wav_path)
                     self._play_wav(str(wav_path), blocking=blocking)
                     return
-                except Exception:
+                except Exception as e:
+                    self._log(f"MeloTTS runtime exception: {e}")
+                    if self._pyttsx3 is not None:
+                        self._engine = "pyttsx3"
+                        self._available = True
+                        self._log("Switched active TTS engine to pyttsx3 fallback after runtime exception.")
+                        self._speak_pyttsx3(clean, blocking)
                     return
             if self._engine == "pyttsx3":
                 self._speak_pyttsx3(clean, blocking)

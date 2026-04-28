@@ -1,12 +1,12 @@
 {
-  "tick_id": 268,
-  "last_wallclock": 1777391582.902478,
-  "last_rich_learning_ts": 1777391582.902478,
-  "last_digest": "7e0e630f739932b7",
+  "tick_id": 271,
+  "last_wallclock": 1777400178.85591,
+  "last_rich_learning_ts": 1777400178.85591,
+  "last_digest": "7743c33c798f85be",
   "silence_streak": 0,
-  "last_emit_sig": "cb79a146f8e51a33",
+  "last_emit_sig": "3f5b9e4d754d4960",
   "meta": {
     "route_fallback_streak": 0,
-    "last_learning_review_wall": 1777391519.4047155
+    "last_learning_review_wall": 1777399965.5755985
   }
 }

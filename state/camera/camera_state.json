@@ -1,16 +1,16 @@
 {
   "current": {
-    "snapshot_id": "cam_20260428_115310_948474",
-    "timestamp": "2026-04-28T11:53:10",
-    "face_visible": true,
+    "snapshot_id": "cam_20260428_142014_683915",
+    "timestamp": "2026-04-28T14:20:14",
+    "face_visible": false,
     "recognized_person_id": null,
     "recognized_name": "unknown",
-    "recognition_text": "Unknown face (71.9)",
+    "recognition_text": "Facial recognition unavailable in this OpenCV build",
     "expression_label": "unknown",
     "expression_confidence": 0.0,
     "expression_stability": 0.0,
     "raw_emotion": "unknown",
-    "ava_mood": "calmness",
+    "ava_mood": "interest",
     "ava_primary_emotions": [
       {
         "name": "interest",
@@ -23,26 +23,22 @@
     ],
     "ava_dominant_style": "focused",
     "ava_behavior_modifiers": {
-      "warmth": 0.388,
-      "humor": 0.211,
-      "assertiveness": 0.345,
-      "caution": 0.22,
-      "initiative": 0.431,
-      "memory_sensitivity": 0.443,
-      "depth": 0.336
+      "warmth": 0.395,
+      "humor": 0.208,
+      "assertiveness": 0.339,
+      "caution": 0.223,
+      "initiative": 0.418,
+      "memory_sensitivity": 0.445,
+      "depth": 0.335
     },
-    "importance": 0.76395,
-    "kept_permanently": true,
-    "reason_saved": "face_visible, unknown_face_visible, visibility_changed, novel_view, time_gap, goal_relevance",
-    "reason_not_saved": "",
-    "comparison_summary": "Something about the scene looks more active than earlier.",
-    "comparison_tags": [
-      "activity_change"
-    ],
-    "transition_summary": "You just came back into view.",
-    "transition_tags": [
-      "returned_to_view"
-    ],
+    "importance": 0.41135,
+    "kept_permanently": false,
+    "reason_saved": "",
+    "reason_not_saved": "no_face_visible, no_meaningful_change",
+    "comparison_summary": "",
+    "comparison_tags": [],
+    "transition_summary": "",
+    "transition_tags": [],
     "trend_summary": "",
     "trend_tags": [],
     "trend_tension_delta": 0.0,
@@ -54,13 +50,13 @@
     "stacked_state": "",
     "pattern_summary": "",
     "pattern_tags": [],
-    "interpretation_confidence": 0.6177,
-    "transition_strength": 0.279,
-    "action_confidence": 0.5073,
-    "change_reason": "face_visible, unknown_face_visible, visibility_changed, novel_view, time_gap, goal_relevance",
+    "interpretation_confidence": 0.1884,
+    "transition_strength": 0.1269,
+    "action_confidence": 0.1623,
+    "change_reason": "scene_meaningfully_changed",
     "rolling_saved": true,
-    "rolling_reason": "important_event",
-    "scene_similarity": 0.422
+    "rolling_reason": "scene_meaningfully_changed",
+    "scene_similarity": 0.492
   },
   "recent_events": [
     {
@@ -377,8 +373,8 @@
     }
   ],
   "last_person_id": null,
-  "last_face_visible": true,
-  "last_snapshot_ts": "2026-04-28T11:53:10",
-  "last_saved_snapshot_ts": "2026-04-28T11:53:10",
+  "last_face_visible": false,
+  "last_snapshot_ts": "2026-04-28T14:20:14",
+  "last_saved_snapshot_ts": "2026-04-28T14:20:14",
   "last_meaningful_snapshot_ts": "2026-04-28T11:53:10"
 }

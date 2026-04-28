@@ -38,18 +38,6 @@
   "curiosity_questions": [],
   "goal_history": [
     {
-      "timestamp": "2026-04-27T21:41:06",
-      "kind": "goal",
-      "text": "Stay aware of: everyone has their own favorite color, people are entitled to their own opinions. Being around my family and friends is relaxing because i can be myself around…",
-      "goal_id": "goal_df2c29054d"
-    },
-    {
-      "timestamp": "2026-04-27T21:44:19",
-      "kind": "question",
-      "text": "Clarify or learn more about: it just helps me relax",
-      "goal_id": "goal_e7e5ce6675"
-    },
-    {
       "timestamp": "2026-04-27T21:46:17",
       "kind": "question",
       "text": "Ask Zeke about his thoughts on having a matching car and favorite color.",
@@ -276,6 +264,18 @@
       "kind": "goal",
       "text": "Stay aware of: ok Ava im gonna fix your UI a bit ok im gonna have to shut you down for a bit ok",
       "goal_id": "goal_460129e7b7"
+    },
+    {
+      "timestamp": "2026-04-28T14:12:50",
+      "kind": "question",
+      "text": "Clarify or learn more about: Hello Ava",
+      "goal_id": "goal_5163633cbe"
+    },
+    {
+      "timestamp": "2026-04-28T14:17:27",
+      "kind": "goal",
+      "text": "Stay aware of: no just testing you for now Ava im gonna give you a sort of digatal body in a but then fix you brain tab real quick",
+      "goal_id": "goal_285c2c5955"
     }
   ],
   "behavior_patterns": [
@@ -324,8 +324,8 @@
     "Zeke seemed angry about yes and ill fix them but you have to be asleep for it — I want to follow up.",
     "Zeke seemed concerned about ok for now dot worry about it — I want to follow up."
   ],
-  "last_updated": "2026-04-28T11:53:11",
-  "reflection_count": 390,
+  "last_updated": "2026-04-28T14:17:27",
+  "reflection_count": 392,
   "goal_system_summary": [
     {
       "text": "Stay aware of: is this a memory inject about the camera or is the problem curent?",
@@ -390,21 +390,21 @@
   ],
   "active_goal": {
     "name": "clarify",
-    "strength": 0.256,
+    "strength": 0.252,
     "style": "structured, guiding, careful",
     "silent": false
   },
   "goal_blend": [
     {
       "name": "clarify",
-      "weight": 0.528,
+      "weight": 0.526,
       "style": "structured, guiding, careful",
       "silent": false
     },
     {
-      "name": "maintain_connection",
-      "weight": 0.472,
-      "style": "warm, casual, connected",
+      "name": "reduce_stress",
+      "weight": 0.474,
+      "style": "calm, soft, reassuring",
       "silent": false
     }
   ]

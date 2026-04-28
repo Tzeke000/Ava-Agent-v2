@@ -1,13 +1,13 @@
 {
   "overall": "error",
-  "last_startup_check": "2026-04-28T07:35:05",
+  "last_startup_check": "2026-04-28T14:16:08",
   "last_runtime_check": "",
   "last_light_check": "2026-04-28T02:55:02",
   "subsystems": {
     "camera": {
-      "age_seconds": 1777376105.7,
+      "age_seconds": 1777400168.1,
       "status": "error",
-      "detail": "very stale frame 1777376105.7s ago"
+      "detail": "very stale frame 1777400168.1s ago"
     },
     "memory": {
       "status": "healthy",
@@ -30,37 +30,11 @@
     {
       "severity": "error",
       "subsystem": "camera",
-      "message": "very stale frame 1777376105.7s ago",
-      "ts": "2026-04-28T07:35:05"
+      "message": "very stale frame 1777400168.1s ago",
+      "ts": "2026-04-28T14:16:08"
     }
   ],
   "history": [
-    {
-      "kind": "light",
-      "ts": "2026-04-27T21:58:00",
-      "overall": "error",
-      "issues": [
-        {
-          "severity": "error",
-          "subsystem": "camera",
-          "message": "very stale frame 1777341480.9s ago",
-          "ts": "2026-04-27T21:58:00"
-        }
-      ]
-    },
-    {
-      "kind": "light",
-      "ts": "2026-04-27T22:01:04",
-      "overall": "error",
-      "issues": [
-        {
-          "severity": "error",
-          "subsystem": "camera",
-          "message": "very stale frame 1777341664.3s ago",
-          "ts": "2026-04-27T22:01:04"
-        }
-      ]
-    },
     {
       "kind": "light",
       "ts": "2026-04-27T22:02:00",
@@ -422,6 +396,32 @@
           "subsystem": "camera",
           "message": "very stale frame 1777376105.7s ago",
           "ts": "2026-04-28T07:35:05"
+        }
+      ]
+    },
+    {
+      "kind": "startup",
+      "ts": "2026-04-28T14:10:14",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1777399814.1s ago",
+          "ts": "2026-04-28T14:10:14"
+        }
+      ]
+    },
+    {
+      "kind": "startup",
+      "ts": "2026-04-28T14:16:08",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1777400168.1s ago",
+          "ts": "2026-04-28T14:16:08"
         }
       ]
     }

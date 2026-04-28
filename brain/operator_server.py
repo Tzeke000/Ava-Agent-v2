@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import json
 import os
+import signal
 import threading
 import time
 import traceback
@@ -1062,7 +1063,15 @@ def create_app():
                     note_saved = True
         except Exception as e:
             return {"ok": False, "error": str(e), "goodbye": goodbye, "note_saved": note_saved}
-        threading.Timer(2.0, os._exit, args=[0]).start()
+        try:
+            base_dir = Path(h.get("BASE_DIR") or Path.cwd())
+            pid_path = base_dir / "state" / "ava.pid"
+            if pid_path.is_file():
+                pid_path.unlink()
+        except Exception:
+            pass
+        threading.Timer(1.0, os._exit, args=[0]).start()
+        threading.Timer(1.2, signal.raise_signal, args=[signal.SIGTERM]).start()
         return {"ok": True, "goodbye": goodbye, "note_saved": note_saved}
 
     @app.post("/api/v1/style")
