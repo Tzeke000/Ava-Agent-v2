@@ -10,6 +10,7 @@ from dataclasses import asdict
 import json
 import os
 import threading
+import time
 import traceback
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -17,6 +18,24 @@ from typing import Any, Callable, Optional
 _HOST: dict[str, Any] | None = None
 _CHAT_FN: Optional[Callable[..., dict[str, Any]]] = None
 _CHAT_CALL_LOCK = threading.Lock()
+
+
+def _schedule_graceful_shutdown(delay_seconds: float = 1.0) -> None:
+    def _shutdown() -> None:
+        time.sleep(max(0.1, float(delay_seconds or 1.0)))
+        try:
+            import signal
+
+            os.kill(os.getpid(), signal.SIGINT)
+            return
+        except Exception:
+            pass
+        try:
+            os._exit(0)
+        except Exception:
+            pass
+
+    threading.Thread(target=_shutdown, daemon=True, name="ava-process-shutdown").start()
 
 
 def configure_operator_runtime(host: dict[str, Any], chat_fn: Callable[..., dict[str, Any]]) -> None:
@@ -279,6 +298,12 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "tool_execution_count": int(host.get("_desktop_tool_execution_count", 0) or 0),
         "pending_tier2_proposals": len(list(host.get("_desktop_tier2_pending") or [])),
     }
+    tts_obj = host.get("tts_engine")
+    tts_block = {
+        "available": bool(getattr(tts_obj, "is_available", lambda: False)()) if tts_obj is not None else False,
+        "enabled": bool(host.get("tts_enabled", False)),
+        "engine": str(host.get("tts_engine_name") or "none"),
+    }
 
     inner_life = {
         "current_thought": "",
@@ -286,6 +311,9 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "self_summary": "",
         "opinion_count": 0,
         "monologue_thought_count": 0,
+        "last_shutdown": None,
+        "pickup_note_active": False,
+        "pickup_note_preview": None,
     }
     try:
         from brain.inner_monologue import current_thought, thought_count
@@ -302,6 +330,21 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
 
+    try:
+        base_dir = Path(host.get("BASE_DIR") or Path.cwd())
+        pickup_path = base_dir / "state" / "pickup_note.json"
+        if pickup_path.is_file():
+            payload = json.loads(pickup_path.read_text(encoding="utf-8"))
+            if isinstance(payload, dict):
+                ts = float(payload.get("timestamp") or 0.0)
+                note = str(payload.get("note") or "").strip()
+                fresh = ts > 0 and ((__import__("time").time() - ts) <= 24 * 3600) and bool(note)
+                inner_life["last_shutdown"] = ts if ts > 0 else None
+                inner_life["pickup_note_active"] = bool(fresh)
+                inner_life["pickup_note_preview"] = (note[:80] if note else None)
+    except Exception:
+        pass
+
     debug_human = {
         "ribbon": ribbon,
         "heartbeat": heartbeat_block,
@@ -312,6 +355,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "improvement_loop": loop_block,
         "concerns": concerns_block,
         "tools": tools_block,
+        "tts": tts_block,
         "inner_life": inner_life,
         "reply_path": host.get("reply_path_meta") if isinstance(host.get("reply_path_meta"), dict) else {},
     }
@@ -326,6 +370,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "improvement_loop": loop_block,
         "concerns": concerns_block,
         "tools": tools_block,
+        "tts": tts_block,
         "inner_life": inner_life,
         "debug": debug_human,
         "ts": __import__("time").time(),
@@ -632,6 +677,54 @@ def create_app():
                 "reply": "",
                 "debug_reply_source": "empty",
             }
+
+    @app.post("/api/v1/tts/toggle")
+    def tts_toggle() -> dict[str, Any]:
+        h = _g()
+        available = False
+        tts_obj = h.get("tts_engine")
+        if tts_obj is not None and callable(getattr(tts_obj, "is_available", None)):
+            try:
+                available = bool(tts_obj.is_available())
+            except Exception:
+                available = False
+        current_enabled = bool(h.get("tts_enabled", False))
+        next_enabled = bool((not current_enabled) and available)
+        h["tts_enabled"] = next_enabled
+        if not next_enabled and tts_obj is not None and callable(getattr(tts_obj, "stop", None)):
+            try:
+                tts_obj.stop()
+            except Exception:
+                pass
+        return {
+            "ok": True,
+            "enabled": next_enabled,
+            "available": available,
+            "engine": str(h.get("tts_engine_name") or "none"),
+        }
+
+    @app.post("/api/v1/shutdown")
+    def shutdown() -> dict[str, Any]:
+        h = _g()
+        goodbye = "Goodnight, Zeke."
+        note_saved = False
+        try:
+            from brain.shutdown_ritual import run_shutdown_ritual
+
+            with _CHAT_CALL_LOCK:
+                goodbye = str(run_shutdown_ritual(h) or goodbye).strip() or goodbye
+            pickup_path = Path(h.get("BASE_DIR") or Path.cwd()) / "state" / "pickup_note.json"
+            if pickup_path.is_file():
+                try:
+                    payload = json.loads(pickup_path.read_text(encoding="utf-8"))
+                    ts = float((payload or {}).get("timestamp") or 0.0) if isinstance(payload, dict) else 0.0
+                    note_saved = ts > 0 and ((__import__("time").time() - ts) < 180.0)
+                except Exception:
+                    note_saved = True
+        except Exception as e:
+            return {"ok": False, "error": str(e), "goodbye": goodbye, "note_saved": note_saved}
+        _schedule_graceful_shutdown(delay_seconds=1.2)
+        return {"ok": True, "goodbye": goodbye, "note_saved": note_saved}
 
     @app.post("/api/v1/routing/override")
     def routing_override(body: RoutingOverrideIn) -> dict[str, Any]:

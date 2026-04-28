@@ -72,8 +72,10 @@ from brain.inner_monologue import current_thought as inner_current_thought
 from brain.inner_monologue import get_conversation_starter as inner_get_conversation_starter
 from brain.inner_monologue import start_inner_monologue
 from brain.opinions import form_opinion, get_opinion, list_top_opinions
+from brain.shutdown_ritual import is_shutdown_trigger, load_pickup_note, run_shutdown_ritual
 from brain.self_model import add_question_about_self, get_self_summary, update_self_model
 from brain.desktop_agent import ToolRegistry
+from brain.tts_engine import TTSEngine
 from config.ava_tuning import MODEL_ROUTING_CONFIG
 
 try:
@@ -216,6 +218,10 @@ _runtime_active_issue_summary = ""
 _runtime_presence_mode = "idle"
 _last_user_interaction_ts = 0.0
 _current_curiosity_topic = ""
+pickup_note = None
+tts_engine = None
+tts_enabled = False
+tts_engine_name = "none"
 _desktop_tool_registry = None
 _desktop_last_tool_used = ""
 _desktop_last_tool_result = ""
@@ -6224,6 +6230,11 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
     _curiosity_topic = str(_curiosity_row.get("topic") or "").strip()
     _self_summary = get_self_summary(globals())
     _opinions = list_top_opinions(globals(), limit=3)
+    _pickup_note_once = ""
+    _pickup_note = str(globals().get("pickup_note") or "").strip()
+    if _pickup_note:
+        _pickup_note_once = f"[Ava's note to herself from last session: {_pickup_note}]"
+        globals()["pickup_note"] = None
 
     prompt = f"""
 {personality}
@@ -6282,6 +6293,7 @@ INNER LIFE SNAPSHOT:
 - current_curiosity: {_curiosity_topic or "(none)"}
 - self_summary: {_self_summary}
 - top_opinions: {json.dumps(_opinions, ensure_ascii=False)}
+{_pickup_note_once}
 
 AVAILABLE READ-ONLY FILES:
 - chatlog.jsonl
@@ -7053,6 +7065,13 @@ def finalize_ava_turn(
         )
     except Exception:
         pass
+    try:
+        _tts = globals().get("tts_engine")
+        _tts_enabled = bool(globals().get("tts_enabled", False))
+        if _tts_enabled and _tts is not None and callable(getattr(_tts, "is_available", None)) and _tts.is_available():
+            _tts.speak(ai_reply, blocking=False)
+    except Exception:
+        pass
     return ai_reply, visual_out, active_profile, actions, reflection
 
 
@@ -7088,6 +7107,17 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
             pass
 
         active_profile = load_profile_by_id(active_person_id)
+
+        if is_shutdown_trigger(user_input):
+            ritual_goodbye = scrub_visible_reply(run_shutdown_ritual(globals()))
+            return finalize_ava_turn(
+                user_input,
+                ritual_goodbye,
+                {},
+                active_profile,
+                [],
+                turn_route="shutdown_ritual",
+            )
 
         if _is_thinking_or_topic_prompt(user_input):
             thought = inner_current_thought(BASE_DIR)
@@ -8422,6 +8452,11 @@ try:
     start_inner_monologue(globals())
 except Exception as _inner_boot_e:
     print(f"[inner_monologue] startup skipped: {_inner_boot_e}")
+try:
+    globals()["pickup_note"] = load_pickup_note()
+except Exception as _pickup_boot_e:
+    globals()["pickup_note"] = None
+    print(f"[shutdown_ritual] pickup note load skipped: {_pickup_boot_e}")
 seed_default_profiles()
 _AVA_IDENTITY_BLOCK = load_ava_identity()
 ensure_emotion_reference_file()
@@ -8485,6 +8520,15 @@ else:
 if not EXPRESSION_STATE_PATH.exists():
     save_expression_state(default_expression_state())
 
+try:
+    _tts = TTSEngine()
+    globals()["tts_engine"] = _tts if _tts.is_available() else None
+    globals()["tts_engine_name"] = _tts.engine_name() if _tts.is_available() else "none"
+except Exception:
+    globals()["tts_engine"] = None
+    globals()["tts_engine_name"] = "none"
+globals()["tts_enabled"] = False
+
 print("Ava running...")
 print(f"Base dir: {BASE_DIR}")
 print(f"Profiles dir: {PROFILES_DIR}")
@@ -8494,7 +8538,10 @@ print(f"Workbench dir: {WORKBENCH_DIR}")
 print(f"Emotion reference: {EMOTION_REFERENCE_PATH}")
 print(f"Active person: {get_active_person_id()}")
 print(f"Camera timer: {CAMERA_TICK_SECONDS}s")
-print("TTS: disabled in this build")
+if globals().get("tts_engine") is None:
+    print("TTS: disabled in this build")
+else:
+    print(f"TTS: disabled in this build (engine ready: {globals().get('tts_engine_name')})")
 print(f"Expression sensing: {'DeepFace ready' if DEEPFACE_AVAILABLE else 'DeepFace unavailable'}")
 print(get_memory_status())
 
