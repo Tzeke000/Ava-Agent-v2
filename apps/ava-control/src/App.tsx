@@ -130,6 +130,7 @@ export default function App() {
     setChatInput("");
     try {
       const response = await postJson<Record<string, unknown>>("/api/v1/chat", { message: t });
+      console.log("[ava-control chat] raw POST /api/v1/chat response:", JSON.stringify(response));
       const reply =
         (typeof response.reply === "string" && response.reply.trim()) ||
         (typeof response.assistant_reply === "string" && response.assistant_reply.trim()) ||

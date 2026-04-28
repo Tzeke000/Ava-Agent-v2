@@ -5609,6 +5609,30 @@ def load_recent_chat(limit: int = RECENT_CHAT_LIMIT, person_id: str | None = Non
         rows = [r for r in rows if (r.get("meta", {}) or {}).get("person_id") == person_id]
     return rows[-limit:]
 
+
+def format_conversation_history_block(
+    rows: list[dict], *, content_limit: int = 160, empty_fallback: str = "(no recent lines for this person.)"
+) -> str:
+    """Format chatlog rows with explicit Zeke/Ava labels and history boundaries (transcript, not narration)."""
+    lines: list[str] = []
+    for row in rows:
+        role = str(row.get("role") or "").strip().lower()
+        if role == "user":
+            label = "Zeke"
+        elif role == "assistant":
+            label = "Ava"
+        else:
+            label = role.upper() or "UNKNOWN"
+        text = str(row.get("content") or "")[:content_limit]
+        lines.append(f"{label}: {text}")
+    inner = "\n".join(lines) if lines else empty_fallback
+    return (
+        "--- BEGIN CONVERSATION HISTORY ---\n"
+        "CONVERSATION HISTORY (between Zeke and Ava):\n\n"
+        f"{inner}\n"
+        "--- END CONVERSATION HISTORY ---"
+    )
+
 # =========================================================
 # FACE DETECTION + RECOGNITION
 # =========================================================
@@ -5852,6 +5876,8 @@ def process_ava_action_blocks(reply_text: str, person_id: str, latest_user_input
 # =========================================================
 SYSTEM_PROMPT = """
 You are Ava.
+The conversation history below is a record of your dialogue with Zeke. These are things Zeke said and things YOU (Ava) said. Do not confuse Zeke's experiences or words as your own.
+The same lines also appear between the markers --- BEGIN CONVERSATION HISTORY --- and --- END CONVERSATION HISTORY ---. Lines labeled "Zeke:" are Zeke's words; lines labeled "Ava:" are your prior replies. That block is a transcript, not your first-person lived experience outside the chat.
 Stay in character consistently.
 Be natural, coherent, warm, and grounded.
 Do not invent memories.
@@ -6069,10 +6095,11 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
         )
     dynamic_memory_summary = memory_bridge.build_summary(globals(), user_input, active_profile)
 
-    recent_text = "\n".join(
-        f"{row['role'].upper()}: {row['content'][:160]}"
-        for row in recent_chat[-4:]
-    ) if recent_chat else "No recent chat for this person."
+    recent_text = format_conversation_history_block(
+        recent_chat[-4:] if recent_chat else [],
+        content_limit=160,
+        empty_fallback="(no recent lines in the log for this person.)",
+    )
 
     reflection_summary = format_recalled_reflections_for_prompt(reflections) if reflections else "No relevant recalled reflections."
     recent_reflection_summary = format_reflections_ui(recent_reflections)[:900] if recent_reflections else "No recent self reflections."
@@ -6136,7 +6163,10 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
 
     workbench_index = format_workbench_index(limit=20)
 
-    self_narrative_block = ws.self_narrative or get_self_narrative_for_prompt()
+    _raw_narrative = (ws.self_narrative or get_self_narrative_for_prompt() or "").strip()
+    if _raw_narrative.startswith("[Ava's inner state]"):
+        _raw_narrative = _raw_narrative.replace("[Ava's inner state]", "", 1).strip()
+    self_narrative_block = f"AVA INTERNAL STATE:\n{_raw_narrative}" if _raw_narrative else "AVA INTERNAL STATE:\n(none)"
 
     _life_rhythm_block = get_life_rhythm_prompt_block(active_profile["person_id"])
     _life_rhythm_section = (
@@ -6182,7 +6212,7 @@ TIME:
 {get_time_status_text()}
 Circadian rhythm: {get_circadian_modifiers()["tone_hint"]}
 
-INTERNAL STATE:
+CURRENT MOOD AND AFFECT:
 {mood_to_prompt_text(mood)}
 CURRENT GOAL EXPRESSION:
 {current_goal_expression_style(load_goal_system())}
@@ -6201,13 +6231,12 @@ If the user is asking about the camera, face, frame, what Ava sees, or who is pr
 RELEVANT MEMORIES:
 {format_memories_for_prompt(memories)}
 
-RECENT CHAT:
 {recent_text}
 
-RECALLED SELF REFLECTIONS:
+AVA REFLECTION MEMORY (retrieved snippets — not live chat with Zeke):
 {reflection_summary}
 
-RECENT SELF REFLECTION SNAPSHOT:
+AVA PRIOR SELF-REFLECTION NOTES (your notes — not Zeke's words):
 {recent_reflection_summary}
 
 DYNAMIC SELF / MEMORY READER:
@@ -6346,10 +6375,15 @@ def build_prompt_fast(
 
     recent_rows = load_recent_chat(limit=12, person_id=active_profile["person_id"])
     last3 = [r for r in recent_rows if str(r.get("content", "")).strip()][-3:]
-    recent3_block = "\n".join(
-        f"- {str(r.get('role') or '').strip()}: {trim_for_prompt(str(r.get('content') or ''), limit=220)}"
+    _trim_rows = [
+        {"role": r.get("role"), "content": trim_for_prompt(str(r.get("content") or ""), limit=220)}
         for r in last3
-    ) or "(none)"
+    ]
+    recent3_block = format_conversation_history_block(
+        _trim_rows,
+        content_limit=1200,
+        empty_fallback="(none)",
+    )
 
     prompt = f"""{personality}
 
@@ -6366,10 +6400,9 @@ TIME:
 {get_time_status_text()}
 Circadian rhythm: {get_circadian_modifiers()["tone_hint"]}
 
-INTERNAL TONE:
+CURRENT MOOD AND AFFECT:
 {mood_to_prompt_text(mood)}
 
-RECENT (last 3):
 {recent3_block}
 
 USER MESSAGE:

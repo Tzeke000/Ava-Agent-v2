@@ -527,16 +527,42 @@ def create_app():
     def snapshot() -> dict[str, Any]:
         return build_snapshot(_g())
 
+    def _normalize_chat_payload(raw: Any) -> dict[str, Any]:
+        """Ensure clients always see reply text under both ``reply`` and ``message``."""
+        if isinstance(raw, str):
+            text = raw.strip()
+            return {"ok": True, "reply": text, "message": text}
+        if isinstance(raw, dict):
+            out = dict(raw)
+            text = ""
+            r = out.get("reply")
+            if isinstance(r, str) and r.strip():
+                text = r.strip()
+            if not text:
+                ar = out.get("assistant_reply")
+                if isinstance(ar, str) and ar.strip():
+                    text = ar.strip()
+            if not text:
+                mv = out.get("message")
+                if isinstance(mv, str) and mv.strip() and not out.get("empty_message"):
+                    text = mv.strip()
+            out["reply"] = text
+            out["message"] = text
+            out.setdefault("ok", True)
+            return out
+        return {"ok": False, "error": "unexpected_chat_response_type", "reply": "", "message": ""}
+
     @app.post("/api/v1/chat")
     async def operator_chat(body: OpChatIn) -> dict[str, Any]:
         if _CHAT_FN is None:
             return {"ok": False, "error": "chat_not_configured"}
         try:
 
-            def _run() -> dict[str, Any]:
+            def _run() -> Any:
                 return _CHAT_FN(body.message)
 
-            return await asyncio.to_thread(_run)
+            raw = await asyncio.to_thread(_run)
+            return _normalize_chat_payload(raw)
         except Exception as e:
             return {"ok": False, "error": str(e), "trace": traceback.format_exc()[:1200]}
 
