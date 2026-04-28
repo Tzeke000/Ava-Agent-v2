@@ -3,6 +3,7 @@ import * as d3 from "d3";
 import { API_BASE, ApiLogEntry, getJson, getText, postJson, registerApiLogger } from "./api";
 import { JsonBlock, Kv, Section } from "./components/Ui";
 import OrbCanvas from "./components/OrbCanvas";
+import { listen } from "@tauri-apps/api/event";
 
 /** Operator HTTP API aggregate (brain/operator_server.py — started from avaagent.py). */
 type Snapshot = Record<string, unknown>;
@@ -26,17 +27,12 @@ type TabId = (typeof TABS)[number]["id"];
 type EmotionVisual = {
   color: string;
   shape:
-    | "circle"
-    | "infinity"
-    | "rings"
-    | "teardrop"
-    | "jagged"
-    | "spiral"
-    | "flicker"
-    | "awe_pop"
-    | "heart"
-    | "tall";
-  pulse: "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "confused" | "offline";
+    | "circle" | "infinity" | "rings" | "teardrop" | "jagged" | "spiral"
+    | "flicker" | "awe_pop" | "heart" | "tall"
+    // Phase 56 new shapes
+    | "cube" | "prism" | "cylinder" | "double_helix" | "burst"
+    | "contracted_tremor" | "rising" | "pointer" | string;
+  pulse: "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "confused" | "offline" | "listening";
 };
 
 function hexToRgbTriplet(hex: string): string {
@@ -156,6 +152,13 @@ const EMOTION_VISUALS: Record<string, EmotionVisual> = {
   confusion: { color: "#9f7aea", shape: "flicker", pulse: "confused" },
   confidence: { color: "#ecc94b", shape: "tall", pulse: "speaking" },
   contentment: { color: "#68d391", shape: "circle", pulse: "idle" },
+  // Phase 56 compound mappings
+  logical: { color: "#4299e1", shape: "cube", pulse: "thinking" },
+  analyzing: { color: "#00d4d4", shape: "prism", pulse: "thinking" },
+  neutral: { color: "#a0aec0", shape: "cylinder", pulse: "idle" },
+  realization: { color: "#f5c518", shape: "burst", pulse: "excited" },
+  scared: { color: "#44337a", shape: "contracted_tremor", pulse: "confused" },
+  proud: { color: "#6b46c1", shape: "rising", pulse: "thinking" },
 };
 
 function asRecord(v: unknown): Record<string, unknown> | undefined {
@@ -174,6 +177,9 @@ export default function App() {
   const [chatHist, setChatHist] = useState<ChatMessage[]>([]);
   const [lastChatErr, setLastChatErr] = useState<string>("");
   const [wbActionMsg, setWbActionMsg] = useState<string>("");
+  // Phase 55: drag-drop file input
+  const [dropHover, setDropHover] = useState(false);
+  const [dropProcessing, setDropProcessing] = useState(false);
   const [chatThinking, setChatThinking] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const [cameraTick, setCameraTick] = useState(() => Date.now());
@@ -300,6 +306,36 @@ export default function App() {
     void poll();
     const id = window.setInterval(() => void poll(), 3000);
     return () => window.clearInterval(id);
+  }, [poll]);
+
+  // Phase 55: drag-drop file input via Tauri event
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let unlistenHover: (() => void) | undefined;
+    let unlistenLeave: (() => void) | undefined;
+
+    const setup = async () => {
+      try {
+        unlistenHover = await listen("tauri://drag-over", () => setDropHover(true)) as unknown as () => void;
+        unlistenLeave = await listen("tauri://drag-leave", () => setDropHover(false)) as unknown as () => void;
+        unlisten = await listen<{ paths: string[] }>("tauri://drop", async (event) => {
+          setDropHover(false);
+          const paths: string[] = event.payload?.paths ?? [];
+          if (!paths.length) return;
+          setDropProcessing(true);
+          try {
+            for (const p of paths.slice(0, 3)) {
+              await postJson("/api/v1/chat", { message: `[Dropped file: ${p}]` });
+            }
+            await poll();
+          } catch { /* ok */ } finally {
+            setDropProcessing(false);
+          }
+        }) as unknown as () => void;
+      } catch { /* Tauri API unavailable in browser */ }
+    };
+    void setup();
+    return () => { unlisten?.(); unlistenHover?.(); unlistenLeave?.(); };
   }, [poll]);
 
   useEffect(() => {
@@ -1066,7 +1102,24 @@ export default function App() {
         </div>
       )}
 
-      <section className="presence-stage">
+      <section className="presence-stage" style={{ position: "relative" }}>
+        {dropHover && (
+          <div style={{
+            position: "absolute", inset: 0, zIndex: 100, background: "rgba(0,212,212,0.12)",
+            border: "2px dashed #00d4d4", display: "flex", alignItems: "center",
+            justifyContent: "center", pointerEvents: "none", borderRadius: "8px",
+          }}>
+            <span style={{ color: "#00d4d4", fontSize: "1.2rem", fontWeight: 600 }}>Drop file for Ava</span>
+          </div>
+        )}
+        {dropProcessing && (
+          <div style={{
+            position: "absolute", inset: 0, zIndex: 100, background: "rgba(0,0,0,0.5)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <span style={{ color: "#00d4d4" }}>Processing…</span>
+          </div>
+        )}
         <div className="presence-hud-row">
           <div className="presence-hud" style={{ color: effectiveOrbColor }}>
             EMOTION: {primaryEmotion}

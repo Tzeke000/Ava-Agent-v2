@@ -52,6 +52,15 @@ const EMOTION_CONFIG: Record<string, {
   confusion:    { color:"#9f7aea",lightColor:"#d0a0ff",darkColor:"#402870",shape:"scattered",  coreScale:0.9, particleSpread:1.1, connectionDensity:0.2, gravityY:0,    tiltX:0,    pulseSpeed:4.0, pulseAmplitude:0.15 },
   contentment:  { color:"#68d391",lightColor:"#a0ffc0",darkColor:"#206030",shape:"sphere",     coreScale:1.0, particleSpread:1.0, connectionDensity:0.35,gravityY:0,    tiltX:0,    pulseSpeed:1.2, pulseAmplitude:0.05 },
   sympathy:     { color:"#38a169",lightColor:"#70e0a0",darkColor:"#185030",shape:"sphere",     coreScale:1.0, particleSpread:1.0, connectionDensity:0.5, gravityY:0,    tiltX:0.1,  pulseSpeed:1.5, pulseAmplitude:0.06 },
+  // Phase 56 compound emotion states — derived from emotion combinations
+  logical:      { color:"#4299e1",lightColor:"#90d0ff",darkColor:"#183870",shape:"cube",       coreScale:1.0, particleSpread:1.0, connectionDensity:0.7, gravityY:0,    tiltX:0,    pulseSpeed:0.8, pulseAmplitude:0.03 },
+  analyzing:    { color:"#00d4d4",lightColor:"#80ffff",darkColor:"#007070",shape:"prism",      coreScale:1.1, particleSpread:1.0, connectionDensity:0.6, gravityY:0,    tiltX:0.5,  pulseSpeed:1.2, pulseAmplitude:0.05 },
+  neutral:      { color:"#a0aec0",lightColor:"#d0d8e8",darkColor:"#404858",shape:"cylinder",   coreScale:1.0, particleSpread:1.0, connectionDensity:0.3, gravityY:0,    tiltX:0,    pulseSpeed:1.0, pulseAmplitude:0.04 },
+  bored2:       { color:"#4a5568",lightColor:"#8090a8",darkColor:"#202830",shape:"infinity",   coreScale:0.8, particleSpread:0.9, connectionDensity:0.1, gravityY:0,    tiltX:0,    pulseSpeed:0.4, pulseAmplitude:0.02 },
+  thinking_deep:{ color:"#553c9a",lightColor:"#9070e0",darkColor:"#2a1a50",shape:"double_helix",coreScale:1.0,particleSpread:1.1, connectionDensity:0.5, gravityY:0,    tiltX:0,    pulseSpeed:1.5, pulseAmplitude:0.06 },
+  realization:  { color:"#f5c518",lightColor:"#ffe680",darkColor:"#a07800",shape:"burst",      coreScale:1.5, particleSpread:1.8, connectionDensity:0.3, gravityY:0,    tiltX:0,    pulseSpeed:5.0, pulseAmplitude:0.25 },
+  scared:       { color:"#44337a",lightColor:"#8060c0",darkColor:"#201040",shape:"contracted_tremor",coreScale:0.5,particleSpread:0.6,connectionDensity:0.1,gravityY:0,tiltX:0,    pulseSpeed:9.0, pulseAmplitude:0.08 },
+  proud:        { color:"#6b46c1",lightColor:"#b080ff",darkColor:"#301870",shape:"rising",     coreScale:1.3, particleSpread:1.2, connectionDensity:0.5, gravityY:0.7,  tiltX:0,    pulseSpeed:1.5, pulseAmplitude:0.07 },
 };
 
 function getCfg(emotion: string) {
@@ -192,9 +201,45 @@ export default function OrbCanvas({ emotion, state, size = 320, shapeOverride, a
         else if(c.shape==="double"){ if(oy>0){mx+=0.15;my+=0.1;}else{mx-=0.15;my-=0.05;} }
         else if(c.shape==="spiral"){ const a=t*0.3+dist*2; const nx=mx*Math.cos(a)-mz*Math.sin(a); mz=mx*Math.sin(a)+mz*Math.cos(a); mx=nx; }
         else if(c.shape==="pointer"){
-          // Elongate upward and taper: upper half forms arrow tip, lower is contracted
           if(oy>0){ my*=2.2; mx*=Math.max(0.1, 1.0-oy*1.2); mz*=Math.max(0.1, 1.0-oy*1.2); }
           else{ mx*=0.5; my*=0.4; mz*=0.5; }
+        }
+        // Phase 56 new shapes
+        else if(c.shape==="cube"){
+          // Snap to cubic lattice positions
+          mx = Math.sign(mx)*(Math.abs(mx)<0.5?Math.abs(mx):Math.abs(mx)*0.9+0.1*Math.sign(mx));
+          my = Math.sign(my)*(Math.abs(my)<0.5?Math.abs(my):Math.abs(my)*0.9+0.1*Math.sign(my));
+          mz = Math.sign(mz)*(Math.abs(mz)<0.5?Math.abs(mz):Math.abs(mz)*0.9+0.1*Math.sign(mz));
+        }
+        else if(c.shape==="prism"){
+          // Triangular prism: collapse to 3 faces, rotate
+          const ang = Math.floor(Math.atan2(ox,oz)/(Math.PI*2/3))*Math.PI*2/3;
+          const r2 = Math.sqrt(ox*ox+oz*oz); mx=r2*Math.sin(ang+t*0.5)*sp; mz=r2*Math.cos(ang+t*0.5)*sp;
+        }
+        else if(c.shape==="cylinder"){
+          // Upright column: uniform radius, full height
+          const r3 = Math.sqrt(ox*ox+oz*oz); mx=r3*Math.cos(Math.atan2(oz,ox))*sp; mz=r3*Math.sin(Math.atan2(oz,ox))*sp;
+        }
+        else if(c.shape==="infinity"){
+          // Figure-8 loop in XY plane
+          const u = Math.atan2(oy,ox); mx=sp*Math.cos(u)/(1+Math.sin(u)*Math.sin(u)); my=sp*Math.sin(u)*Math.cos(u)/(1+Math.sin(u)*Math.sin(u)); mz*=0.3;
+        }
+        else if(c.shape==="double_helix"){
+          // DNA spiral: two interlocked helices
+          const strand = i%2===0?1:-1; const ang2=t*0.5+dist*4+strand*Math.PI; mx=0.5*Math.cos(ang2)*sp; mz=0.5*Math.sin(ang2)*sp;
+        }
+        else if(c.shape==="burst"){
+          // Explode outward then reform
+          const phase = (Math.sin(t*1.5)*0.5+0.5); const scale = 1+phase*1.5; mx*=scale; my*=scale; mz*=scale;
+        }
+        else if(c.shape==="contracted_tremor"){
+          // Tiny sphere that shakes
+          mx*=0.4; my*=0.4; mz*=0.4;
+          mx+=Math.sin(t*15+i*0.3)*0.05; my+=Math.cos(t*17+i*0.5)*0.05;
+        }
+        else if(c.shape==="rising"){
+          // Elongated upward with upward particle drift
+          my*=1.6; my+=gy*0.5; mx*=0.7; mz*=0.7;
         }
         my+=gy*0.2;
         mz+=tx*oy*0.3;
