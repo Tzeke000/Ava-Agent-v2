@@ -1196,6 +1196,29 @@ def create_app():
             return PlainTextResponse(f"(unavailable: {err})", status_code=404)
         return PlainTextResponse(text)
 
+    @app.post("/api/v1/tools/reload")
+    def tools_reload() -> dict[str, Any]:
+        try:
+            from tools.tool_registry import reload_all_tools
+            results = reload_all_tools()
+            return {"ok": True, "reloaded": len(results), "results": results[:50]}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:300]}
+
+    @app.get("/api/v1/tools/list")
+    def tools_list() -> dict[str, Any]:
+        try:
+            h = _g()
+            tr = h.get("tool_registry")
+            if tr is None:
+                from tools.tool_registry import _REGISTRY
+                items = [{"name": k, "description": v.description, "tier": v.tier} for k, v in _REGISTRY.items()]
+            else:
+                items = tr.list_tools()
+            return {"ok": True, "tools": items, "count": len(items)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:300], "tools": []}
+
     @app.get("/api/v1/debug/export", response_class=PlainTextResponse)
     def debug_export() -> str:
         return build_debug_export(_g())
