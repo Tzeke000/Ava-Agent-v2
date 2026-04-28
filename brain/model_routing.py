@@ -60,6 +60,7 @@ _ALL_MODES: tuple[str, ...] = (
 )
 
 _URGENT_MODES = frozenset({CODING_REPAIR_MODE, DEEP_REASONING_MODE})
+_CHAT_EXCLUDED_PREFIXES = ("nomic-embed-text",)
 
 _TAGS_LOCK = threading.Lock()
 _TAGS_CACHE: Optional[frozenset[str]] = None
@@ -235,8 +236,14 @@ def build_runtime_capability_registry(
             source="config",
         )
 
-    if available:
-        for name in sorted(available):
+    filtered_available = (
+        frozenset(n for n in (available or frozenset()) if not any(str(n).startswith(px) for px in _CHAT_EXCLUDED_PREFIXES))
+        if available is not None
+        else None
+    )
+
+    if filtered_available:
+        for name in sorted(filtered_available):
             if name in entries:
                 continue
             entries[name] = ModelCapabilityEntry(
@@ -251,6 +258,8 @@ def build_runtime_capability_registry(
                 source="discovered",
             )
 
+    # Also strip configured entries that are embedding-only by tag prefix.
+    entries = {k: v for k, v in entries.items() if not any(str(k).startswith(px) for px in _CHAT_EXCLUDED_PREFIXES)}
     out = sorted(entries.values(), key=lambda e: (e.fallback_priority, e.model_name))
     return out
 
@@ -357,6 +366,10 @@ def _pick_available(
     pref = (preferred or "").strip()
     fb = (mode_fallback or "").strip()
     gb = (global_fb or "").strip()
+    if available is not None:
+        available = frozenset(
+            n for n in available if not any(str(n).startswith(px) for px in _CHAT_EXCLUDED_PREFIXES)
+        )
     if available is None:
         return pref, "tags_unavailable_assume_ok"
     if pref and pref in available:

@@ -38,24 +38,6 @@
   "curiosity_questions": [],
   "goal_history": [
     {
-      "timestamp": "2026-04-27T17:16:23",
-      "kind": "question",
-      "text": "Clarify or learn more about: what are the issues you are having Ava?",
-      "goal_id": "goal_02440dccc8"
-    },
-    {
-      "timestamp": "2026-04-27T17:16:23",
-      "kind": "goal",
-      "text": "Stay aware of: what are the issues you are having Ava?",
-      "goal_id": "goal_4ca75e2763"
-    },
-    {
-      "timestamp": "2026-04-27T17:17:35",
-      "kind": "goal",
-      "text": "Stay aware of: to me it seems like your camera is working fine Ava",
-      "goal_id": "goal_1e7da75a9d"
-    },
-    {
       "timestamp": "2026-04-27T17:19:39",
       "kind": "goal",
       "text": "Stay aware of: ok but what are they exactly?",
@@ -276,6 +258,24 @@
       "kind": "goal",
       "text": "Stay aware of: ok so your camera issue is solved, right?",
       "goal_id": "goal_947114b207"
+    },
+    {
+      "timestamp": "2026-04-27T23:14:06",
+      "kind": "goal",
+      "text": "Stay aware of: hello Ava how are you feeling?",
+      "goal_id": "goal_9df3157b10"
+    },
+    {
+      "timestamp": "2026-04-27T23:19:17",
+      "kind": "goal",
+      "text": "Stay aware of: no you did not mistake Max for you you mistook Max for Zeke",
+      "goal_id": "goal_726e2fc576"
+    },
+    {
+      "timestamp": "2026-04-28T01:00:49",
+      "kind": "goal",
+      "text": "Stay aware of: Hello Ava how are you feeling?",
+      "goal_id": "goal_03c6774241"
     }
   ],
   "behavior_patterns": [
@@ -315,17 +315,17 @@
     "On 2026-04-27T22:05:57, I took self-directed actions: camera_reflection_trigger."
   ],
   "pending_threads": [
+    "Zeke seemed concerned about lets talk about you or mostly what be can add to make you better — I want to follow up.",
     "Zeke seemed concerned about the above is what has be added to you — I want to follow up.",
     "Zeke seemed concerned about jeez you will not stop talking about the camera huh — I want to follow up.",
     "Zeke seemed concerned about hello Ava how are you feeling? — I want to follow up.",
-    "Zeke seemed anxious about lets talk about you or mostly what be can add to make you better — I want to follow up.",
     "Zeke seemed concerned about ok Goodnight Ava — I want to follow up.",
     "Zeke seemed angry about yes and ill fix them but you have to be asleep for it — I want to follow up.",
     "Zeke seemed concerned about ok for now dot worry about it — I want to follow up.",
     "Zeke seemed concerned about ok i think i get it — I want to follow up."
   ],
-  "last_updated": "2026-04-27T22:10:48",
-  "reflection_count": 367,
+  "last_updated": "2026-04-28T01:00:50",
+  "reflection_count": 370,
   "goal_system_summary": [
     {
       "text": "Stay aware of: ok im going to put you to sleep to fix some things Ava is should help your camera",

@@ -1,13 +1,13 @@
 {
   "overall": "error",
-  "last_startup_check": "2026-04-27T21:25:18",
+  "last_startup_check": "2026-04-28T00:59:37",
   "last_runtime_check": "",
-  "last_light_check": "2026-04-27T22:12:02",
+  "last_light_check": "2026-04-27T23:19:00",
   "subsystems": {
     "camera": {
-      "age_seconds": 1777342322.3,
+      "age_seconds": 1777352377.8,
       "status": "error",
-      "detail": "very stale frame 1777342322.3s ago"
+      "detail": "very stale frame 1777352377.8s ago"
     },
     "memory": {
       "status": "healthy",
@@ -30,89 +30,11 @@
     {
       "severity": "error",
       "subsystem": "camera",
-      "message": "very stale frame 1777342322.3s ago",
-      "ts": "2026-04-27T22:12:02"
+      "message": "very stale frame 1777352377.8s ago",
+      "ts": "2026-04-28T00:59:37"
     }
   ],
   "history": [
-    {
-      "kind": "light",
-      "ts": "2026-04-27T17:01:01",
-      "overall": "error",
-      "issues": [
-        {
-          "severity": "error",
-          "subsystem": "camera",
-          "message": "very stale frame 1777323662.0s ago",
-          "ts": "2026-04-27T17:01:01"
-        }
-      ]
-    },
-    {
-      "kind": "light",
-      "ts": "2026-04-27T17:06:03",
-      "overall": "error",
-      "issues": [
-        {
-          "severity": "error",
-          "subsystem": "camera",
-          "message": "very stale frame 1777323963.3s ago",
-          "ts": "2026-04-27T17:06:03"
-        }
-      ]
-    },
-    {
-      "kind": "light",
-      "ts": "2026-04-27T17:10:00",
-      "overall": "error",
-      "issues": [
-        {
-          "severity": "error",
-          "subsystem": "camera",
-          "message": "very stale frame 1777324200.9s ago",
-          "ts": "2026-04-27T17:10:00"
-        }
-      ]
-    },
-    {
-      "kind": "light",
-      "ts": "2026-04-27T17:15:02",
-      "overall": "error",
-      "issues": [
-        {
-          "severity": "error",
-          "subsystem": "camera",
-          "message": "very stale frame 1777324502.9s ago",
-          "ts": "2026-04-27T17:15:02"
-        }
-      ]
-    },
-    {
-      "kind": "light",
-      "ts": "2026-04-27T17:20:00",
-      "overall": "error",
-      "issues": [
-        {
-          "severity": "error",
-          "subsystem": "camera",
-          "message": "very stale frame 1777324800.9s ago",
-          "ts": "2026-04-27T17:20:00"
-        }
-      ]
-    },
-    {
-      "kind": "light",
-      "ts": "2026-04-27T17:23:02",
-      "overall": "error",
-      "issues": [
-        {
-          "severity": "error",
-          "subsystem": "camera",
-          "message": "very stale frame 1777324982.2s ago",
-          "ts": "2026-04-27T17:23:02"
-        }
-      ]
-    },
     {
       "kind": "light",
       "ts": "2026-04-27T17:27:02",
@@ -422,6 +344,84 @@
           "subsystem": "camera",
           "message": "very stale frame 1777342322.3s ago",
           "ts": "2026-04-27T22:12:02"
+        }
+      ]
+    },
+    {
+      "kind": "light",
+      "ts": "2026-04-27T23:14:00",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1777346040.8s ago",
+          "ts": "2026-04-27T23:14:00"
+        }
+      ]
+    },
+    {
+      "kind": "light",
+      "ts": "2026-04-27T23:15:00",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1777346100.8s ago",
+          "ts": "2026-04-27T23:15:00"
+        }
+      ]
+    },
+    {
+      "kind": "light",
+      "ts": "2026-04-27T23:19:00",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1777346340.8s ago",
+          "ts": "2026-04-27T23:19:00"
+        }
+      ]
+    },
+    {
+      "kind": "startup",
+      "ts": "2026-04-27T23:34:53",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1777347293.4s ago",
+          "ts": "2026-04-27T23:34:53"
+        }
+      ]
+    },
+    {
+      "kind": "startup",
+      "ts": "2026-04-27T23:58:11",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1777348691.9s ago",
+          "ts": "2026-04-27T23:58:11"
+        }
+      ]
+    },
+    {
+      "kind": "startup",
+      "ts": "2026-04-28T00:59:37",
+      "overall": "error",
+      "issues": [
+        {
+          "severity": "error",
+          "subsystem": "camera",
+          "message": "very stale frame 1777352377.8s ago",
+          "ts": "2026-04-28T00:59:37"
         }
       ]
     }

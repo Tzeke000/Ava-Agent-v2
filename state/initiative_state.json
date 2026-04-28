@@ -1,11 +1,11 @@
 {
   "last_face_seen_ts": 1777342321.9751198,
-  "last_interaction_ts": 1777342218.9954953,
+  "last_interaction_ts": 1777352439.0869386,
   "last_initiation_ts": 1775208465.9840045,
   "last_initiation_message": "Hey Zeke! Good to have you back. How's everything going?",
   "last_initiated_topic": "return_greeting",
-  "last_presence_reason": "face_and_recent_interaction",
-  "presence_score": 1.0,
+  "last_presence_reason": "recent_interaction",
+  "presence_score": 0.5,
   "last_busy_score": 0.0,
   "recent_initiated_topics": {
     "return_greeting": 1775208465.9840045
@@ -107,13 +107,13 @@
     }
   ],
   "consecutive_ignored_initiations": 0,
-  "last_user_message_length": 41,
+  "last_user_message_length": 30,
   "last_user_response_brief": false,
   "interaction_energy": 0.95,
-  "face_visible": true,
-  "face_left_at": null,
+  "face_visible": false,
+  "face_left_at": "2026-04-27T23:13:52",
   "face_returned_at": "2026-04-27T22:11:24",
-  "was_absent": true,
+  "was_absent": false,
   "absent_duration_seconds": 66,
   "last_calibration_at_msg": 0,
   "last_decisiveness": 0.738,

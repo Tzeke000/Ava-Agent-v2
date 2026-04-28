@@ -273,6 +273,28 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         else {},
     }
 
+    inner_life = {
+        "current_thought": "",
+        "current_curiosity": None,
+        "self_summary": "",
+        "opinion_count": 0,
+        "monologue_thought_count": 0,
+    }
+    try:
+        from brain.inner_monologue import current_thought, thought_count
+        from brain.curiosity_topics import get_current_curiosity
+        from brain.self_model import get_self_summary
+        from brain.opinions import opinion_count
+
+        base_dir = Path(host.get("BASE_DIR") or Path.cwd())
+        inner_life["current_thought"] = current_thought(base_dir) or ""
+        inner_life["current_curiosity"] = get_current_curiosity(host)
+        inner_life["self_summary"] = get_self_summary(host)
+        inner_life["opinion_count"] = int(opinion_count(host))
+        inner_life["monologue_thought_count"] = int(thought_count(base_dir))
+    except Exception:
+        pass
+
     debug_human = {
         "ribbon": ribbon,
         "heartbeat": heartbeat_block,
@@ -282,6 +304,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "workbench": wb_block,
         "improvement_loop": loop_block,
         "concerns": concerns_block,
+        "inner_life": inner_life,
         "reply_path": host.get("reply_path_meta") if isinstance(host.get("reply_path_meta"), dict) else {},
     }
 
@@ -294,6 +317,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "workbench": wb_block,
         "improvement_loop": loop_block,
         "concerns": concerns_block,
+        "inner_life": inner_life,
         "debug": debug_human,
         "ts": __import__("time").time(),
     }
@@ -528,43 +552,76 @@ def create_app():
         return build_snapshot(_g())
 
     def _normalize_chat_payload(raw: Any) -> dict[str, Any]:
-        """Ensure clients always see reply text under both ``reply`` and ``message``."""
+        """Ensure clients always see reply text under ``reply`` and a source hint."""
         if isinstance(raw, str):
             text = raw.strip()
-            return {"ok": True, "reply": text, "message": text}
+            return {
+                "ok": True,
+                "reply": text,
+                "message": text,
+                "debug_reply_source": "raw_string" if text else "empty",
+            }
         if isinstance(raw, dict):
             out = dict(raw)
             text = ""
-            r = out.get("reply")
-            if isinstance(r, str) and r.strip():
-                text = r.strip()
+            source = "empty"
+
+            for key in ("reply", "assistant_reply", "message", "text"):
+                val = out.get(key)
+                if isinstance(val, str) and val.strip() and not (key == "message" and out.get("empty_message")):
+                    text = val.strip()
+                    source = key
+                    break
+
             if not text:
-                ar = out.get("assistant_reply")
-                if isinstance(ar, str) and ar.strip():
-                    text = ar.strip()
-            if not text:
-                mv = out.get("message")
-                if isinstance(mv, str) and mv.strip() and not out.get("empty_message"):
-                    text = mv.strip()
+                best_key = ""
+                best_val = ""
+                for k, v in out.items():
+                    if isinstance(v, str):
+                        vv = v.strip()
+                        if len(vv) > 10 and len(vv) > len(best_val):
+                            best_key = str(k)
+                            best_val = vv
+                if best_val:
+                    text = best_val
+                    source = f"scanned:{best_key}"
+
             out["reply"] = text
             out["message"] = text
+            out["debug_reply_source"] = source
             out.setdefault("ok", True)
             return out
-        return {"ok": False, "error": "unexpected_chat_response_type", "reply": "", "message": ""}
+        return {
+            "ok": False,
+            "error": "unexpected_chat_response_type",
+            "reply": "",
+            "message": "",
+            "debug_reply_source": "empty",
+        }
 
     @app.post("/api/v1/chat")
     async def operator_chat(body: OpChatIn) -> dict[str, Any]:
         if _CHAT_FN is None:
-            return {"ok": False, "error": "chat_not_configured"}
+            return {"ok": False, "error": "chat_not_configured", "reply": "", "debug_reply_source": "empty"}
         try:
 
             def _run() -> Any:
                 return _CHAT_FN(body.message)
 
             raw = await asyncio.to_thread(_run)
+            try:
+                print(f"[operator_http] /api/v1/chat raw_return_type={type(raw).__name__} raw_return={repr(raw)[:2000]}")
+            except Exception:
+                pass
             return _normalize_chat_payload(raw)
         except Exception as e:
-            return {"ok": False, "error": str(e), "trace": traceback.format_exc()[:1200]}
+            return {
+                "ok": False,
+                "error": str(e),
+                "trace": traceback.format_exc()[:1200],
+                "reply": "",
+                "debug_reply_source": "empty",
+            }
 
     @app.post("/api/v1/routing/override")
     def routing_override(body: RoutingOverrideIn) -> dict[str, Any]:

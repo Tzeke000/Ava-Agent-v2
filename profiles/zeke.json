@@ -10,7 +10,7 @@
   "likes": [],
   "dislikes": [],
   "ava_impressions": [],
-  "last_seen": "2026-04-27T22:12:01",
+  "last_seen": "2026-04-28T01:00:39",
   "created_at": "2026-04-01T20:47:21",
   "emotion_history": [
     "neutral",
@@ -28,16 +28,16 @@
   "relationship_score": 0.591,
   "interaction_count": 18,
   "last_seen_at": "2026-04-27T22:10:48",
-  "updated_at": "2026-04-27T22:12:01",
+  "updated_at": "2026-04-28T01:00:39",
   "threads": [
     {
       "id": "f177e909-58be-4509-87c0-56f34fdda51e",
       "topic": "lets talk about you or mostly what be can add to make you better",
       "first_mentioned": "2026-04-26T01:25:21",
-      "last_mentioned": "2026-04-27T17:15:11",
-      "emotion": "anxious",
+      "last_mentioned": "2026-04-28T01:00:49",
+      "emotion": "concerned",
       "resolved": false,
-      "notes": "are you still worried about your camera?"
+      "notes": "Hello Ava how are you feeling?"
     },
     {
       "id": "56172c8e-303f-4a1f-a192-ebd40c7f2f58",
@@ -147,6 +147,6 @@
     "_gap_count": 3,
     "_sum_gap_days": 24.5751
   },
-  "last_activity_at": "2026-04-27T22:10:43",
-  "last_topic": "ok so your camera issue is solved, right?"
+  "last_activity_at": "2026-04-28T01:00:39",
+  "last_topic": "Hello Ava how are you feeling?"
 }

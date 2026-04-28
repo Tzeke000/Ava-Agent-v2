@@ -64,6 +64,16 @@ from brain.beliefs import (
     save_self_narrative,
     update_self_narrative,
 )
+from brain.curiosity_topics import add_topic as add_curiosity_topic
+from brain.curiosity_topics import bootstrap_from_chatlog as bootstrap_curiosity_topics
+from brain.curiosity_topics import get_current_curiosity
+from brain.curiosity_topics import mark_resolved as mark_curiosity_resolved
+from brain.inner_monologue import current_thought as inner_current_thought
+from brain.inner_monologue import get_conversation_starter as inner_get_conversation_starter
+from brain.inner_monologue import start_inner_monologue
+from brain.opinions import form_opinion, get_opinion, list_top_opinions
+from brain.self_model import add_question_about_self, get_self_summary, update_self_model
+from config.ava_tuning import MODEL_ROUTING_CONFIG
 
 try:
     _check = _sp.run(
@@ -193,6 +203,18 @@ workspace = Workspace()
 
 # Filled at startup (Stage 7 identity + persona injection).
 _AVA_IDENTITY_BLOCK = ""
+
+# Cold-start runtime defaults for operator snapshot visibility (before first user turn).
+_last_effective_model = str(getattr(MODEL_ROUTING_CONFIG, "default_model", LLM_MODEL) or LLM_MODEL)
+_last_cognitive_mode = "social_chat_mode"
+_heartbeat_mode = "idle_monitoring"
+_runtime_ready_state = "starting"
+_routing_selected_model = _last_effective_model
+_active_concern_count = 0
+_runtime_active_issue_summary = ""
+_runtime_presence_mode = "idle"
+_last_user_interaction_ts = 0.0
+_current_curiosity_topic = ""
 
 # User-reply priority guards
 USER_REPLY_PRIORITY_SECONDS = 8.0
@@ -6190,6 +6212,11 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
         "LIVE CONTEXT (current relevance — bounded; not exhaustive memory):\n"
         + (_lc_block if _lc_block else "(no notable live-context signals above baseline)")
     )
+    _inner_thought = inner_current_thought(BASE_DIR) or ""
+    _curiosity_row = get_current_curiosity(globals()) or {}
+    _curiosity_topic = str(_curiosity_row.get("topic") or "").strip()
+    _self_summary = get_self_summary(globals())
+    _opinions = list_top_opinions(globals(), limit=3)
 
     prompt = f"""
 {personality}
@@ -6242,6 +6269,12 @@ AVA PRIOR SELF-REFLECTION NOTES (your notes — not Zeke's words):
 DYNAMIC SELF / MEMORY READER:
 {dynamic_memory_summary}
 {recalled_block}
+
+INNER LIFE SNAPSHOT:
+- current_thought: {_inner_thought or "(none recent)"}
+- current_curiosity: {_curiosity_topic or "(none)"}
+- self_summary: {_self_summary}
+- top_opinions: {json.dumps(_opinions, ensure_ascii=False)}
 
 AVAILABLE READ-ONLY FILES:
 - chatlog.jsonl
@@ -6384,6 +6417,9 @@ def build_prompt_fast(
         content_limit=1200,
         empty_fallback="(none)",
     )
+    _fast_thought = inner_current_thought(BASE_DIR) or ""
+    _fast_curiosity = get_current_curiosity(globals()) or {}
+    _fast_curiosity_topic = str(_fast_curiosity.get("topic") or "").strip()
 
     prompt = f"""{personality}
 
@@ -6404,6 +6440,10 @@ CURRENT MOOD AND AFFECT:
 {mood_to_prompt_text(mood)}
 
 {recent3_block}
+
+INNER LIFE (FAST CONTEXT):
+- current_thought: {_fast_thought or "(none recent)"}
+- current_curiosity: {_fast_curiosity_topic or "(none)"}
 
 USER MESSAGE:
 {user_input}
@@ -6860,9 +6900,45 @@ def classify_reply_depth(user_text: str, g) -> str:
     return "deep"
 
 
+def _is_thinking_or_topic_prompt(text: str) -> bool:
+    low = (text or "").strip().lower()
+    if not low:
+        return False
+    patterns = (
+        "what are you thinking",
+        "what were you thinking",
+        "what are you thinking about",
+        "what do you want to talk about",
+        "anything you want to talk about",
+    )
+    return any(p in low for p in patterns)
+
+
+def _extract_simple_topic(user_text: str) -> str:
+    words = re.findall(r"[a-z0-9']+", (user_text or "").lower())
+    stop = {"what", "about", "think", "opinion", "your", "you", "is", "the", "a", "an", "of"}
+    filtered = [w for w in words if w not in stop and len(w) > 2]
+    return " ".join(filtered[:6]).strip()
+
+
 def _pick_fast_model_fallback() -> str | None:
     """Prefer smallest fast local tags for quick conversational acknowledgements."""
     preferred = ["mistral:7b", "mistral", "llama3.1:8b", "llama3.1", "llama3:8b", "llama3"]
+    try:
+        from brain.model_routing import discover_available_model_tags
+
+        tags, _src = discover_available_model_tags(force=False)
+        tagset = {str(t).strip() for t in (tags or []) if str(t).strip()}
+        for p in preferred:
+            if p in tagset:
+                return p
+    except Exception:
+        pass
+    return None
+
+
+def _pick_deep_model_fallback() -> str | None:
+    preferred = ["qwen2.5:14b", "deepseek-r1:8b", "llama3.1:8b", "gemma2:9b"]
     try:
         from brain.model_routing import discover_available_model_tags
 
@@ -6962,6 +7038,7 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
         )
     active_person_id = active_person_id or get_active_person_id()
     _inp = (user_input or "").strip()
+    globals()["_last_user_interaction_ts"] = time.time()
     print(
         f"[run_ava] enter person={active_person_id} has_image={image is not None} "
         f"input_chars={len(_inp)}"
@@ -6980,6 +7057,21 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
             pass
 
         active_profile = load_profile_by_id(active_person_id)
+
+        if _is_thinking_or_topic_prompt(user_input):
+            thought = inner_current_thought(BASE_DIR)
+            starter = inner_get_conversation_starter(
+                BASE_DIR,
+                idle_seconds=time.time() - float(globals().get("_last_user_interaction_ts") or time.time()),
+            )
+            cur = get_current_curiosity(globals())
+            topic_line = str((cur or {}).get("topic") or "").strip()
+            reply = thought or starter or (
+                f"I have been wondering about {topic_line}." if topic_line else "I have been reflecting on our recent conversations."
+            )
+            return finalize_ava_turn(
+                user_input, scrub_visible_reply(reply), {}, active_profile, [], turn_route="inner_life_prompt"
+            )
 
         if is_blocked(active_profile):
             reply = get_blocked_reply()
@@ -7081,9 +7173,14 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
                         print(f"[run_ava] fast_path_model={_fast_model}")
                     elif _route_model and _route_model != LLM_MODEL:
                         _invoke_llm = ChatOllama(model=_route_model, temperature=0.5)
-                elif _route_model and _route_model != LLM_MODEL:
-                    _invoke_llm = ChatOllama(model=_route_model, temperature=0.6)
-                    print(f"[run_ava] phase25_routing_model={_route_model}")
+                else:
+                    _deep_model = _pick_deep_model_fallback()
+                    if _deep_model:
+                        _invoke_llm = ChatOllama(model=_deep_model, temperature=0.55)
+                        print(f"[run_ava] deep_path_model={_deep_model}")
+                    elif _route_model and _route_model != LLM_MODEL:
+                        _invoke_llm = ChatOllama(model=_route_model, temperature=0.6)
+                        print(f"[run_ava] phase25_routing_model={_route_model}")
             except Exception:
                 pass
             result = _invoke_llm.invoke(messages)
@@ -7104,6 +7201,17 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
         ai_reply = _apply_repetition_control(ai_reply, user_input, person_id, source="chat")
         ai_reply = _scrub_internal_leakage(ai_reply)
         ai_reply = scrub_visible_reply(ai_reply)
+        try:
+            _t = _extract_simple_topic(user_input)
+            if _t:
+                add_curiosity_topic(_t, user_input[:220], globals())
+                _op = get_opinion(_t, globals())
+                if _op is None:
+                    form_opinion(_t, user_input[:300], globals())
+                if "answered" in user_input.lower() or "resolved" in user_input.lower():
+                    mark_curiosity_resolved(_t, globals())
+        except Exception:
+            pass
         _vroute = isinstance(visual, dict) and visual.get("turn_route")
         print(
             f"[run_ava] exit route={_vroute or 'llm'} via finalize actions={len(actions)} "
@@ -8223,6 +8331,18 @@ try:
     run_startup_concern_reconciliation(globals())
 except Exception as _cr_boot_e:
     print(f"[concern_reconciliation] startup skipped: {_cr_boot_e}")
+try:
+    bootstrap_curiosity_topics(globals())
+except Exception as _cur_boot_e:
+    print(f"[curiosity_topics] bootstrap skipped: {_cur_boot_e}")
+try:
+    update_self_model(globals())
+except Exception as _self_model_boot_e:
+    print(f"[self_model] weekly update skipped: {_self_model_boot_e}")
+try:
+    start_inner_monologue(globals())
+except Exception as _inner_boot_e:
+    print(f"[inner_monologue] startup skipped: {_inner_boot_e}")
 seed_default_profiles()
 _AVA_IDENTITY_BLOCK = load_ava_identity()
 ensure_emotion_reference_file()
