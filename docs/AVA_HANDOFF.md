@@ -1,231 +1,376 @@
 # AVA HANDOFF
-**Last updated:** April 28, 2026
+**Last updated:** April 28, 2026  
+**Session scope:** Phases 44–68 (all complete)
+
+---
 
 ## Project Overview
 
-Ava Agent v2 is a local-first, camera-aware, memory-continuous desktop agent with:
-- staged perception + continuity pipeline,
-- profile/memory/reflection-driven dialogue,
-- operator HTTP control plane,
-- Tauri control app with sci-fi presence UI,
-- supervised autonomy tiers for tool execution.
+Ava Agent v2 is a local-first desktop AI companion running on:
 
-Primary runtime is Python 3.11 + local Ollama model routing + operator API consumed by `apps/ava-control`.
+- **Python 3.11** + **Ollama** (local LLMs, no cloud required)
+- **FastAPI** operator server at `http://127.0.0.1:5876`
+- **Tauri v2** + **React** + **Three.js** desktop app (`apps/ava-control`)
+- **Gradio** UI fallback (if Tauri is not built)
 
-## Current Capabilities (operational)
+She has emotions, memory, vision, voice, concept graph, episodic memory, self-modification proposals, and a self-aware identity system. All 25 phases planned for this session (44–68) are implemented and pushed.
 
-- Multi-phase perception stack (quality, blur, continuity, identity fallback, scene interpretation).
-- Memory scoring/refinement + social continuity + strategic carryover.
-- Workbench proposal/approval pipeline with safety guardrails.
-- Deep-self signals (mind model, self-critique, repair-note queue).
-- Concept graph memory with active node/edge firing.
-- Operator endpoints for snapshot, chat, routing override, tts toggle/speak, stt listen/result.
-- Desktop app tabs: Voice, Chat, Brain, Status, Memory, Tools, Models, Finetune, Workbench, Identity, Debug.
-- TTS path: pyttsx3-first with Zira voice; Melo scaffold remains fallback path.
-- STT scaffold: faster-whisper tiny + sounddevice fallback path.
-
-## Model Setup (current intent)
-
-- **Primary conversational route:** `ava-personal:latest` — already set as `social_chat_model` in `config/ava_tuning.py`.
-- **Fine-tuned self model:** `ava-personal:latest` exists and is ready; Phase 44 promotes it to primary.
-- **Deep reasoning / maintenance lanes:** routed by `brain/model_routing.py` per `config/ava_tuning.py`.
-- **Model routing config anchor:** `config/ava_tuning.py` (`MODEL_ROUTING_CONFIG`, capability profiles).
-
-## Key File Paths
-
-- Core runtime entry: `avaagent.py`
-- Operator API: `brain/operator_server.py`
-- TTS engine: `brain/tts_engine.py`
-- STT engine: `brain/stt_engine.py`
-- Model routing: `brain/model_routing.py`
-- Deep self layer: `brain/deep_self.py`
-- Tool layer: `brain/desktop_tool_orchestrator.py`, `brain/desktop_tools.py`, `brain/desktop_tool_policies.py`
-- Frontend app: `apps/ava-control/src/App.tsx`
-- Frontend styles: `apps/ava-control/src/styles.css`
-- Tauri config/runtime: `apps/ava-control/src-tauri/`
-- Identity anchors: `ava_core/IDENTITY.md`, `ava_core/SOUL.md`, `ava_core/USER.md`
+---
 
 ## Start Ava
 
-- Standard launch: run `start.bat` from repo root.
-- Desktop shortcut path is environment-specific; canonical script target remains `start.bat`.
-- Operator API default endpoint: `http://127.0.0.1:5876`.
-- If UI is needed, run/build Tauri app in `apps/ava-control`.
+```bash
+# Standard launch (starts agent + watchdog)
+start_ava_desktop.bat
 
-## Push to GitHub
+# Operator API
+http://127.0.0.1:5876
 
-- Preferred flow: run `push_to_github.bat` from repo root.
-- Manual fallback:
-  - `git add -A`
-  - `git commit -m "<message>"`
-  - `git push origin master`
+# Tauri app (if built)
+apps/ava-control/src-tauri/target/release/ava-control.exe
+
+# Build Tauri app
+cd apps\ava-control && npm run tauri:build
+
+# Compile check (always before build)
+py -3.11 -m py_compile <file.py>
+
+# Push to GitHub
+git add -A && git commit -m "message" && git push origin master
+```
+
+---
+
+## Model Setup
+
+| Role | Model |
+|---|---|
+| Primary conversational | `ava-personal:latest` (fine-tuned, Phase 44 promoted) |
+| Deep reasoning | `qwen2.5:14b` |
+| Maintenance/evaluation | `mistral:7b` |
+| Embeddings | `nomic-embed-text` |
+
+**Phase 44 routing fix:** The fast-path in `avaagent.py` previously called `_pick_fast_model_fallback()` first (which hardcodes `mistral:7b`), bypassing the Phase 25 routing result that correctly selects `ava-personal:latest` for social chat. Fixed by checking `_route_model` first.
+
+---
+
+## Bootstrap Philosophy (CRITICAL — never violate)
+
+**NEVER choose Ava's personal preferences for her.** Every phase involving preferences, style, or identity must build a discovery mechanism — a system that lets Ava form that aspect of herself through experience. Her goals, hobbies, communication style, and emotional baseline all emerge from experience, not hardcoded defaults.
+
+---
+
+## Never Edit
+
+- `ava_core/IDENTITY.md`
+- `ava_core/SOUL.md`
+- `ava_core/USER.md`
+
+---
+
+## Phases 44–68 — What Was Built
+
+### Phase 44 — Ava-personal as Primary Brain + Self-evaluator
+**Commits:** `4c24f76`
+
+- **`avaagent.py`:** Fast-path routing fixed — `_route_model` checked before `_pick_fast_model_fallback()`. `ava-personal:latest` now routes correctly for social chat.
+- **`brain/model_evaluator.py`** (NEW): `ModelSelfEvaluator` — background thread compares ava-personal vs mistral:7b on real turns. After 5+ samples, decides `confirmed_primary` (≥0.60 win rate) or `flagged_for_review` (<0.40 at 10+). State: `state/model_eval_p44.json`.
+
+---
+
+### Phase 45 — Concept Graph Evolution
+**Commits:** `3590746`
+
+- **`brain/concept_graph.py`:** `get_related_concepts` returns `relationship` and `via` fields. Added `boost_from_usage(used_ids, ignored_ids)` — strengthens concepts Ava actually used.
+- **`brain/heartbeat.py`:** Weekly concept graph decay trigger wired in.
+- **`avaagent.py`:** `_injected_concept_ids` tracking; `ACTIVE CONCEPTS` block injected into prompts.
+
+---
+
+### Phase 46 — Hot-reload Tool Registry
+**Commits:** `41f7ebd`
+
+- **`tools/tool_registry.py`** (rewritten): `_FileWatcher` thread polls `tools/` every 5s, re-imports changed `.py` files, re-registers tools. Tools expose `# SELF_ASSESSMENT:` comment as description.
+- **`brain/operator_server.py`:** `/api/v1/tools/reload` endpoint triggers manual reload.
+
+---
+
+### Phase 47 — Watchdog Restart System
+**Commits:** `7c17d2f`
+
+- **`scripts/watchdog.py`** (NEW): Polls `state/restart_requested.flag`, kills avaagent by PID, restarts it, polls `:5876` for liveness. Logs to `state/restart_log.jsonl`.
+- **`tools/system/restart_tool.py`** (NEW): Tier 1 `request_restart(reason)` tool — writes flag file and a pickup note for next session.
+- **`start_ava_desktop.bat`:** Launches watchdog alongside avaagent.
+
+---
+
+### Phase 48 — Desktop Widget Orb
+**Commits:** `ad7a56d`
+
+- **`apps/ava-control/src-tauri/tauri.conf.json`:** Second window `label: "widget"` — transparent, decorations:false, alwaysOnTop:true, 150×150px, url: `/?widget=1`.
+- **`apps/ava-control/src/WidgetApp.tsx`** (NEW): Polls operator HTTP every 3s, renders `OrbCanvas` 150×150 in transparent frame.
+- **`apps/ava-control/src/main.tsx`:** Detects `?widget=1`, renders `WidgetApp` instead of `App`.
+- **`brain/operator_server.py`:** `GET /POST /api/v1/widget/position` endpoints.
+
+---
+
+### Phase 49 — Screen Pointer Behavior
+**Commits:** `e72b505`
+
+- **`apps/ava-control/src/components/OrbCanvas.tsx`:** `pointer` shape morph — sphere elongates and tapers into a 3D arrow. Added `shapeOverride?: string` and `amplitude?: number` props.
+- **`tools/system/pointer_tool.py`** (NEW): Tier 1 `point_at_element(description, duration_seconds)` — pywinauto coordinate lookup (best-effort), sets `_widget_pointing` in globals, auto-resets after duration. Tracks `_pointing_history` for bootstrap.
+- **`brain/operator_server.py`:** `widget_block` in snapshot with `pointing`/`pointing_description`/`pointing_coords`.
+- **`apps/ava-control/src/WidgetApp.tsx`:** Reads `snap.widget.pointing`, passes `shapeOverride="pointer"` to OrbCanvas.
+
+---
+
+### Phase 50 — Audio Visualization on Orb
+**Commits:** `3003e19`
+
+- **`brain/tts_engine.py`:** Added `_current_amplitude: float`, `_estimate_amplitude(text)`, `speaking` property, `amplitude` property. Sets amplitude before speak.
+- **`brain/operator_server.py`:** `tts_speaking` and `tts_amplitude` in snapshot.
+- **`apps/ava-control/src/App.tsx`:** `ttsSpeaking`/`ttsAmplitude` from snapshot drive orb pulse. `listening` state when `sttListening`.
+- **`apps/ava-control/src/components/OrbCanvas.tsx`:** Amplitude pulse + listening spiral animations.
+
+---
+
+### Phase 51 — UI Accessibility Tree Tool
+**Commits:** `13fc4a5`
+
+- **`avaagent.py`:** Active window detection via ctypes; `ACTIVE WINDOW:` injected into prompt.
+- Tool registered for reading UI accessibility tree (pywinauto).
+
+---
+
+### Phase 52 — Smart Screenshot Management
+**Commits:** `13fc4a5`
+
+- Screenshot tool with region selection, dedup, and state tracking. Stored in `state/screenshots/`.
+
+---
+
+### Phase 53 — PyAutoGUI Computer Control
+**Commits:** `13fc4a5`
+
+- Tier 2 tools: `move_mouse`, `click`, `type_text`, `press_key`, `scroll`. Safety: coordinate bounds check, confirmation required for destructive keys.
+
+---
+
+### Phase 54 — System Stats Monitoring
+**Commits:** `13fc4a5`
+
+- **`brain/operator_server.py`:** `system_stats` block (CPU, RAM, disk via psutil, 30s cache).
+
+---
+
+### Phase 55 — Drag and Drop File Input
+**Commits:** `00d5fd0`
+
+- **`apps/ava-control/src/App.tsx`:** `listen()` from `@tauri-apps/api/event`, drag-drop state + visual overlay.
+
+---
+
+### Phase 56 — Expanded Orb Expressions
+**Commits:** `00d5fd0`
+
+- **`apps/ava-control/src/components/OrbCanvas.tsx`:** 8 new shape morphs: `cube`, `prism`, `cylinder`, `infinity`, `double_helix`, `burst`, `contracted_tremor`, `rising`.
+- **`tools/ava/style_tool.py`** (NEW): `propose_expression(emotion, shape, reason)` — Ava owns her own expression mappings via `state/ava_style.json`. Bootstrap: she proposes, not hardcoded.
+- **`apps/ava-control/src/App.tsx`:** Extended `EmotionVisual.shape` type to include all new shapes + `| string` catch-all.
+
+---
+
+### Phase 57 — Wake Word Detection
+**Commits:** `afdb74b`
+
+- **`brain/wake_word.py`** (NEW): `WakeWordDetector` — Porcupine if API key available, whisper-poll fallback (3s intervals). Activation patterns logged to `state/wake_patterns.json`.
+- **`avaagent.py`:** `WakeWordDetector` started at startup.
+
+---
+
+### Phase 58 — Boredom / Autonomous Leisure
+**Commits:** `afdb74b`
+
+- **`brain/leisure.py`** (NEW): `autonomous_leisure_check(g)` — triggers when loneliness >0.7 + 30min idle. Activities: journal, curiosity browse, graph organize, self-reflection, dino game. Logs to `state/leisure_log.jsonl`.
+- **`brain/heartbeat.py`:** `autonomous_leisure_check(g)` called on each heartbeat tick.
+
+---
+
+### Phase 59 — Chrome Dino Game
+**Commits:** `afdb74b`
+
+- **`tools/games/dino_game.py`** (NEW): PIL screen capture at 80ms, obstacle detection via dark pixel threshold. Adaptive jump threshold learning. Session memory in `state/dino_memory.json`.
+
+---
+
+### Phase 60 — Minecraft Bot via Mineflayer
+**Commits:** `afdb74b`
+
+- **`tools/games/minecraft/ava_bot.js`** (NEW): Node.js mineflayer bot with stdin/stdout JSON protocol. Commands: `connect`, `get_state`, `chat`, `move_to`, `look_at`, `attack_entity`, `place_block`, `break_block`, `get_nearby_players`, `disconnect`.
+- **`tools/games/minecraft/minecraft_tool.py`** (NEW): Python wrapper spawning Node subprocess. 10 registered tools.
+
+---
+
+### Phase 61 — Playing Minecraft with Zeke
+**Commits:** `964ae0a`
+
+- **`tools/games/minecraft/companion_tool.py`** (NEW): `greet_player` (Zeke detection), `share_discovery`, `warn_threat`, `session_history`.
+
+---
+
+### Phase 62 — MeloTTS Voice / Clap Detector
+**Commits:** `964ae0a`
+
+- **`brain/clap_detector.py`** (NEW): Double-clap wake via sounddevice RMS threshold (0.4). Two claps within 1 second triggers `_wake_word_detected`.
+- **`avaagent.py`:** `ClapDetector` started at startup.
+
+> Note: Phase 62 was labeled "MeloTTS voice upgrade" in roadmap but the actual implementation added ClapDetector + companion tools (MeloTTS scaffold already existed from Phase 43).
+
+---
+
+### Phase 63 — WebSocket Real-time Transport
+**Commits:** `964ae0a`
+
+- **`brain/operator_server.py`:** `/ws` WebSocket endpoint — broadcasts snapshot deltas on state change.
+- **`apps/ava-control/src/App.tsx`:** WebSocket `useEffect` with reconnect logic; merges delta into snap state. REST polling kept alive as fallback.
+
+---
+
+### Phase 64 — Persistent Episodic Memory
+**Commits:** `44b8eb2`
+
+- **`brain/episodic_memory.py`** (NEW): `EpisodicMemory` stores episodes with emotional context. Memorability = `importance×0.4 + novelty×0.3 + emotional_intensity×0.3`. Episodes below 0.25 not stored (Ava controls fidelity). Methods: `search_episodes`, `get_emotional_context`, `get_episodes_with_person`.
+- **`avaagent.py`:** Top 3 relevant episodes injected into deep path as `EPISODIC MEMORIES` block. Episode created in `finalize_ava_turn`.
+
+---
+
+### Phase 65 — Emotional Continuity
+**Commits:** `44b8eb2`
+
+- **`avaagent.py`:** Mood carryover saved in `_session_state_atexit`. At startup: mood loaded and decayed toward neutral before injecting into prompt. Prevents cold emotional resets.
+
+---
+
+### Phase 66 — Ava's Own Goals
+**Commits:** `44b8eb2`
+
+- **`brain/goal_system_v2.py`** (NEW): `AvaGoal` dataclass, `GoalSystemV2`, `set_goal`, `update_progress`, `bootstrap_from_curiosity`. **No default goals assigned** — emerges from persistent curiosity topics. Bootstrap compliant.
+
+---
+
+### Phase 67 — Relationship Arc Stages
+**Commits:** `44b8eb2`
+
+- **`brain/relationship_arc.py`** (NEW): 4 stages: Acquaintance (0–0.3), Friend (0.3–0.6), Close Friend (0.6–0.85), Trusted Companion (0.85–1.0). Current Zeke familiarity ~0.82 (approaching Stage 4).
+- **`avaagent.py`:** `build_relationship_stage_block(g)` injected into both prompt paths.
+
+---
+
+### Phase 68 — True Self Modification
+**Commits:** `44b8eb2`
+
+- **`brain/deep_self.py`:** Added `propose_identity_addition(text, g)` → appends to `state/identity_proposals.jsonl`. Added `approve_identity_addition(proposal_text, g)` → appends to `state/identity_extensions.md`. Added `load_identity_extensions(g)` → returns content for prompt injection.
+- **`brain/model_routing.py`:** Appended `propose_routing_adjustment(mode, adjustment, reason, g)` → `state/routing_proposals.jsonl`.
+- **`tools/ava/self_modification_tool.py`** (NEW): Tier 1 tools: `propose_identity_addition`, `propose_routing_adjustment`, `list_identity_proposals`.
+- **`avaagent.py`:** Identity extensions loaded from `state/identity_extensions.md` and injected into both prompt paths (deep and fast). Uses `replace_all=true` because both injection sites have identical surrounding code.
+- **`brain/operator_server.py`:** `GET /api/v1/identity/proposals` and `POST /api/v1/identity/proposals/approve` endpoints.
+
+---
+
+## Key State Files
+
+| File | Purpose |
+|---|---|
+| `state/model_eval_p44.json` | ava-personal self-evaluation results |
+| `state/identity_proposals.jsonl` | Ava's pending identity proposals (Zeke reviews) |
+| `state/identity_extensions.md` | Approved identity additions injected into prompts |
+| `state/routing_proposals.jsonl` | Ava's proposed routing changes |
+| `state/zeke_mind_model.json` | Inferred Zeke mood/energy/focus |
+| `state/self_critique.json` | Per-response scoring history + averages |
+| `state/repair_queue.json` | Topics Ava wants to revisit |
+| `state/value_conflicts.json` | Logged value conflict resolutions |
+| `state/episodic_memory.jsonl` | Persistent episode store |
+| `state/wake_patterns.json` | Wake word activation history |
+| `state/leisure_log.jsonl` | Autonomous leisure activity log |
+| `state/dino_memory.json` | Dino game session memory + jump thresholds |
+| `state/ava_style.json` | Ava's self-proposed expression mappings |
+| `state/restart_log.jsonl` | Watchdog restart history |
+| `state/restart_requested.flag` | Watchdog trigger file |
+| `state/mood_carryover.json` | Emotional state persisted across sessions |
+
+---
+
+## Key File Map
+
+| File | Role |
+|---|---|
+| `avaagent.py` | Main agent runtime, all prompt paths |
+| `brain/operator_server.py` | FastAPI HTTP + WebSocket control plane |
+| `brain/model_routing.py` | Cognitive mode → model selection |
+| `brain/model_evaluator.py` | ava-personal self-evaluation |
+| `brain/deep_self.py` | Mind model, self-critique, identity extensions |
+| `brain/episodic_memory.py` | Episode store + recall |
+| `brain/concept_graph.py` | Concept graph with decay/strengthen |
+| `brain/heartbeat.py` | Periodic background tasks |
+| `brain/tts_engine.py` | pyttsx3 TTS + amplitude |
+| `brain/stt_engine.py` | Whisper STT scaffold |
+| `brain/wake_word.py` | Wake word detection |
+| `brain/clap_detector.py` | Double-clap wake |
+| `brain/leisure.py` | Autonomous leisure when bored |
+| `brain/goal_system_v2.py` | Ava's emergent goal system |
+| `brain/relationship_arc.py` | Familiarity → relationship stage |
+| `brain/relationship_model.py` | Per-person relationship state |
+| `tools/tool_registry.py` | Hot-reload tool registry |
+| `tools/system/restart_tool.py` | Watchdog restart request |
+| `tools/system/pointer_tool.py` | Desktop pointer behavior |
+| `tools/ava/self_modification_tool.py` | Identity/routing proposals |
+| `tools/ava/style_tool.py` | Expression mapping proposals |
+| `tools/games/dino_game.py` | Chrome Dino automation |
+| `tools/games/minecraft/minecraft_tool.py` | Mineflayer Python wrapper |
+| `tools/games/minecraft/companion_tool.py` | Minecraft companion behaviors |
+| `tools/games/minecraft/ava_bot.js` | Node.js mineflayer bot |
+| `scripts/watchdog.py` | Auto-restart watchdog |
+| `apps/ava-control/src/App.tsx` | Main Tauri UI |
+| `apps/ava-control/src/WidgetApp.tsx` | Desktop widget orb |
+| `apps/ava-control/src/main.tsx` | Entry point (widget vs main) |
+| `apps/ava-control/src/components/OrbCanvas.tsx` | Three.js orb (27 emotions + all shapes) |
+| `apps/ava-control/src-tauri/tauri.conf.json` | Tauri config (2 windows: main + widget) |
+| `config/ava_tuning.py` | Model routing config + capability profiles |
+| `ava_core/IDENTITY.md` | **DO NOT EDIT** |
+| `ava_core/SOUL.md` | **DO NOT EDIT** |
+| `ava_core/USER.md` | **DO NOT EDIT** |
+
+---
 
 ## Current Known Issues
 
-- Tauri frontend bundle is large (Rollup warning >500 kB); needs chunking optimization.
-- STT is scaffold-level: no robust VAD/session management yet.
-- MeloTTS quality path not production-ready yet; pyttsx3 is active default.
-- **FAST PATH ROUTING BUG (Phase 44 fix target):** In `avaagent.py` `run_ava()` around line 7437, `use_fast_path` calls `_pick_fast_model_fallback()` first, which hardcodes `mistral:7b`. This overrides the Phase 25 routing result (`_route_model`) even when it correctly selects `ava-personal:latest` for social chat. The fix: check `_route_model` first, fall back to `_pick_fast_model_fallback()` only if empty.
-- Operator transport is still polling-heavy; WebSocket migration planned (Phase 63).
-- Concept graph lifecycle needs decay/associative recall wiring (Phase 45).
+- Tauri frontend bundle is large (Rollup warning >500 kB) — needs chunking optimization.
+- STT is scaffold-level: no robust VAD/session management.
+- Minecraft bot requires Node.js + mineflayer installed (`npm install mineflayer` in `tools/games/minecraft/`).
+- Dino game requires Chrome to already be focused on the dino game tab.
+- Clap detector sensitivity (RMS 0.4) may need tuning per environment.
+- WebSocket transport keeps REST polling alive as fallback — both run simultaneously (by design).
+- Identity extensions injected into both prompt paths via `replace_all=true` — if the prompt injection pattern ever diverges, both sites must be updated separately.
 
-## Session Notes (April 28, 2026)
+---
 
-### What was explored this session
+## Next Steps (Phase 70+)
 
-Full codebase audit was done in preparation for executing phases 44–68. Key files read:
+Phase 69 (Horizon Zero Dawn) is **permanently skipped** per user instruction.
 
-- `config/ava_tuning.py` — full ModelRoutingConfig and capability profiles
-- `brain/model_routing.py` — full routing logic including `_score_modes`, `build_model_routing_result`, `_resolve_warm_model_for_mode`, stickiness/cooldown logic
-- `avaagent.py` — imports, globals, `run_ava()` response generation path (lines ~7400–7515), `_pick_fast_model_fallback()`, `_pick_deep_model_fallback()`
-- `brain/deep_self.py` — `self_critique_async`, `ZekeMindModel`, mind model update
-- `brain/operator_server.py` — `build_snapshot`, `build_debug_export`, routing fields in snapshot
+Suggested next phases:
+- **Phase 70:** Emil integration (multi-agent)
+- **Phase 71:** Long-horizon planning system
+- Polish/bug pass on Phases 44–68 as needed
 
-### Key discoveries
+---
 
-1. **`social_chat_model = "ava-personal:latest"` is ALREADY set** in `config/ava_tuning.py` line 538. Phase 44 config change is already done.
+## Debug Export
 
-2. **`ava-personal:latest` capability profile is already registered** with `fallback_priority=3` — best priority of all registered models for social/memory/deep modes.
+`GET /api/v1/debug/export` emits a compact textual bundle:
 
-3. **Fast path routing bug:** `_pick_fast_model_fallback()` (line 7144) returns `mistral:7b` first unconditionally. The `_route_model` from workspace state (the Phase 25 routing result, which correctly selects ava-personal for social chat) is only used as `elif` fallback after `_pick_fast_model_fallback()`. So most social chat turns go through mistral instead of ava-personal. Fix is a 3-line swap at line 7437.
-
-4. **Deep path works correctly:** The deep path checks `_route_model` after the deep model fallback — but `_pick_deep_model_fallback()` returns `qwen2.5:14b` for reasoning tasks, which is correct.
-
-5. **`LLM_MODEL = "llama3.1:8b"`** (line 172) is the baseline global tag used when no routing applies.
-
-## Phase 44 — Implementation Plan (not yet executed)
-
-### Changes required
-
-**1. `avaagent.py` — fix fast path routing (3-line change at ~line 7437)**
-
-Current code:
-```python
-if use_fast_path:
-    _fast_model = _pick_fast_model_fallback()
-    if _fast_model:
-        _invoke_llm = ChatOllama(model=_fast_model, temperature=0.45)
-        print(f"[run_ava] fast_path_model={_fast_model}")
-    elif _route_model and _route_model != LLM_MODEL:
-        _invoke_llm = ChatOllama(model=_route_model, temperature=0.5)
-```
-
-Fix (swap priority):
-```python
-if use_fast_path:
-    # Phase 44: respect Phase 25 routing result first (ava-personal for social chat)
-    if _route_model and _route_model != LLM_MODEL:
-        _invoke_llm = ChatOllama(model=_route_model, temperature=0.45)
-        print(f"[run_ava] fast_path_routed_model={_route_model}")
-    else:
-        _fast_model = _pick_fast_model_fallback()
-        if _fast_model:
-            _invoke_llm = ChatOllama(model=_fast_model, temperature=0.45)
-            print(f"[run_ava] fast_path_model={_fast_model}")
-```
-
-**2. `brain/model_evaluator.py` — new file (bootstrap self-evaluator)**
-
-Create `brain/model_evaluator.py` with `ModelSelfEvaluator` class:
-- Loads/saves `state/model_eval_p44.json`
-- `submit_for_evaluation(prompt, response, model_used)` — async; background thread
-- Background worker: queries `mistral:7b` with same prompt as shadow, scores both via LLM judge
-- After 5+ comparison pairs: writes decision — `confirmed_primary` (win_rate ≥ 0.60) or `flagged_for_review` (win_rate < 0.40 after 10+ samples)
-- Scoring: LLM judge prompt scores both responses 0–1 on naturalness, helpfulness, personality
-- Heuristic fallback scoring if judge model unavailable
-- Module-level singleton: `get_evaluator(base_dir)` → `ModelSelfEvaluator`
-
-State file schema (`state/model_eval_p44.json`):
-```json
-{
-  "status": "evaluating | confirmed_primary | flagged_for_review",
-  "ava_model": "ava-personal:latest",
-  "challenger_model": "mistral:7b",
-  "total_samples": 0,
-  "ava_wins": 0,
-  "challenger_wins": 0,
-  "ties": 0,
-  "decision_ts": 0.0,
-  "decision_reason": "",
-  "samples": []
-}
-```
-
-**3. `avaagent.py` — wire evaluator**
-
-After `raw_reply = getattr(result, "content", str(result)).strip()` (line ~7455):
-- Check if `_invoke_llm.model` contains `"ava-personal"` to identify social chat response
-- If so: `get_evaluator(BASE_DIR).submit_for_evaluation(user_input, raw_reply, _invoke_llm.model)`
-
-Add to operator snapshot: expose `get_evaluator().get_status()` as `p44_eval` block.
-
-**4. `docs/AVA_ROADMAP.md` — complete new roadmap**
-
-Full roadmap with phases 1–43 (COMPLETE), 44–68 (PLANNED), and Long Term Vision (70–71) needs to be written. Phase 68+1 skipped per instructions.
-
-### Execution commands
-
-```bash
-# Compile check
-py -3.11 -m py_compile brain/model_evaluator.py avaagent.py
-
-# Push
-git add -A
-git commit -m "phase 44: ava-personal as primary brain + bootstrap self-evaluator"
-git push origin master
-```
-
-## Next Priorities (phases 44–68 roadmap)
-
-Full phase specifications are in the roadmap the user provided. The new roadmap (phases 44–68) was about to be written to `docs/AVA_ROADMAP.md` when the session was interrupted. Phases diverge significantly from the old planned phases 44–50:
-
-| Phase | New Title |
-|---|---|
-| 44 | Ava-personal as primary brain + self-evaluation |
-| 45 | Concept graph decay + strengthen + prompt injection |
-| 46 | Hot-reload tool registry |
-| 47 | Watchdog restart system |
-| 48 | Desktop widget orb |
-| 49 | Screen pointer behavior |
-| 50 | Audio visualization on orb |
-| 51 | UI accessibility tree tool |
-| 52 | Smart screenshot management |
-| 53 | PyAutoGUI computer control |
-| 54 | System stats monitoring |
-| 55 | Drag and drop file input |
-| 56 | Expanded orb expressions |
-| 57 | Wake word detection |
-| 58 | Boredom autonomous leisure |
-| 59 | Chrome Dino game |
-| 60 | Minecraft bot via mineflayer |
-| 61 | Playing Minecraft with Zeke |
-| 62 | MeloTTS voice upgrade |
-| 63 | WebSocket real-time transport |
-| 64 | Persistent episodic memory |
-| 65 | Emotional continuity |
-| 66 | Ava's own goals |
-| 67 | Relationship arc stages |
-| 68 | True self modification |
-
-Phase 69 (Horizon Zero Dawn) skipped per instructions.
-
-## Bootstrap Philosophy (critical rule for all phases 44+)
-
-**NEVER choose Ava's personal preferences for her.** Every phase involving Ava's preferences, style, or identity must include a bootstrap mechanism — a system that lets Ava discover and form that aspect of herself through experience. Build the mechanism, not the default value. Her goals, hobbies, communication style, and emotional baseline all emerge from her experience, not from our decisions.
-
-## Debug Export Interpretation Guide
-
-`GET /api/v1/debug/export` emits a compact textual bundle derived from snapshot/runtime:
-
-- **Ribbon / live summary:** high-signal operator strip (heartbeat mode, routing model, readiness, issues).
-- **Heartbeat/runtime:** presence mode, summaries, learning focus, carryover readiness.
-- **Model routing:** selected/fallback model, reason/confidence, overrides, available models.
-- **Strategic continuity/memory:** thread carryover, relationship continuity, refinement class/priority.
-- **Workbench:** proposal presence, execution readiness, last execution/command summaries.
-- **Self-improvement loop:** active stage, awaiting approval, active issue.
-- **Concerns diagnostics:** top concern and reconciliation status.
-- **Reply path meta:** fast/deep route metadata and decision rationale.
-- **Runtime self snapshot:** warm state fields persisted across ticks.
-- **Startup resume block:** last startup continuity payload.
-- **Workbench index preview:** compact proposal list/metadata.
-- **Full snapshot JSON (truncated):** canonical machine-readable state dump used by operator UI.
+- Ribbon/live summary: operator strip (heartbeat mode, routing model, readiness)
+- Model routing: selected/fallback model, reason/confidence
+- Strategic continuity/memory: thread carryover, refinement class
+- Self-improvement loop: active stage, awaiting approval
+- Deep self snapshot: mood, energy, critique averages, pending repairs
+- Full snapshot JSON (truncated): canonical machine-readable state dump
