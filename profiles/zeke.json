@@ -10,7 +10,7 @@
   "likes": [],
   "dislikes": [],
   "ava_impressions": [],
-  "last_seen": "2026-04-27T17:31:03",
+  "last_seen": "2026-04-27T22:12:01",
   "created_at": "2026-04-01T20:47:21",
   "emotion_history": [
     "neutral",
@@ -25,20 +25,11 @@
     "neutral"
   ],
   "dominant_emotion": "neutral",
-  "relationship_score": 0.503,
-  "interaction_count": 14,
-  "last_seen_at": "2026-04-27T17:19:40",
-  "updated_at": "2026-04-27T17:31:03",
+  "relationship_score": 0.591,
+  "interaction_count": 18,
+  "last_seen_at": "2026-04-27T22:10:48",
+  "updated_at": "2026-04-27T22:12:01",
   "threads": [
-    {
-      "id": "f037b938-fac5-4287-b300-5b1a60c4af06",
-      "topic": "dont be worried Ava youll be better when you wake up",
-      "first_mentioned": "2026-04-03T05:53:49",
-      "last_mentioned": "2026-04-03T05:53:49",
-      "emotion": "anxious",
-      "resolved": false,
-      "notes": "dont be worried Ava youll be better when you wake up"
-    },
     {
       "id": "f177e909-58be-4509-87c0-56f34fdda51e",
       "topic": "lets talk about you or mostly what be can add to make you better",
@@ -61,10 +52,10 @@
       "id": "aacc8d75-a149-4d16-aa79-9eb02d57be3a",
       "topic": "the above is what has be added to you",
       "first_mentioned": "2026-04-26T01:28:47",
-      "last_mentioned": "2026-04-26T01:28:47",
+      "last_mentioned": "2026-04-27T22:10:48",
       "emotion": "concerned",
       "resolved": false,
-      "notes": "the above is what has be added to you"
+      "notes": "ok so your camera issue is solved, right?"
     },
     {
       "id": "885c2a3b-ef9f-47cf-8725-17de76a220a6",
@@ -133,20 +124,29 @@
       "id": "2e904cf4-0a1d-4c79-b340-b671babe6a78",
       "topic": "hello Ava how are you feeling?",
       "first_mentioned": "2026-04-27T17:03:05",
-      "last_mentioned": "2026-04-27T17:03:05",
+      "last_mentioned": "2026-04-27T21:51:16",
       "emotion": "concerned",
       "resolved": false,
-      "notes": "hello Ava how are you feeling?"
+      "notes": "hello Ava its Ezekiel. how did you like your conversation with a different person?"
+    },
+    {
+      "id": "5d3b7bcd-c76a-4b58-b05e-0d228b740661",
+      "topic": "jeez you will not stop talking about the camera huh",
+      "first_mentioned": "2026-04-27T22:05:29",
+      "last_mentioned": "2026-04-27T22:05:29",
+      "emotion": "concerned",
+      "resolved": false,
+      "notes": "jeez you will not stop talking about the camera huh. your having major trouble talking about anything else."
     }
   ],
   "cadence": {
-    "avg_days_between_sessions": 12.2,
+    "avg_days_between_sessions": 8.19,
     "longest_gap_days": 22.8,
-    "total_sessions": 3,
-    "last_gap_days": 1.6,
-    "_gap_count": 2,
-    "_sum_gap_days": 24.4067
+    "total_sessions": 4,
+    "last_gap_days": 0.17,
+    "_gap_count": 3,
+    "_sum_gap_days": 24.5751
   },
-  "last_activity_at": "2026-04-27T17:27:43",
-  "last_topic": "is that your way of saying yes"
+  "last_activity_at": "2026-04-27T22:10:43",
+  "last_topic": "ok so your camera issue is solved, right?"
 }

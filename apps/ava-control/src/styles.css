@@ -478,6 +478,9 @@ kbd {
   font-size: 0.78rem;
   color: var(--muted);
 }
+.op-meta-issue {
+  color: #d3a64d;
+}
 .op-meta-item code {
   font-size: 0.76rem;
   color: #c5d4e8;
@@ -532,6 +535,11 @@ kbd {
 }
 .op-pane {
   max-width: 960px;
+}
+.op-pane-chat {
+  max-width: none;
+  height: calc(100vh - 180px);
+  min-height: 560px;
 }
 .op-h1 {
   margin: 0 0 0.35rem 0;
@@ -588,6 +596,11 @@ kbd {
   background: #0a0d12;
   margin-bottom: 0.85rem;
 }
+.chat-scroll-full {
+  flex: 1;
+  max-height: none;
+  min-height: 260px;
+}
 .chat-bubble {
   margin-bottom: 0.65rem;
 }
@@ -632,6 +645,83 @@ kbd {
   gap: 0.5rem;
   margin-top: 0.5rem;
   align-items: center;
+}
+.chat-two-panel {
+  display: grid;
+  grid-template-columns: 35% 65%;
+  gap: 0.9rem;
+  height: 100%;
+  min-height: 0;
+}
+.chat-camera-panel {
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, #0d1118 0%, #090d13 100%);
+}
+.camera-frame-shell {
+  position: relative;
+  border: 1px solid #293244;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #06080c;
+  min-height: 220px;
+  margin-bottom: 0.65rem;
+}
+.camera-frame {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 56vh;
+  object-fit: contain;
+}
+.camera-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 220px;
+  color: #9ba7b8;
+  font-size: 0.9rem;
+}
+.chat-main-panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.chat-compose-stick {
+  margin-top: auto;
+}
+.typing-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.2rem 0;
+}
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #93a6c2;
+  opacity: 0.85;
+}
+.typing-text {
+  margin-left: 0.2rem;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+@media (max-width: 1100px) {
+  .op-pane-chat {
+    height: auto;
+    min-height: 0;
+  }
+  .chat-two-panel {
+    grid-template-columns: 1fr;
+  }
+  .camera-frame {
+    max-height: 360px;
+  }
 }
 .btn {
   padding: 0.45rem 0.85rem;
