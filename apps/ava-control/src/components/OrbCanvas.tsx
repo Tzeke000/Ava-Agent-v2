@@ -6,6 +6,8 @@ interface OrbProps {
   emotionColor: string;
   state: "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "offline";
   size?: number;
+  /** Phase 49: override shape for pointer morph */
+  shapeOverride?: string;
 }
 
 const EMOTION_CONFIG: Record<string, {
@@ -68,7 +70,7 @@ function createGlowTex(color: string): THREE.Texture {
   return new THREE.CanvasTexture(c);
 }
 
-export default function OrbCanvas({ emotion, state, size = 320 }: OrbProps) {
+export default function OrbCanvas({ emotion, state, size = 320, shapeOverride }: OrbProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const disposeRef = useRef<()=>void>(()=>{});
 
@@ -76,7 +78,7 @@ export default function OrbCanvas({ emotion, state, size = 320 }: OrbProps) {
     if (!mountRef.current) return;
     disposeRef.current();
     const container = mountRef.current;
-    const cfg = getCfg(emotion);
+    const cfg = { ...getCfg(emotion), ...(shapeOverride ? { shape: shapeOverride } : {}) };
 
     const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
     renderer.setSize(size,size);
@@ -187,6 +189,11 @@ export default function OrbCanvas({ emotion, state, size = 320 }: OrbProps) {
         else if(c.shape==="scattered"){ const f=1+Math.sin(t*0.5+dist*3)*0.15; mx*=f; my*=f; mz*=f; }
         else if(c.shape==="double"){ if(oy>0){mx+=0.15;my+=0.1;}else{mx-=0.15;my-=0.05;} }
         else if(c.shape==="spiral"){ const a=t*0.3+dist*2; const nx=mx*Math.cos(a)-mz*Math.sin(a); mz=mx*Math.sin(a)+mz*Math.cos(a); mx=nx; }
+        else if(c.shape==="pointer"){
+          // Elongate upward and taper: upper half forms arrow tip, lower is contracted
+          if(oy>0){ my*=2.2; mx*=Math.max(0.1, 1.0-oy*1.2); mz*=Math.max(0.1, 1.0-oy*1.2); }
+          else{ mx*=0.5; my*=0.4; mz*=0.5; }
+        }
         my+=gy*0.2;
         mz+=tx*oy*0.3;
         mx+=vel[i*3]*30; my+=vel[i*3+1]*30; mz+=vel[i*3+2]*30;
