@@ -39,6 +39,7 @@ from brain.memory_bridge import MemoryBridge
 from brain.output_guard import scrub_visible_reply, scrub_chat_callback_result
 from brain.selfstate import is_selfstate_query, build_selfstate_reply
 from brain.health_runtime import print_startup_selftest
+from brain.history_manager import AvaHistoryManager
 from brain.initiative_sanity import desaturate_candidate_scores, sanitize_candidate_result
 from brain.vision import analyze_face_emotion_detailed
 from brain.profile_manager import (
@@ -68,11 +69,13 @@ from brain.curiosity_topics import add_topic as add_curiosity_topic
 from brain.curiosity_topics import bootstrap_from_chatlog as bootstrap_curiosity_topics
 from brain.curiosity_topics import get_current_curiosity
 from brain.curiosity_topics import mark_resolved as mark_curiosity_resolved
+from brain.concept_graph import ConceptGraph, bootstrap_from_existing_memory, extract_concepts_from_text
 from brain.inner_monologue import current_thought as inner_current_thought
 from brain.inner_monologue import get_conversation_starter as inner_get_conversation_starter
 from brain.inner_monologue import start_inner_monologue
 from brain.opinions import form_opinion, get_opinion, list_top_opinions
 from brain.shutdown_ritual import is_shutdown_trigger, load_pickup_note, run_shutdown_ritual
+from brain.scene_understanding import run_scene_refresh_async
 from brain.self_model import add_question_about_self, get_self_summary, update_self_model
 from brain.desktop_agent import ToolRegistry
 from brain.tts_engine import TTSEngine
@@ -222,11 +225,43 @@ pickup_note = None
 tts_engine = None
 tts_enabled = False
 tts_engine_name = "none"
+history_manager = None
+_llava_scene_description = ""
 _desktop_tool_registry = None
 _desktop_last_tool_used = ""
 _desktop_last_tool_result = ""
 _desktop_tool_execution_count = 0
 _desktop_tier2_pending = []
+_active_concept_nodes: list[str] = []
+
+
+def _update_concept_graph_from_turn(user_text: str, assistant_text: str) -> None:
+    cg = globals().get("_concept_graph")
+    if cg is None:
+        return
+    try:
+        corpus = f"user: {str(user_text or '').strip()}\nassistant: {str(assistant_text or '').strip()}"
+        concepts = extract_concepts_from_text(corpus)
+        turn_node_ids: list[str] = []
+        for row in concepts[:16]:
+            if not isinstance(row, dict):
+                continue
+            label = str(row.get("label") or "").strip()
+            typ = str(row.get("type") or "topic").strip().lower()
+            if not label:
+                continue
+            if typ not in {"person", "topic", "emotion", "memory", "opinion", "curiosity", "self", "event"}:
+                typ = "topic"
+            node_id = cg.find_or_create(label, typ)
+            turn_node_ids.append(node_id)
+        for i in range(1, len(turn_node_ids)):
+            rel = str(concepts[i].get("relationship_to_previous") or "related_to")
+            cg.add_edge(turn_node_ids[i - 1], turn_node_ids[i], rel, 0.58)
+        cg.activate_path(turn_node_ids)
+        cg.prune_old_nodes(max_nodes=500)
+        globals()["_active_concept_nodes"] = turn_node_ids
+    except Exception as e:
+        print(f"[concept_graph] turn update failed: {e}")
 
 # User-reply priority guards
 USER_REPLY_PRIORITY_SECONDS = 8.0
@@ -3816,6 +3851,15 @@ def process_camera_snapshot(image, recognized_text: str = "", recognized_person_
             cv2.imwrite(str(CAMERA_LATEST_ANNOTATED_PATH), annotated)
         with open(CAMERA_LATEST_JSON_PATH, "w", encoding="utf-8") as f:
             json.dump(current, f, indent=2, ensure_ascii=False)
+        try:
+            run_scene_refresh_async(
+                globals(),
+                str(CAMERA_LATEST_RAW_PATH),
+                context=f"recognition={current.get('recognition_text','')} mood={current.get('ava_mood','')}",
+                fallback_scene=str(current.get("comparison_summary") or current.get("transition_summary") or ""),
+            )
+        except Exception:
+            pass
 
         if save_to_rolling:
             base = snapshot_id
@@ -6109,7 +6153,16 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
     personality = load_personality()
     mood = update_internal_emotions(user_input, active_profile, expression_state=expression_state)
     memories = search_memories(user_input, active_profile["person_id"], MEMORY_RECALL_K)
-    recent_chat = load_recent_chat(person_id=active_profile["person_id"])
+    _hm = globals().get("history_manager")
+    if _hm is not None:
+        recent_text = _hm.get_context_block(active_profile["person_id"], max_turns=20, max_chars=6000)
+    else:
+        recent_chat = load_recent_chat(person_id=active_profile["person_id"])
+        recent_text = format_conversation_history_block(
+            recent_chat[-4:] if recent_chat else [],
+            content_limit=160,
+            empty_fallback="(no recent lines in the log for this person.)",
+        )
     reflections = search_reflections(user_input, person_id=active_profile["person_id"], k=REFLECTION_RECALL_K)
     recent_reflections = load_recent_reflections(limit=3, person_id=active_profile["person_id"])
     self_model = load_self_model()
@@ -6129,12 +6182,6 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
             "Prefer honest uncertainty: no fresh visual read / vision recovering / visual confidence is low.\n"
         )
     dynamic_memory_summary = memory_bridge.build_summary(globals(), user_input, active_profile)
-
-    recent_text = format_conversation_history_block(
-        recent_chat[-4:] if recent_chat else [],
-        content_limit=160,
-        empty_fallback="(no recent lines in the log for this person.)",
-    )
 
     reflection_summary = format_recalled_reflections_for_prompt(reflections) if reflections else "No relevant recalled reflections."
     recent_reflection_summary = format_reflections_ui(recent_reflections)[:900] if recent_reflections else "No recent self reflections."
@@ -6266,6 +6313,7 @@ Let Ava choose naturally, but allow the current operating goal to shape expressi
 CAMERA:
 {_vision_guard}Face status: {face_status}
 Recognition: {recognized_text}
+LLAVA scene understanding: {str(globals().get("_llava_scene_description") or "(none)")}
 Expression: {expression_prompt_text(expression_state, perception=perception)}
 Current camera memory: {current_camera_memory_summary()}
 Recent camera events: {recent_camera_events_text(limit=4)}
@@ -6425,17 +6473,21 @@ def build_prompt_fast(
     except Exception:
         _voice_conv = ""
 
-    recent_rows = load_recent_chat(limit=12, person_id=active_profile["person_id"])
-    last3 = [r for r in recent_rows if str(r.get("content", "")).strip()][-3:]
-    _trim_rows = [
-        {"role": r.get("role"), "content": trim_for_prompt(str(r.get("content") or ""), limit=220)}
-        for r in last3
-    ]
-    recent3_block = format_conversation_history_block(
-        _trim_rows,
-        content_limit=1200,
-        empty_fallback="(none)",
-    )
+    _hm = globals().get("history_manager")
+    if _hm is not None:
+        recent3_block = _hm.get_context_block(active_profile["person_id"], max_turns=20, max_chars=3000)
+    else:
+        recent_rows = load_recent_chat(limit=12, person_id=active_profile["person_id"])
+        last3 = [r for r in recent_rows if str(r.get("content", "")).strip()][-3:]
+        _trim_rows = [
+            {"role": r.get("role"), "content": trim_for_prompt(str(r.get("content") or ""), limit=220)}
+            for r in last3
+        ]
+        recent3_block = format_conversation_history_block(
+            _trim_rows,
+            content_limit=1200,
+            empty_fallback="(none)",
+        )
     _fast_thought = inner_current_thought(BASE_DIR) or ""
     _fast_curiosity = get_current_curiosity(globals()) or {}
     _fast_curiosity_topic = str(_fast_curiosity.get("topic") or "").strip()
@@ -7054,6 +7106,10 @@ def finalize_ava_turn(
         n = int(sess.get("total_message_count", 0) or 0) + 1
         if n > 0 and n % 10 == 0:
             _trigger_narrative_update_async()
+    except Exception:
+        pass
+    try:
+        _update_concept_graph_from_turn(user_input, ai_reply)
     except Exception:
         pass
     visual_out = normalize_visual_payload(visual, turn_route=turn_route)
@@ -8445,6 +8501,14 @@ try:
 except Exception as _cur_boot_e:
     print(f"[curiosity_topics] bootstrap skipped: {_cur_boot_e}")
 try:
+    _concept_graph = ConceptGraph(BASE_DIR)
+    globals()["_concept_graph"] = _concept_graph
+    globals()["_concept_graph_bootstrap_nodes"] = int(bootstrap_from_existing_memory(_concept_graph, globals()))
+except Exception as _concept_graph_boot_e:
+    globals()["_concept_graph"] = None
+    globals()["_concept_graph_bootstrap_nodes"] = 0
+    print(f"[concept_graph] bootstrap skipped: {_concept_graph_boot_e}")
+try:
     update_self_model(globals())
 except Exception as _self_model_boot_e:
     print(f"[self_model] weekly update skipped: {_self_model_boot_e}")
@@ -8452,6 +8516,11 @@ try:
     start_inner_monologue(globals())
 except Exception as _inner_boot_e:
     print(f"[inner_monologue] startup skipped: {_inner_boot_e}")
+try:
+    globals()["history_manager"] = AvaHistoryManager(BASE_DIR, target_context_length=8000)
+except Exception as _hist_boot_e:
+    globals()["history_manager"] = None
+    print(f"[history_manager] startup skipped: {_hist_boot_e}")
 try:
     globals()["pickup_note"] = load_pickup_note()
 except Exception as _pickup_boot_e:

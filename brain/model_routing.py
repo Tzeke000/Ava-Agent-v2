@@ -386,6 +386,7 @@ def _pick_available(
 def _score_modes(
     *,
     user_text: str,
+    cfg: ModelRoutingConfig,
     g: dict[str, Any] | None,
     qual: QualityOutput,
     wb: WorkbenchProposalResult | None,
@@ -397,6 +398,8 @@ def _score_modes(
 ) -> tuple[dict[str, float], list[str]]:
     ut = (user_text or "").strip()
     ut_low = ut.lower()
+    ut_words = re.findall(r"[a-z0-9']+", ut_low)
+    word_count = len(ut_words)
     signals: list[str] = []
     scores: dict[str, float] = {m: 0.0 for m in _ALL_MODES}
 
@@ -512,16 +515,36 @@ def _score_modes(
         scores[SOCIAL_CHAT_MODE] += 0.22
         signals.append("high_familiarity_short_turn")
 
-    if scores[SOCIAL_CHAT_MODE] < 0.2 and len(ut) < 140 and not exec_ctx:
-        scores[SOCIAL_CHAT_MODE] += 0.2
-        signals.append("short_light_message_default_social_bias")
+    if word_count <= 10 and not exec_ctx:
+        scores[SOCIAL_CHAT_MODE] = max(scores[SOCIAL_CHAT_MODE], float(cfg.social_short_message_base_score))
+        scores[SOCIAL_CHAT_MODE] += float(cfg.social_short_message_boost)
+        signals.append("short_message_social_boost")
+    if "?" not in ut and ut.strip():
+        scores[SOCIAL_CHAT_MODE] += float(cfg.social_no_question_boost)
+        signals.append("no_question_mark_social_boost")
+    if any(gw in ut_low for gw in ("hey", "hi", "hello", "how are")):
+        scores[SOCIAL_CHAT_MODE] += float(cfg.social_greeting_boost)
+        signals.append("greeting_social_boost")
+    try:
+        hh = int(time.strftime("%H"))
+        if hh >= 18 or hh <= 4:
+            scores[SOCIAL_CHAT_MODE] += float(cfg.social_evening_boost)
+            signals.append("evening_night_social_boost")
+    except Exception:
+        pass
+    scores[SOCIAL_CHAT_MODE] = min(float(cfg.social_score_ceiling), max(0.0, scores[SOCIAL_CHAT_MODE]))
 
-    top_v = max(scores.values()) if scores else 0.0
-    if top_v < 0.25:
-        scores[FALLBACK_SAFE_MODE] = 0.55 - top_v
-        signals.append("low_signal_fallback_pool")
-    else:
-        scores[FALLBACK_SAFE_MODE] = 0.08
+    # Fallback starts lower; only rises in explicit recovery/error-like contexts.
+    error_recovery_cues = ("error", "failed", "exception", "recover", "crash", "traceback")
+    explicit_error_recovery = any(tok in ut_low for tok in error_recovery_cues)
+    scores[FALLBACK_SAFE_MODE] = float(cfg.fallback_base_score) + (0.18 if explicit_error_recovery else 0.0)
+    if explicit_error_recovery:
+        signals.append("explicit_error_recovery_context")
+
+    social_or_deep = max(scores[SOCIAL_CHAT_MODE], scores[DEEP_REASONING_MODE])
+    if social_or_deep > 0.35:
+        scores[FALLBACK_SAFE_MODE] = min(scores[FALLBACK_SAFE_MODE], max(0.12, social_or_deep - 0.03))
+        signals.append("anti_fallback_dominance_social_or_deep")
 
     return scores, signals
 
@@ -562,6 +585,7 @@ def build_model_routing_result(
 
     scores, signals = _score_modes(
         user_text=user_text,
+        cfg=cfg,
         g=g if isinstance(g, dict) else {},
         qual=quality,
         wb=workbench,
@@ -610,6 +634,22 @@ def build_model_routing_result(
     registry = build_runtime_capability_registry(available, profiles)
     reg_by_name = _registry_map(registry)
 
+    # Fallback should win only when: no mode > 0.40, explicit recovery context, or capability uncertainty.
+    score_social = float(scores.get(SOCIAL_CHAT_MODE, 0.0) or 0.0)
+    score_deep = float(scores.get(DEEP_REASONING_MODE, 0.0) or 0.0)
+    max_other = max(float(v) for k, v in scores.items() if k != FALLBACK_SAFE_MODE)
+    explicit_error_context = "explicit_error_recovery_context" in signals
+    capability_uncertain = discovery_source == "unavailable"
+    fallback_allowed = (max_other <= 0.40) or explicit_error_context or capability_uncertain
+    if winner == FALLBACK_SAFE_MODE and not fallback_allowed:
+        for m, sc in ranked:
+            if m != FALLBACK_SAFE_MODE:
+                winner, win_score = m, sc
+                second_score = float(scores.get(FALLBACK_SAFE_MODE, 0.0) or 0.0)
+                margin = float(win_score - second_score)
+                signals.append("fallback_suppressed_non_dominant")
+                break
+
     primary_warm, warm_note = _resolve_warm_model_for_mode(winner, cfg, registry, available)
     mode_fallback_name = (cfg.global_fallback_model or "").strip()
     explicit_fallback = mode_fallback_name or (cfg.default_model or "").strip()
@@ -629,6 +669,11 @@ def build_model_routing_result(
             signals.append("override_model_clamped_to_available")
     else:
         candidate_model = primary_warm
+
+    # Social mode should always target the social chat model directly.
+    if winner == SOCIAL_CHAT_MODE and not override_model:
+        candidate_model = str(cfg.social_chat_model).strip() or "mistral:7b"
+        warm_note = "force_social_chat_model"
 
     # Ordered fallback label for transparency (legacy path when registry thin)
     _, avail_note_legacy = _pick_available(
@@ -665,6 +710,7 @@ def build_model_routing_result(
 
     last_entry: Optional[ModelCapabilityEntry] = None
     fit_last = 0.0
+    last_mode = str(g.get("_routing_last_cognitive_mode") or "").strip() if isinstance(g, dict) else ""
     if last_effective:
         last_entry = reg_by_name.get(last_effective)
         if last_entry is None and (
@@ -683,6 +729,7 @@ def build_model_routing_result(
         and last_effective in available
         and last_entry is not None
         and not override_model
+        and last_mode == winner
     ):
         gain = fit_candidate - fit_last
         stay_viable = fit_last >= floor
@@ -708,6 +755,7 @@ def build_model_routing_result(
         and last_effective in available
         and last_entry
         and not override_model
+        and last_mode == winner
     ):
         if (
             since_switch < cooldown
@@ -763,7 +811,7 @@ def build_model_routing_result(
             no_switch_reason_explain = "same_engine_as_last_turn|no_switch_needed"
 
     reason = (
-        f"mode={winner} margin={margin:.3f} transition={routing_transition}; "
+        f"mode={winner} score={win_score:.3f} margin={margin:.3f} transition={routing_transition}; "
         f"switch_explain={switch_reason_explain or '-'} "
         f"no_switch_explain={no_switch_reason_explain or '-'}; "
         f"discovery={discovery_source}"

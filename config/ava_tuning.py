@@ -548,6 +548,14 @@ class ModelRoutingConfig:
     """If top-two mode score gap exceeds this, cooldown may be bypassed."""
     routing_suitability_floor: float = 0.38
     """Minimum profile fit vs active mode for the previous model to be considered still “good enough”."""
+    # --- social/fallback scoring knobs (Phase 36 tuning)
+    social_short_message_base_score: float = 0.45
+    social_short_message_boost: float = 0.20
+    social_no_question_boost: float = 0.10
+    social_greeting_boost: float = 0.15
+    social_evening_boost: float = 0.05
+    social_score_ceiling: float = 0.85
+    fallback_base_score: float = 0.25
 
 
 # Singletons (import these from feature code)

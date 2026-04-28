@@ -19,6 +19,84 @@ _HOST: dict[str, Any] | None = None
 _CHAT_FN: Optional[Callable[..., dict[str, Any]]] = None
 _CHAT_CALL_LOCK = threading.Lock()
 
+_DEFAULT_STYLE = {
+    "orb_base_size": 180,
+    "orb_ring_count": 2,
+    "orb_glow_intensity": 0.8,
+    "orb_trail": False,
+    "orb_particles": False,
+    "preferred_idle_color": None,
+    "style_notes": "Ava's own notes about her visual style",
+    "last_updated": None,
+}
+
+
+def _style_path(host: dict[str, Any]) -> Path:
+    base = Path(host.get("BASE_DIR") or Path.cwd())
+    return base / "state" / "ava_style.json"
+
+
+def _load_style(host: dict[str, Any]) -> dict[str, Any]:
+    path = _style_path(host)
+    if not path.is_file():
+        return dict(_DEFAULT_STYLE)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            out = dict(_DEFAULT_STYLE)
+            out.update(data)
+            return out
+    except Exception:
+        pass
+    return dict(_DEFAULT_STYLE)
+
+
+def _save_style(host: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    current = _load_style(host)
+    current.update({k: v for k, v in (patch or {}).items() if k in _DEFAULT_STYLE})
+    current["last_updated"] = __import__("datetime").datetime.now().isoformat(timespec="seconds")
+    path = _style_path(host)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+    return current
+
+
+def _load_mood_block(host: dict[str, Any]) -> dict[str, Any]:
+    base = Path(host.get("BASE_DIR") or Path.cwd())
+    path = base / "ava_mood.json"
+    raw: dict[str, Any] = {}
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                raw = data
+        except Exception:
+            raw = {}
+    primary = str(raw.get("current_mood") or "calmness")
+    intensity = 0.0
+    ew = raw.get("emotion_weights")
+    if isinstance(ew, dict):
+        try:
+            intensity = float(ew.get(primary) or 0.0)
+        except Exception:
+            intensity = 0.0
+    sec: list[dict[str, Any]] = []
+    if isinstance(ew, dict):
+        top = sorted(((str(k), float(v or 0.0)) for k, v in ew.items()), key=lambda x: x[1], reverse=True)[:4]
+        for name, val in top:
+            if name == primary:
+                continue
+            sec.append({"emotion": name, "intensity": round(max(0.0, val), 4)})
+    return {
+        "primary_emotion": primary,
+        "primary_intensity": round(max(0.0, intensity), 4),
+        "secondary_emotions": sec[:3],
+        "mood_label": str(raw.get("outward_tone") or primary),
+        "raw_mood": raw,
+    }
+
 
 def _schedule_graceful_shutdown(delay_seconds: float = 1.0) -> None:
     def _shutdown() -> None:
@@ -234,6 +312,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
 
     vision_block = {
         "perception": _perception_dict(perception),
+        "llava_scene_description": str(host.get("_llava_scene_description") or "")[:700],
     }
 
     memory_block = {
@@ -304,6 +383,8 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "enabled": bool(host.get("tts_enabled", False)),
         "engine": str(host.get("tts_engine_name") or "none"),
     }
+    mood_block = _load_mood_block(host)
+    style_block = _load_style(host)
 
     inner_life = {
         "current_thought": "",
@@ -311,6 +392,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "self_summary": "",
         "opinion_count": 0,
         "monologue_thought_count": 0,
+        "history_summary_count": 0,
         "last_shutdown": None,
         "pickup_note_active": False,
         "pickup_note_preview": None,
@@ -327,6 +409,14 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         inner_life["self_summary"] = get_self_summary(host)
         inner_life["opinion_count"] = int(opinion_count(host))
         inner_life["monologue_thought_count"] = int(thought_count(base_dir))
+    except Exception:
+        pass
+
+    try:
+        hm = host.get("history_manager")
+        if hm is not None and callable(getattr(hm, "summary_count", None)):
+            pid = str(host.get("active_person_id") or host.get("OWNER_PERSON_ID") or "zeke")
+            inner_life["history_summary_count"] = int(hm.summary_count(pid))
     except Exception:
         pass
 
@@ -356,6 +446,8 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "concerns": concerns_block,
         "tools": tools_block,
         "tts": tts_block,
+        "mood": mood_block,
+        "style": style_block,
         "inner_life": inner_life,
         "reply_path": host.get("reply_path_meta") if isinstance(host.get("reply_path_meta"), dict) else {},
     }
@@ -371,6 +463,8 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "concerns": concerns_block,
         "tools": tools_block,
         "tts": tts_block,
+        "mood": mood_block,
+        "style": style_block,
         "inner_life": inner_life,
         "debug": debug_human,
         "ts": __import__("time").time(),
@@ -597,6 +691,18 @@ def create_app():
         reason: str | None = None
         elevated_approval: bool = False
 
+    class StyleUpdateIn(BaseModel):
+        orb_base_size: int | None = None
+        orb_ring_count: int | None = None
+        orb_glow_intensity: float | None = None
+        orb_trail: bool | None = None
+        orb_particles: bool | None = None
+        preferred_idle_color: str | None = None
+        style_notes: str | None = None
+
+    class BrainActivateIn(BaseModel):
+        concept: str = ""
+
     @app.get("/api/v1/health")
     def health() -> dict[str, str]:
         return {"status": "ok", "service": "ava-operator"}
@@ -604,6 +710,64 @@ def create_app():
     @app.get("/api/v1/snapshot")
     def snapshot() -> dict[str, Any]:
         return build_snapshot(_g())
+
+    @app.get("/api/v1/brain/graph")
+    def brain_graph() -> dict[str, Any]:
+        g = _g()
+        cg = g.get("_concept_graph")
+        if cg is None or not callable(getattr(cg, "get_graph_data", None)):
+            return {"nodes": [], "edges": [], "stats": {"total_nodes": 0, "total_edges": 0, "active_nodes_30s": 0}}
+        try:
+            payload = cg.get_graph_data()
+            if isinstance(payload, dict):
+                return {
+                    "nodes": list(payload.get("nodes") or []),
+                    "edges": list(payload.get("edges") or []),
+                    "stats": dict(payload.get("stats") or {}),
+                }
+        except Exception as e:
+            return {"nodes": [], "edges": [], "stats": {"error": str(e)[:180]}}
+        return {"nodes": [], "edges": [], "stats": {}}
+
+    @app.get("/api/v1/brain/active")
+    def brain_active() -> dict[str, Any]:
+        g = _g()
+        cg = g.get("_concept_graph")
+        if cg is None or not callable(getattr(cg, "get_active_nodes", None)):
+            return {"active_nodes": [], "firing_paths": []}
+        try:
+            active_nodes = list(cg.get_active_nodes(last_n_seconds=30) or [])
+            active_ids = {str(n.get("id") or "") for n in active_nodes if isinstance(n, dict)}
+            edges = list((cg.get_graph_data() or {}).get("edges") or [])
+            firing_paths = [
+                edge
+                for edge in edges
+                if isinstance(edge, dict)
+                and str(edge.get("source") or "") in active_ids
+                and str(edge.get("target") or "") in active_ids
+            ]
+            return {"active_nodes": active_nodes, "firing_paths": firing_paths}
+        except Exception as e:
+            return {"active_nodes": [], "firing_paths": [], "error": str(e)[:180]}
+
+    @app.post("/api/v1/brain/activate")
+    def brain_activate(body: BrainActivateIn) -> dict[str, Any]:
+        g = _g()
+        cg = g.get("_concept_graph")
+        concept = str(body.concept or "").strip()
+        if not concept:
+            return {"ok": False, "error": "missing_concept"}
+        if cg is None or not callable(getattr(cg, "find_or_create", None)):
+            return {"ok": False, "error": "concept_graph_not_initialized"}
+        try:
+            node_id = cg.find_or_create(concept, "topic")
+            cg.activate_node(node_id)
+            g["_active_concept_nodes"] = [node_id]
+            node = (cg.get_graph_data() or {}).get("nodes") or []
+            picked = next((n for n in node if isinstance(n, dict) and str(n.get("id") or "") == node_id), None)
+            return {"ok": True, "node": picked or {"id": node_id, "label": concept}}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:180]}
 
     def _normalize_chat_payload(raw: Any) -> dict[str, Any]:
         """Ensure clients always see reply text under ``reply`` and a source hint."""
@@ -725,6 +889,16 @@ def create_app():
             return {"ok": False, "error": str(e), "goodbye": goodbye, "note_saved": note_saved}
         _schedule_graceful_shutdown(delay_seconds=1.2)
         return {"ok": True, "goodbye": goodbye, "note_saved": note_saved}
+
+    @app.post("/api/v1/style")
+    def update_style(body: StyleUpdateIn) -> dict[str, Any]:
+        h = _g()
+        patch = {k: v for k, v in body.model_dump().items() if v is not None}
+        try:
+            st = _save_style(h, patch)
+            return {"ok": True, "style": st}
+        except Exception as e:
+            return {"ok": False, "error": str(e), "style": _load_style(h)}
 
     @app.post("/api/v1/routing/override")
     def routing_override(body: RoutingOverrideIn) -> dict[str, Any]:
