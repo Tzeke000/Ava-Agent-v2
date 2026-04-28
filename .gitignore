@@ -14,3 +14,7 @@ profiles/
 ava_mood.json
 memory/self reflection/
 chatlog.jsonl
+
+apps/ava-control/src-tauri/target/
+apps/ava-control/node_modules/
+apps/ava-control/dist/
