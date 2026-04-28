@@ -485,6 +485,20 @@ kbd {
   font-size: 0.76rem;
   color: #c5d4e8;
 }
+.op-header-btn {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.76rem;
+}
+.op-shutdown-btn {
+  padding: 0.32rem 0.7rem;
+  font-size: 0.78rem;
+  border-color: rgba(210, 115, 98, 0.65);
+  color: #efc9c1;
+  background: rgba(88, 35, 33, 0.45);
+}
+.op-shutdown-btn:hover:not(:disabled) {
+  background: rgba(112, 43, 40, 0.55);
+}
 .op-banner {
   padding: 0.5rem 1rem;
   background: rgba(180, 60, 60, 0.15);
@@ -501,6 +515,10 @@ kbd {
   display: flex;
   flex: 1;
   min-height: 0;
+}
+.shutdown-locked {
+  pointer-events: none;
+  opacity: 0.45;
 }
 .op-nav {
   width: 200px;
@@ -871,4 +889,58 @@ kbd {
 }
 .debug-bad {
   color: #ff8a8a;
+}
+
+.shutdown-modal-backdrop,
+.shutdown-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  background: rgba(5, 8, 12, 0.72);
+}
+.shutdown-modal {
+  width: min(460px, calc(100vw - 2rem));
+  border: 1px solid #364055;
+  border-radius: 12px;
+  background: #111722;
+  padding: 1rem 1.1rem;
+}
+.shutdown-modal h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+}
+.shutdown-modal p {
+  margin: 0 0 1rem;
+  color: #c6d3e4;
+}
+.shutdown-modal-actions {
+  display: flex;
+  gap: 0.55rem;
+  justify-content: flex-end;
+}
+.shutdown-overlay-card {
+  width: min(780px, calc(100vw - 3rem));
+  border: 1px solid #3a4357;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #0d1119 0%, #0a0d13 100%);
+  padding: 1.2rem 1.4rem;
+  text-align: center;
+}
+.shutdown-overlay-card h2 {
+  margin: 0 0 0.7rem;
+  font-size: 1.2rem;
+}
+.shutdown-goodbye-text {
+  margin: 0.35rem auto 0.3rem;
+  max-width: 640px;
+  font-size: 1.1rem;
+  line-height: 1.5;
+  color: #f0f5ff;
+}
+.shutdown-goodbye-done {
+  margin: 0.65rem 0 0;
+  color: #a9b8cf;
 }

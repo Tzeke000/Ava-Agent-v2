@@ -54,6 +54,11 @@ export default function App() {
   const [debugExportText, setDebugExportText] = useState<string>("");
   const [debugExportBusy, setDebugExportBusy] = useState(false);
   const [appEventLog, setAppEventLog] = useState<{ ts: string; message: string }[]>([]);
+  const [shutdownConfirmOpen, setShutdownConfirmOpen] = useState(false);
+  const [shutdownInProgress, setShutdownInProgress] = useState(false);
+  const [shutdownGoodbye, setShutdownGoodbye] = useState("");
+  const [shutdownDone, setShutdownDone] = useState(false);
+  const [shutdownError, setShutdownError] = useState<string>("");
   const prevOnlineRef = useRef<boolean | null>(null);
 
   const pushEvent = useCallback((message: string) => {
@@ -162,6 +167,7 @@ export default function App() {
   const models = asRecord(snap?.models);
   const memory = asRecord(snap?.memory_continuity);
   const wb = asRecord(snap?.workbench);
+  const tts = asRecord(snap?.tts);
 
   const sendChat = async () => {
     const t = chatInput.trim();
@@ -299,6 +305,42 @@ export default function App() {
   const updatedLabel = lastUpdated ? new Date(lastUpdated).toLocaleString() : "—";
   const frameUrl = `${API_BASE}/api/v1/vision/latest_frame?t=${cameraTick}`;
 
+  const toggleTts = async () => {
+    try {
+      const res = await postJson<Record<string, unknown>>("/api/v1/tts/toggle", {});
+      pushEvent(`TTS toggle -> enabled=${String(res.enabled ?? false)} engine=${String(res.engine ?? "none")}`);
+      await poll();
+    } catch (e) {
+      pushEvent(`TTS toggle failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const runShutdown = async () => {
+    setShutdownConfirmOpen(false);
+    setShutdownInProgress(true);
+    setShutdownError("");
+    setShutdownGoodbye("");
+    try {
+      const res = await postJson<Record<string, unknown>>("/api/v1/shutdown", {});
+      const goodbye = String(res.goodbye ?? "Goodnight, Zeke.");
+      setShutdownGoodbye(goodbye);
+      pushEvent(`Shutdown endpoint returned note_saved=${String(res.note_saved ?? false)}`);
+      window.setTimeout(() => {
+        setShutdownDone(true);
+        try {
+          window.close();
+        } catch {
+          // Browser fallback.
+        }
+      }, 3000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setShutdownError(msg);
+      setShutdownInProgress(false);
+      pushEvent(`Shutdown failed: ${msg}`);
+    }
+  };
+
   const workbenchAction = async (action: "approve" | "reject", proposalId?: string) => {
     setWbActionMsg("");
     try {
@@ -363,6 +405,23 @@ export default function App() {
           <span className="op-meta-item">Heartbeat {String(hb?.heartbeat_mode ?? "—")}</span>
           <span className="op-meta-item op-meta-issue">Issue {String(hb?.runtime_active_issue_summary ?? "none")}</span>
           <span className="op-meta-item">Updated {updatedLabel}</span>
+          <button
+            type="button"
+            className="btn ghost op-header-btn"
+            onClick={() => void toggleTts()}
+            disabled={shutdownInProgress}
+            title={`TTS engine: ${String(tts?.engine ?? "none")}`}
+          >
+            TTS {Boolean(tts?.enabled) ? "On" : "Off"} ({String(tts?.engine ?? "none")})
+          </button>
+          <button
+            type="button"
+            className="btn op-shutdown-btn"
+            onClick={() => setShutdownConfirmOpen(true)}
+            disabled={shutdownInProgress}
+          >
+            Shut Down
+          </button>
         </div>
       </header>
 
@@ -373,7 +432,7 @@ export default function App() {
         </div>
       )}
 
-      <div className="op-body">
+      <div className={`op-body ${shutdownInProgress ? "shutdown-locked" : ""}`}>
         <nav className="op-nav" aria-label="Primary">
           {TABS.map((t) => (
             <button
@@ -791,6 +850,32 @@ export default function App() {
           )}
         </main>
       </div>
+      {shutdownConfirmOpen && (
+        <div className="shutdown-modal-backdrop">
+          <div className="shutdown-modal">
+            <h2>Shut down Ava?</h2>
+            <p>She will save her thoughts before closing.</p>
+            <div className="shutdown-modal-actions">
+              <button type="button" className="btn op-shutdown-btn" onClick={() => void runShutdown()}>
+                Shut Down
+              </button>
+              <button type="button" className="btn ghost" onClick={() => setShutdownConfirmOpen(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {shutdownInProgress && (
+        <div className="shutdown-overlay">
+          <div className="shutdown-overlay-card">
+            <h2>{shutdownGoodbye ? "Goodnight from Ava" : "Ava is saving her thoughts..."}</h2>
+            {shutdownGoodbye ? <p className="shutdown-goodbye-text">{shutdownGoodbye}</p> : <p>Please wait.</p>}
+            {shutdownDone ? <p className="shutdown-goodbye-done">Ava has shut down.</p> : null}
+            {shutdownError ? <p className="op-error">{shutdownError}</p> : null}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
