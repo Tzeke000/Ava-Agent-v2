@@ -683,15 +683,21 @@ export default function App() {
   const lastAssistantMessage = [...chatHist]
     .reverse()
     .find((m) => String(m.role ?? "") === "assistant")?.content ?? "";
+  const ttsSpeaking = Boolean(tts?.tts_speaking);
+  const ttsAmplitude = Number(tts?.tts_amplitude ?? 0);
   const orbPulseMode = backendShutdownDetected || !online
     ? "offline"
-    : Boolean(tts?.enabled)
+    : ttsSpeaking
       ? "speaking"
-      : chatThinking
-        ? String(models?.cognitive_mode ?? "").includes("deep")
-          ? "deep"
-          : "thinking"
-        : orbVisual.pulse;
+      : Boolean(tts?.enabled)
+        ? "speaking"
+        : chatThinking
+          ? String(models?.cognitive_mode ?? "").includes("deep")
+            ? "deep"
+            : "thinking"
+          : sttListening
+            ? "listening"
+            : orbVisual.pulse;
   const presenceStatusMessage = backendShutdownDetected
     ? "Ava has shut down."
     : String(lastAssistantMessage || "I'm here.");
@@ -1076,6 +1082,7 @@ export default function App() {
               emotionColor={effectiveOrbColor}
               state={shutdownInProgress ? "offline" : (orbPulseMode as any)}
               size={320}
+              amplitude={ttsAmplitude}
             />
           </div>
         </div>
@@ -1190,6 +1197,7 @@ export default function App() {
                         emotionColor={effectiveOrbColor}
                         state={shutdownInProgress ? "offline" : (orbPulseMode as any)}
                         size={120}
+                        amplitude={ttsAmplitude}
                       />
                     </div>
                     <div className="chat-orb-label">{primaryEmotion}</div>
@@ -1423,6 +1431,7 @@ export default function App() {
                   emotionColor={effectiveOrbColor}
                   state={shutdownInProgress ? "offline" : (orbPulseMode as any)}
                   size={220}
+                  amplitude={ttsAmplitude}
                 />
               </div>
               <Section title="What Ava sees">

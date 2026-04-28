@@ -117,6 +117,7 @@ class TTSEngine:
         self._bridge_path = self._ensure_bridge_script()
         self._pyttsx3 = None
         self._voice_name = "unknown"
+        self._current_amplitude: float = 0.0
         self._init_engine()
 
     def _log(self, message: str) -> None:
@@ -229,12 +230,31 @@ class TTSEngine:
         self._player_thread = t
         t.start()
 
+    @staticmethod
+    def _estimate_amplitude(text: str) -> float:
+        """Estimate speaking energy from text characteristics."""
+        n = len(text)
+        base = min(0.9, 0.3 + n / 500)
+        exclaim = min(0.15, text.count("!") * 0.05)
+        question = min(0.10, text.count("?") * 0.04)
+        return min(1.0, base + exclaim + question)
+
+    @property
+    def speaking(self) -> bool:
+        t = self._player_thread
+        return bool(t is not None and t.is_alive())
+
+    @property
+    def amplitude(self) -> float:
+        return float(self._current_amplitude) if self.speaking else 0.0
+
     def speak(self, text: str, blocking: bool = False) -> None:
         if not self._available:
             return
         clean = _cleanup_spoken_text(text)
         if not clean:
             return
+        self._current_amplitude = self._estimate_amplitude(clean)
         with self._lock:
             if self._engine_name == "melotts":
                 wav_path = Path(tempfile.gettempdir()) / f"ava_tts_{int(time.time()*1000)}.wav"
