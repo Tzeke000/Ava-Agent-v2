@@ -422,6 +422,30 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "pointing_description": str(host.get("_widget_pointing_description") or ""),
         "pointing_coords": host.get("_widget_pointing_coords"),
     }
+
+    # Phase 54: system stats (cached every 30s to avoid overhead)
+    system_stats: dict[str, Any] = {}
+    try:
+        import time as _time
+        _stats_cache = host.get("_system_stats_cache")
+        _stats_ts = float(host.get("_system_stats_ts") or 0)
+        if _stats_cache and (_time.time() - _stats_ts) < 30:
+            system_stats = _stats_cache
+        else:
+            import psutil
+            m = psutil.virtual_memory()
+            system_stats = {
+                "cpu_pct": psutil.cpu_percent(interval=None),
+                "ram_used_gb": round(m.used / 1e9, 1),
+                "ram_total_gb": round(m.total / 1e9, 1),
+                "ram_pct": m.percent,
+            }
+            host["_system_stats_cache"] = system_stats
+            host["_system_stats_ts"] = _time.time()
+    except ImportError:
+        system_stats = {"error": "psutil not installed"}
+    except Exception as e:
+        system_stats = {"error": str(e)[:100]}
     mood_block = _load_mood_block(host)
     style_block = _load_style(host)
     deep_self_block = {}
@@ -553,6 +577,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "tools": tools_block,
         "tts": tts_block,
         "widget": widget_block,
+        "system_stats": system_stats,
         "mood": mood_block,
         "style": style_block,
         "deep_self": deep_self_block,

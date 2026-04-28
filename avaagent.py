@@ -6387,6 +6387,19 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
         "LIVE CONTEXT (current relevance — bounded; not exhaustive memory):\n"
         + (_lc_block if _lc_block else "(no notable live-context signals above baseline)")
     )
+    # Phase 51: inject active window info into context
+    try:
+        import ctypes as _ctypes
+        _hwnd = _ctypes.windll.user32.GetForegroundWindow()
+        _buf_len = _ctypes.windll.user32.GetWindowTextLengthW(_hwnd)
+        _wbuf = _ctypes.create_unicode_buffer(_buf_len + 1)
+        _ctypes.windll.user32.GetWindowTextW(_hwnd, _wbuf, _buf_len + 1)
+        _active_win = _wbuf.value.strip()
+        if _active_win:
+            globals()["_active_window_title"] = _active_win
+    except Exception:
+        pass
+
     _inner_thought = inner_current_thought(BASE_DIR) or ""
     _curiosity_row = get_current_curiosity(globals()) or {}
     _curiosity_topic = str(_curiosity_row.get("topic") or "").strip()
@@ -6475,6 +6488,8 @@ AVA PRIOR SELF-REFLECTION NOTES (your notes — not Zeke's words):
 DYNAMIC SELF / MEMORY READER:
 {dynamic_memory_summary}
 {recalled_block}
+
+ACTIVE WINDOW: {globals().get("_active_window_title") or "(unknown)"}
 
 INNER LIFE SNAPSHOT:
 - current_thought: {_inner_thought or "(none recent)"}
