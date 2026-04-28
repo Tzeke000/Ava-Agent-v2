@@ -7,6 +7,7 @@ Does not replace Gradio; complements it with JSON/chat for the Tauri UI.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 import json
 import os
 import threading
@@ -419,6 +420,72 @@ def _read_identity_file(host: dict[str, Any], name: str) -> tuple[str, str]:
         return "", str(e)
 
 
+def _build_workbench_result_from_host(host: dict[str, Any]):
+    """
+    Build a WorkbenchProposalResult from current PerceptionState snapshot fields.
+    Uses existing Phase 16.6 command layer without mutating proposal generation code.
+    """
+    try:
+        from brain.perception_types import RepairProposal, WorkbenchProposalResult
+    except Exception:
+        return None
+
+    ws = host.get("workspace")
+    perception = None
+    try:
+        if ws is not None and getattr(ws, "state", None) is not None:
+            perception = ws.state.perception
+    except Exception:
+        perception = None
+    if perception is None:
+        return WorkbenchProposalResult()
+
+    wb_meta = dict(getattr(perception, "workbench_meta", {}) or {})
+    raw_props = wb_meta.get("proposals") if isinstance(wb_meta.get("proposals"), list) else []
+    proposals: list[RepairProposal] = []
+    for rp in raw_props[:24]:
+        if not isinstance(rp, dict):
+            continue
+        proposals.append(
+            RepairProposal(
+                proposal_id=str(rp.get("proposal_id") or ""),
+                proposal_type=str(rp.get("proposal_type") or "no_action_needed"),
+                title=str(rp.get("title") or ""),
+                risk_level=str(rp.get("risk_level") or "low"),
+                priority=str(rp.get("priority") or "low"),
+                confidence=float(rp.get("confidence") or 0.0),
+                requires_human_review=bool(rp.get("requires_human_review", True)),
+            )
+        )
+
+    top: RepairProposal
+    if proposals:
+        top = proposals[0]
+        selected = str(getattr(perception, "workbench_selected_proposal_id", "") or "")
+        if selected:
+            for p in proposals:
+                if p.proposal_id == selected:
+                    top = p
+                    break
+    else:
+        top = RepairProposal(
+            proposal_id="",
+            proposal_type=str(getattr(perception, "workbench_top_proposal_type", "") or "no_action_needed"),
+            title=str(getattr(perception, "workbench_top_proposal_title", "") or ""),
+            confidence=float(wb_meta.get("top_confidence") or 0.0),
+            requires_human_review=bool(wb_meta.get("top_requires_human_review", True)),
+            recommended_action=str(wb_meta.get("top_recommended_action") or ""),
+            problem_detected=str(wb_meta.get("top_problem") or ""),
+        )
+    return WorkbenchProposalResult(
+        has_proposal=bool(getattr(perception, "workbench_has_proposal", False)),
+        top_proposal=top,
+        proposals=proposals,
+        summary=str(getattr(perception, "workbench_summary", "") or ""),
+        meta={"source": "operator_http_perception_meta"},
+    )
+
+
 def create_app():
     from fastapi import FastAPI
     from fastapi.middleware.cors import CORSMiddleware
@@ -446,6 +513,11 @@ def create_app():
     class RoutingOverrideIn(BaseModel):
         model: str | None = None
         cognitive_mode: str | None = None
+
+    class WorkbenchActionIn(BaseModel):
+        proposal_id: str | None = None
+        reason: str | None = None
+        elevated_approval: bool = False
 
     @app.get("/api/v1/health")
     def health() -> dict[str, str]:
@@ -524,6 +596,83 @@ def create_app():
             except Exception as e:
                 return {"ok": False, "error": str(e)}
         return {"ok": False, "error": "no_history_fn", "messages": []}
+
+    @app.post("/api/v1/workbench/approve")
+    def workbench_approve(body: WorkbenchActionIn) -> dict[str, Any]:
+        """
+        Operator approve path using existing Phase 16.6 command handling.
+        Defaults to approve/apply for current selected/top proposal.
+        """
+        h = _g()
+        wb_result = _build_workbench_result_from_host(h)
+        try:
+            from brain.perception_types import WorkbenchCommandRequest
+            from brain.workbench_commands import handle_workbench_command
+
+            req = WorkbenchCommandRequest(
+                command_name="approve_proposal_apply",
+                proposal_id=str(body.proposal_id or ""),
+                approved=True,
+                elevated_approval=bool(body.elevated_approval),
+                requested_by="operator_http",
+                notes=[str(body.reason or "").strip()] if body.reason else [],
+                meta={"source": "operator_http"},
+            )
+            res = handle_workbench_command(req, proposal_result=wb_result)
+            asd = asdict(res)
+            h["_last_workbench_command_result"] = asd
+            if res.execution_result is not None:
+                h["_last_workbench_execution_result"] = asdict(res.execution_result)
+            return {
+                "ok": bool(res.success),
+                "message": str(res.summary or "workbench approve processed"),
+                "result": asd,
+            }
+        except Exception as e:
+            return {
+                "ok": False,
+                "message": f"workbench approve failed: {e}",
+                "trace": traceback.format_exc()[:1400],
+            }
+
+    @app.post("/api/v1/workbench/reject")
+    def workbench_reject(body: WorkbenchActionIn) -> dict[str, Any]:
+        """
+        Operator reject path (explicit no-execution decision for current proposal).
+        This records command intent in existing runtime command result slots.
+        """
+        h = _g()
+        wb_result = _build_workbench_result_from_host(h)
+        proposal_id = str(body.proposal_id or "")
+        available: list[str] = []
+        try:
+            if wb_result is not None:
+                available = [str(p.proposal_id or "") for p in list(wb_result.proposals or []) if str(p.proposal_id or "")]
+        except Exception:
+            available = []
+        if not proposal_id and wb_result is not None and getattr(wb_result.top_proposal, "proposal_id", ""):
+            proposal_id = str(wb_result.top_proposal.proposal_id or "")
+        if proposal_id and available and proposal_id not in available:
+            return {
+                "ok": False,
+                "message": f"proposal_id not found in current proposal set: {proposal_id}",
+                "available_proposals": available[:20],
+            }
+        reason = str(body.reason or "").strip() or "rejected_by_operator"
+        cmd_result = {
+            "command_name": "reject_proposal",
+            "proposal_id": proposal_id,
+            "success": True,
+            "summary": f"Rejected proposal `{proposal_id or '-none-'}` ({reason}).",
+            "blocked_reason": "",
+            "meta": {"source": "operator_http", "reason": reason},
+        }
+        h["_last_workbench_command_result"] = cmd_result
+        return {
+            "ok": True,
+            "message": cmd_result["summary"],
+            "result": cmd_result,
+        }
 
     return app
 

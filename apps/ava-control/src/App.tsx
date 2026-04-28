@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE, getJson, getText, postJson } from "./api";
 import { JsonBlock, Kv, Section } from "./components/Ui";
 
 /** Operator HTTP API aggregate (brain/operator_server.py — started from avaagent.py). */
 type Snapshot = Record<string, unknown>;
+type ChatMessage = { role?: string; content?: string };
 
 const TABS = [
   { id: "chat" as const, label: "Chat" },
@@ -28,8 +29,13 @@ export default function App() {
 
   const [chatInput, setChatInput] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
-  const [chatHist, setChatHist] = useState<{ role?: string; content?: string }[]>([]);
+  const [chatHist, setChatHist] = useState<ChatMessage[]>([]);
   const [lastChatErr, setLastChatErr] = useState<string>("");
+  const [wbActionMsg, setWbActionMsg] = useState<string>("");
+  const [chatThinking, setChatThinking] = useState(false);
+  const chatScrollRef = useRef<HTMLDivElement | null>(null);
+  const [cameraTick, setCameraTick] = useState(() => Date.now());
+  const [cameraFrameOk, setCameraFrameOk] = useState(false);
 
   const [overrideModel, setOverrideModel] = useState("");
   const [overrideMode, setOverrideMode] = useState("");
@@ -56,7 +62,7 @@ export default function App() {
       setPollErr(e instanceof Error ? e.message : String(e));
     }
     try {
-      const histRes = await getJson<{ ok?: boolean; messages?: { role?: string; content?: string }[] }>(
+      const histRes = await getJson<{ ok?: boolean; messages?: ChatMessage[] }>(
         "/api/v1/chat/history"
       );
       if (Array.isArray(histRes.messages)) setChatHist(histRes.messages);
@@ -95,6 +101,19 @@ export default function App() {
     };
   }, [tab]);
 
+  useEffect(() => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [chatHist, chatThinking]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setCameraTick(Date.now());
+    }, 2000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const ribbon = asRecord(snap?.ribbon);
   const hb = asRecord(snap?.heartbeat_runtime);
   const models = asRecord(snap?.models);
@@ -105,15 +124,31 @@ export default function App() {
     const t = chatInput.trim();
     if (!t) return;
     setChatBusy(true);
+    setChatThinking(true);
     setLastChatErr("");
+    setChatHist((prev) => [...prev, { role: "user", content: t }]);
+    setChatInput("");
     try {
-      await postJson("/api/v1/chat", { message: t });
-      setChatInput("");
+      const response = await postJson<Record<string, unknown>>("/api/v1/chat", { message: t });
+      const reply =
+        (typeof response.reply === "string" && response.reply.trim()) ||
+        (typeof response.assistant_reply === "string" && response.assistant_reply.trim()) ||
+        (typeof response.message === "string" && response.message.trim()) ||
+        "";
+      if (reply) {
+        setChatHist((prev) => [...prev, { role: "assistant", content: reply }]);
+      }
       await poll();
     } catch (e) {
-      setLastChatErr(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("404")) {
+        setLastChatErr("Chat endpoint not yet wired. Expected path: /api/v1/chat");
+      } else {
+        setLastChatErr(msg);
+      }
     } finally {
       setChatBusy(false);
+      setChatThinking(false);
     }
   };
 
@@ -141,8 +176,39 @@ export default function App() {
 
   const availModels = models?.available_models;
   const modelTags = Array.isArray(availModels) ? (availModels as string[]) : [];
+  const wbMeta = asRecord(wb?.workbench_meta);
+  const wbProposals = Array.isArray(wbMeta?.proposals) ? (wbMeta?.proposals as Record<string, unknown>[]) : [];
+  const selectedProposalId = wbProposals.length ? String(wbProposals[0].proposal_id ?? "") : "";
+  const vision = asRecord(snap?.vision);
+  const perception = asRecord(vision?.perception);
+  const personIdentity =
+    String(perception?.resolved_face_identity ?? "").trim() ||
+    String(perception?.stable_face_identity ?? "").trim() ||
+    String(perception?.recognized_text ?? "").trim() ||
+    "Unknown";
+  const personConfidenceRaw = Number(perception?.interpretation_confidence ?? 0);
+  const personConfidencePct = Number.isFinite(personConfidenceRaw)
+    ? Math.max(0, Math.min(100, Math.round(personConfidenceRaw * 100)))
+    : 0;
+  const sceneSummary = String(perception?.scene_compact_summary ?? "").trim() || "No scene summary yet.";
+  const moodLine =
+    String(perception?.face_status ?? "").trim() || String(ribbon?.nuance_tone ?? "").trim() || "Neutral / steady";
 
   const updatedLabel = lastUpdated ? new Date(lastUpdated).toLocaleString() : "—";
+  const frameUrl = `${API_BASE}/api/v1/vision/latest_frame?t=${cameraTick}`;
+
+  const workbenchAction = async (action: "approve" | "reject", proposalId?: string) => {
+    setWbActionMsg("");
+    try {
+      const path = action === "approve" ? "/api/v1/workbench/approve" : "/api/v1/workbench/reject";
+      const payload = { proposal_id: proposalId || selectedProposalId || null };
+      const res = await postJson<Record<string, unknown>>(path, payload);
+      setWbActionMsg(String(res.message ?? `${action} request sent`));
+      await poll();
+    } catch (e) {
+      setWbActionMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   return (
     <div className="app operator-app">
@@ -152,11 +218,10 @@ export default function App() {
           <span className={`op-pill ${online ? "on" : "off"}`}>{online ? "Live" : "Offline"}</span>
         </div>
         <div className="op-meta">
-          <span className="op-meta-item">API {API_BASE}</span>
+          <span className="op-meta-item">Brain {String(models?.selected_model ?? "—")}</span>
+          <span className="op-meta-item">Heartbeat {String(hb?.heartbeat_mode ?? "—")}</span>
+          <span className="op-meta-item op-meta-issue">Issue {String(hb?.runtime_active_issue_summary ?? "none")}</span>
           <span className="op-meta-item">Updated {updatedLabel}</span>
-          {ribbon?.routing_selected_model != null && (
-            <span className="op-meta-item">Brain {String(ribbon.routing_selected_model)}</span>
-          )}
         </div>
       </header>
 
@@ -183,40 +248,84 @@ export default function App() {
 
         <main className="op-main">
           {tab === "chat" && (
-            <div className="op-pane">
-              <h1 className="op-h1">Chat</h1>
-              <p className="op-lead">
-                Uses <code>POST /api/v1/chat</code> and <code>GET /api/v1/chat/history</code>.
-              </p>
-              <div className="chat-scroll">
-                {displayMessages.length === 0 && (
-                  <p className="op-muted">No messages yet. Send text below — history syncs from the canonical log.</p>
-                )}
-                {displayMessages.map((m, i) => (
-                  <div key={i} className={`chat-bubble chat-${m.role === "assistant" ? "assistant" : "user"}`}>
-                    <span className="chat-role">{m.role ?? "?"}</span>
-                    <div className="chat-text">{String(m.content ?? "")}</div>
+            <div className="op-pane op-pane-chat">
+              <div className="chat-two-panel">
+                <aside className="chat-camera-panel">
+                  <h2 className="op-h1">Camera</h2>
+                  <div className="camera-frame-shell">
+                    {cameraFrameOk ? null : (
+                      <div className="camera-placeholder">No camera feed</div>
+                    )}
+                    <img
+                      className="camera-frame"
+                      src={frameUrl}
+                      alt="Ava camera feed"
+                      onLoad={() => setCameraFrameOk(true)}
+                      onError={() => setCameraFrameOk(false)}
+                      style={{ display: cameraFrameOk ? "block" : "none" }}
+                    />
                   </div>
-                ))}
+                  <Section title="Awareness">
+                    <Kv
+                      items={[
+                        { label: "Seen person", value: personIdentity },
+                        { label: "Confidence", value: `${personConfidencePct}%` },
+                        { label: "Scene", value: sceneSummary },
+                        { label: "Emotion / mood", value: moodLine },
+                      ]}
+                    />
+                  </Section>
+                </aside>
+                <section className="chat-main-panel">
+                  <h1 className="op-h1">Chat</h1>
+                  <p className="op-lead">
+                    Uses <code>POST /api/v1/chat</code> and <code>GET /api/v1/chat/history</code>.
+                  </p>
+                  <div className="chat-scroll chat-scroll-full" ref={chatScrollRef}>
+                    {displayMessages.length === 0 && (
+                      <p className="op-muted">No messages yet. Send text below — history syncs from the canonical log.</p>
+                    )}
+                    {displayMessages.map((m, i) => (
+                      <div key={i} className={`chat-bubble chat-${m.role === "assistant" ? "assistant" : "user"}`}>
+                        <span className="chat-role">{m.role ?? "?"}</span>
+                        <div className="chat-text">{String(m.content ?? "")}</div>
+                      </div>
+                    ))}
+                    {chatThinking && (
+                      <div className="typing-line">
+                        <span className="typing-dot" />
+                        <span className="typing-dot" />
+                        <span className="typing-dot" />
+                        <span className="typing-text">Ava is thinking...</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="chat-compose chat-compose-stick">
+                    <textarea
+                      rows={3}
+                      value={chatInput}
+                      onChange={(e) => setChatInput(e.target.value)}
+                      placeholder="Message Ava…"
+                      disabled={chatBusy}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          void sendChat();
+                        }
+                      }}
+                    />
+                    <div className="chat-actions">
+                      <button type="button" className="btn primary" disabled={chatBusy || !online} onClick={() => void sendChat()}>
+                        {chatBusy ? "Sending…" : "Send"}
+                      </button>
+                      <button type="button" className="btn ghost" disabled title="Voice capture not wired in operator API yet">
+                        Voice — coming soon
+                      </button>
+                    </div>
+                  </div>
+                  {lastChatErr ? <p className="op-error">{lastChatErr}</p> : null}
+                </section>
               </div>
-              <div className="chat-compose">
-                <textarea
-                  rows={3}
-                  value={chatInput}
-                  onChange={(e) => setChatInput(e.target.value)}
-                  placeholder="Message Ava…"
-                  disabled={chatBusy}
-                />
-                <div className="chat-actions">
-                  <button type="button" className="btn primary" disabled={chatBusy || !online} onClick={() => void sendChat()}>
-                    {chatBusy ? "Sending…" : "Send"}
-                  </button>
-                  <button type="button" className="btn ghost" disabled title="Voice capture not wired in operator API yet">
-                    Voice — coming soon
-                  </button>
-                </div>
-              </div>
-              {lastChatErr ? <p className="op-error">{lastChatErr}</p> : null}
             </div>
           )}
 
@@ -334,8 +443,7 @@ export default function App() {
             <div className="op-pane">
               <h1 className="op-h1">Workbench</h1>
               <p className="op-lead">
-                Snapshot fields + index text when present. No <code>POST …/approve</code> routes on operator HTTP —
-                buttons log only until backend exposes them.
+                Snapshot fields + index text; approve/reject now call operator HTTP and refresh state.
               </p>
               {!online ? (
                 <p className="op-muted">Not connected.</p>
@@ -358,30 +466,26 @@ export default function App() {
                   ) : (
                     <p className="op-muted">No workbench index text on snapshot.</p>
                   )}
-                  <Section title="Actions (placeholder)">
-                    <p className="op-muted">
-                      Approve / Reject require new operator routes (e.g. tied to Gradio workbench handlers).
-                    </p>
+                  <Section title="Actions">
                     <div className="row-gap">
                       <button
                         type="button"
                         className="btn"
-                        onClick={() =>
-                          console.log("[workbench] approve (placeholder)", wb?.workbench_top_proposal_title ?? "")
-                        }
+                        onClick={() => void workbenchAction("approve", selectedProposalId)}
+                        disabled={!selectedProposalId}
                       >
-                        Approve top proposal (log only)
+                        Approve top proposal
                       </button>
                       <button
                         type="button"
                         className="btn"
-                        onClick={() =>
-                          console.log("[workbench] reject (placeholder)", wb?.workbench_top_proposal_title ?? "")
-                        }
+                        onClick={() => void workbenchAction("reject", selectedProposalId)}
+                        disabled={!selectedProposalId}
                       >
-                        Reject top proposal (log only)
+                        Reject top proposal
                       </button>
                     </div>
+                    {wbActionMsg ? <p className="op-note">{wbActionMsg}</p> : null}
                   </Section>
                   <Section title="workbench_meta">
                     <JsonBlock data={wb?.workbench_meta ?? {}} maxHeight={240} />
