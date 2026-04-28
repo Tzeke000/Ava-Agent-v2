@@ -15,7 +15,10 @@
       "Bash(py -3.11 -m py_compile scripts/watchdog.py)",
       "Bash(py -3.11 -m py_compile tools/system/restart_tool.py)",
       "Bash(git commit -m 'phase 47: watchdog restart system *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(py -3.11 -m py_compile tools/system/accessibility_tool.py)",
+      "Bash(py -3.11 -m py_compile tools/system/accessibility_tool.py tools/system/screenshot_tool.py tools/system/computer_control.py tools/system/stats_tool.py brain/visual_episodic.py brain/operator_server.py avaagent.py)",
+      "Bash(git commit -m 'phases 51-54: accessibility, screenshots, computer control, stats *)"
     ]
   }
 }
