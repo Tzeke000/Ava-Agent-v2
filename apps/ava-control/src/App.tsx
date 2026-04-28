@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as d3 from "d3";
 import { API_BASE, ApiLogEntry, getJson, getText, postJson, registerApiLogger } from "./api";
 import { JsonBlock, Kv, Section } from "./components/Ui";
 
@@ -7,8 +8,10 @@ type Snapshot = Record<string, unknown>;
 type ChatMessage = { role?: string; content?: string };
 
 const TABS = [
+  { id: "voice" as const, label: "Voice" },
   { id: "chat" as const, label: "Chat" },
-  { id: "status" as const, label: "Status" },
+  { id: "brain" as const, label: "Brain" },
+  { id: "status" as const, label: "Status / Heartbeat" },
   { id: "memory" as const, label: "Memory" },
   { id: "models" as const, label: "Models / Brains" },
   { id: "workbench" as const, label: "Workbench" },
@@ -17,12 +20,84 @@ const TABS = [
 ];
 type TabId = (typeof TABS)[number]["id"];
 
+type EmotionVisual = {
+  color: string;
+  shape:
+    | "circle"
+    | "infinity"
+    | "rings"
+    | "teardrop"
+    | "jagged"
+    | "spiral"
+    | "flicker"
+    | "awe_pop"
+    | "heart"
+    | "tall";
+  pulse: "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "confused" | "offline";
+};
+
+type BrainNode = {
+  id: string;
+  label: string;
+  type: string;
+  weight: number;
+  last_activated: number;
+  activation_count: number;
+  color: string;
+  notes: string;
+};
+
+type BrainEdge = {
+  source: string;
+  target: string;
+  relationship: string;
+  strength: number;
+  last_fired: number;
+};
+
+const EMOTION_VISUALS: Record<string, EmotionVisual> = {
+  calmness: { color: "#1a6cf5", shape: "circle", pulse: "idle" },
+  joy: { color: "#f5c518", shape: "rings", pulse: "excited" },
+  happiness: { color: "#f5c518", shape: "rings", pulse: "excited" },
+  excitement: { color: "#ff6b00", shape: "rings", pulse: "excited" },
+  curiosity: { color: "#00d4d4", shape: "spiral", pulse: "thinking" },
+  interest: { color: "#00d4d4", shape: "spiral", pulse: "thinking" },
+  boredom: { color: "#4a5568", shape: "infinity", pulse: "bored" },
+  frustration: { color: "#e53e3e", shape: "jagged", pulse: "deep" },
+  sadness: { color: "#553c9a", shape: "teardrop", pulse: "bored" },
+  anger: { color: "#c53030", shape: "jagged", pulse: "deep" },
+  fear: { color: "#44337a", shape: "flicker", pulse: "confused" },
+  anxiety: { color: "#44337a", shape: "flicker", pulse: "confused" },
+  surprise: { color: "#d53f8c", shape: "awe_pop", pulse: "excited" },
+  trust: { color: "#38a169", shape: "circle", pulse: "idle" },
+  sympathy: { color: "#38a169", shape: "circle", pulse: "idle" },
+  anticipation: { color: "#d69e2e", shape: "rings", pulse: "thinking" },
+  disgust: { color: "#2f855a", shape: "jagged", pulse: "deep" },
+  love: { color: "#ed64a6", shape: "heart", pulse: "speaking" },
+  affection: { color: "#ed64a6", shape: "heart", pulse: "speaking" },
+  adoration: { color: "#ed64a6", shape: "heart", pulse: "speaking" },
+  pride: { color: "#6b46c1", shape: "tall", pulse: "thinking" },
+  triumph: { color: "#ecc94b", shape: "tall", pulse: "excited" },
+  shame: { color: "#b7791f", shape: "teardrop", pulse: "bored" },
+  guilt: { color: "#2d3748", shape: "teardrop", pulse: "bored" },
+  envy: { color: "#68d391", shape: "flicker", pulse: "confused" },
+  contempt: { color: "#4a5568", shape: "jagged", pulse: "deep" },
+  awe: { color: "#4299e1", shape: "awe_pop", pulse: "thinking" },
+  relief: { color: "#81e6d9", shape: "circle", pulse: "idle" },
+  nostalgia: { color: "#d4a574", shape: "teardrop", pulse: "bored" },
+  hope: { color: "#f6e05e", shape: "rings", pulse: "thinking" },
+  loneliness: { color: "#2c5282", shape: "teardrop", pulse: "bored" },
+  confusion: { color: "#9f7aea", shape: "flicker", pulse: "confused" },
+  confidence: { color: "#ecc94b", shape: "tall", pulse: "speaking" },
+  contentment: { color: "#68d391", shape: "circle", pulse: "idle" },
+};
+
 function asRecord(v: unknown): Record<string, unknown> | undefined {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
 }
 
 export default function App() {
-  const [tab, setTab] = useState<TabId>("chat");
+  const [tab, setTab] = useState<TabId>("voice");
   const [online, setOnline] = useState(false);
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [pollErr, setPollErr] = useState<string>("");
@@ -37,6 +112,16 @@ export default function App() {
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const [cameraTick, setCameraTick] = useState(() => Date.now());
   const [cameraFrameOk, setCameraFrameOk] = useState(false);
+  const [brainGraph, setBrainGraph] = useState<{ nodes: BrainNode[]; edges: BrainEdge[]; stats?: Record<string, unknown> }>({
+    nodes: [],
+    edges: [],
+  });
+  const [brainActive, setBrainActive] = useState<{ active_nodes: BrainNode[]; firing_paths: BrainEdge[] }>({
+    active_nodes: [],
+    firing_paths: [],
+  });
+  const [selectedBrainNode, setSelectedBrainNode] = useState<BrainNode | null>(null);
+  const brainSvgRef = useRef<SVGSVGElement | null>(null);
 
   const [overrideModel, setOverrideModel] = useState("");
   const [overrideMode, setOverrideMode] = useState("");
@@ -59,6 +144,8 @@ export default function App() {
   const [shutdownGoodbye, setShutdownGoodbye] = useState("");
   const [shutdownDone, setShutdownDone] = useState(false);
   const [shutdownError, setShutdownError] = useState<string>("");
+  const [operatorOpen, setOperatorOpen] = useState(false);
+  const [cameraOverlayOpen, setCameraOverlayOpen] = useState(false);
   const prevOnlineRef = useRef<boolean | null>(null);
 
   const pushEvent = useCallback((message: string) => {
@@ -121,7 +208,7 @@ export default function App() {
 
   useEffect(() => {
     void poll();
-    const id = window.setInterval(() => void poll(), 5000);
+    const id = window.setInterval(() => void poll(), 3000);
     return () => window.clearInterval(id);
   }, [poll]);
 
@@ -162,12 +249,51 @@ export default function App() {
     return () => window.clearInterval(id);
   }, []);
 
+  const pollBrainGraph = useCallback(async () => {
+    try {
+      const res = await getJson<{ nodes?: BrainNode[]; edges?: BrainEdge[]; stats?: Record<string, unknown> }>(
+        "/api/v1/brain/graph"
+      );
+      setBrainGraph({
+        nodes: Array.isArray(res.nodes) ? res.nodes : [],
+        edges: Array.isArray(res.edges) ? res.edges : [],
+        stats: res.stats ?? {},
+      });
+    } catch {
+      // optional endpoint
+    }
+  }, []);
+
+  const pollBrainActive = useCallback(async () => {
+    try {
+      const res = await getJson<{ active_nodes?: BrainNode[]; firing_paths?: BrainEdge[] }>("/api/v1/brain/active");
+      setBrainActive({
+        active_nodes: Array.isArray(res.active_nodes) ? res.active_nodes : [],
+        firing_paths: Array.isArray(res.firing_paths) ? res.firing_paths : [],
+      });
+    } catch {
+      // optional endpoint
+    }
+  }, []);
+
+  useEffect(() => {
+    void pollBrainGraph();
+    void pollBrainActive();
+    const id = window.setInterval(() => {
+      void pollBrainGraph();
+      void pollBrainActive();
+    }, 3000);
+    return () => window.clearInterval(id);
+  }, [pollBrainGraph, pollBrainActive]);
+
   const ribbon = asRecord(snap?.ribbon);
   const hb = asRecord(snap?.heartbeat_runtime);
   const models = asRecord(snap?.models);
   const memory = asRecord(snap?.memory_continuity);
   const wb = asRecord(snap?.workbench);
   const tts = asRecord(snap?.tts);
+  const mood = asRecord(snap?.mood);
+  const style = asRecord(snap?.style);
 
   const sendChat = async () => {
     const t = chatInput.trim();
@@ -301,9 +427,150 @@ export default function App() {
   const sceneSummary = String(perception?.scene_compact_summary ?? "").trim() || "No scene summary yet.";
   const moodLine =
     String(perception?.face_status ?? "").trim() || String(ribbon?.nuance_tone ?? "").trim() || "Neutral / steady";
+  const primaryEmotion = String(mood?.primary_emotion ?? "calmness").toLowerCase();
+  const orbVisual = EMOTION_VISUALS[primaryEmotion] ?? EMOTION_VISUALS.calmness;
+  const styleOrbSize = Number(style?.orb_base_size ?? 180);
+  const styleGlow = Number(style?.orb_glow_intensity ?? 0.8);
+  const styleRings = Math.max(1, Number(style?.orb_ring_count ?? 2));
+  const secondaryEmotions = Array.isArray(mood?.secondary_emotions)
+    ? (mood?.secondary_emotions as Array<Record<string, unknown>>)
+    : [];
+  const primaryIntensity = Number(mood?.primary_intensity ?? 0);
+  const lastAssistantMessage = [...chatHist]
+    .reverse()
+    .find((m) => String(m.role ?? "") === "assistant")?.content ?? "";
+  const orbPulseMode = !online
+    ? "offline"
+    : Boolean(tts?.enabled)
+      ? "speaking"
+      : chatThinking
+        ? String(models?.cognitive_mode ?? "").includes("deep")
+          ? "deep"
+          : "thinking"
+        : orbVisual.pulse;
+  const deepReasoningMode = String(models?.cognitive_mode ?? "").toLowerCase().includes("deep");
 
   const updatedLabel = lastUpdated ? new Date(lastUpdated).toLocaleString() : "—";
   const frameUrl = `${API_BASE}/api/v1/vision/latest_frame?t=${cameraTick}`;
+  const activeBrainIdSet = useMemo(
+    () => new Set((brainActive.active_nodes || []).map((n) => String(n.id))),
+    [brainActive.active_nodes]
+  );
+  const selectedBrainNeighbors = useMemo(() => {
+    if (!selectedBrainNode) return [] as BrainNode[];
+    const id = String(selectedBrainNode.id);
+    const linked = new Set<string>();
+    for (const e of brainGraph.edges) {
+      if (String(e.source) === id) linked.add(String(e.target));
+      if (String(e.target) === id) linked.add(String(e.source));
+    }
+    return brainGraph.nodes.filter((n) => linked.has(String(n.id))).slice(0, 20);
+  }, [selectedBrainNode, brainGraph.edges, brainGraph.nodes]);
+
+  useEffect(() => {
+    if (!brainSvgRef.current || tab !== "brain") return;
+    const svg = d3.select(brainSvgRef.current);
+    svg.selectAll("*").remove();
+    const width = brainSvgRef.current.clientWidth || 900;
+    const height = brainSvgRef.current.clientHeight || 620;
+    svg.attr("viewBox", `0 0 ${width} ${height}`);
+    const g = svg.append("g");
+
+    const nodes = brainGraph.nodes.map((n) => ({ ...n })) as Array<BrainNode & { x?: number; y?: number; fx?: number | null; fy?: number | null }>;
+    const links = brainGraph.edges.map((e) => ({ ...e })) as Array<BrainEdge & { source: any; target: any }>;
+
+    const zoom = d3.zoom<SVGSVGElement, unknown>().scaleExtent([0.3, 2.5]).on("zoom", (event) => {
+      g.attr("transform", event.transform.toString());
+    });
+    svg.call(zoom);
+
+    const sim = d3
+      .forceSimulation(nodes as any)
+      .force("link", d3.forceLink(links as any).id((d: any) => d.id).distance(95))
+      .force("charge", d3.forceManyBody().strength(-210))
+      .force("center", d3.forceCenter(width * 0.4, height * 0.5));
+
+    const link = g
+      .append("g")
+      .selectAll("line")
+      .data(links)
+      .enter()
+      .append("line")
+      .attr("stroke-width", 1.5)
+      .attr("stroke", (d) => {
+        const source = typeof d.source === "string" ? d.source : d.source.id;
+        const srcNode = nodes.find((n) => n.id === source);
+        return srcNode?.color || "#485264";
+      })
+      .attr("stroke-opacity", (d) => Math.max(0.2, Math.min(0.9, Number(d.strength || 0.2))))
+      .attr("class", (d) => (Date.now() / 1000 - Number(d.last_fired || 0) < 30 ? "brain-link recent" : "brain-link"));
+
+    const node = g
+      .append("g")
+      .selectAll("circle")
+      .data(nodes)
+      .enter()
+      .append("circle")
+      .attr("r", (d) => 8 + Math.max(0, Math.min(22, Number(d.weight || 0) * 22)))
+      .attr("fill", (d) => d.color || "#4299e1")
+      .attr("class", (d, i) => {
+        const isActive = activeBrainIdSet.has(String(d.id));
+        const ambientPulse = !isActive && !deepReasoningMode && i % 19 === 0;
+        const deepPulse = deepReasoningMode && (isActive || i % 5 === 0);
+        return `brain-node${isActive ? " active" : ""}${isActive || ambientPulse || deepPulse ? " pulse" : ""}`;
+      })
+      .call(
+        d3
+          .drag<SVGCircleElement, any>()
+          .on("start", (event, d) => {
+            if (!event.active) sim.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+          })
+          .on("drag", (event, d) => {
+            d.fx = event.x;
+            d.fy = event.y;
+          })
+          .on("end", (event, d) => {
+            if (!event.active) sim.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+          })
+      )
+      .on("click", (_, d) => setSelectedBrainNode(d as BrainNode))
+      .on("dblclick", (_, d) => {
+        const id = String(d.id);
+        link.classed("dim", (ln: any) => {
+          const s = typeof ln.source === "string" ? ln.source : ln.source.id;
+          const t = typeof ln.target === "string" ? ln.target : ln.target.id;
+          return s !== id && t !== id;
+        });
+      });
+
+    const labels = g
+      .append("g")
+      .selectAll("text")
+      .data(nodes)
+      .enter()
+      .append("text")
+      .attr("fill", "#dbe6f5")
+      .attr("font-size", 10)
+      .text((d) => (d.label.length > 12 ? `${d.label.slice(0, 12)}…` : d.label));
+
+    sim.on("tick", () => {
+      link
+        .attr("x1", (d: any) => d.source.x)
+        .attr("y1", (d: any) => d.source.y)
+        .attr("x2", (d: any) => d.target.x)
+        .attr("y2", (d: any) => d.target.y);
+      node.attr("cx", (d: any) => d.x).attr("cy", (d: any) => d.y);
+      labels.attr("x", (d: any) => d.x).attr("y", (d: any) => d.y + 24).attr("text-anchor", "middle");
+    });
+
+    return () => {
+      sim.stop();
+    };
+  }, [brainGraph, activeBrainIdSet, deepReasoningMode, tab]);
 
   const toggleTts = async () => {
     try {
@@ -394,7 +661,16 @@ export default function App() {
   const lastReplyEmpty = lastChatResponse !== null && !lastReplyPresent;
 
   return (
-    <div className="app operator-app">
+    <div
+      className="app operator-app presence-root"
+      style={
+        {
+          "--orb-color": orbVisual.color,
+          "--orb-size": `${styleOrbSize}px`,
+          "--orb-glow": String(styleGlow),
+        } as any
+      }
+    >
       <header className="op-header">
         <div className="op-brand">
           <span className="op-title">Ava</span>
@@ -432,7 +708,60 @@ export default function App() {
         </div>
       )}
 
-      <div className={`op-body ${shutdownInProgress ? "shutdown-locked" : ""}`}>
+      <section className="presence-stage">
+        <div className="presence-emotion" style={{ color: orbVisual.color }}>
+          feeling {primaryEmotion}
+        </div>
+        <div className={`orb-shell shape-${orbVisual.shape} pulse-${shutdownInProgress ? "offline" : orbPulseMode}`}>
+          <svg className="orb-svg" viewBox="0 0 220 220" role="img" aria-label={`Ava orb ${primaryEmotion}`}>
+            <defs>
+              <filter id="orbGlow" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="8" result="coloredBlur" />
+                <feMerge>
+                  <feMergeNode in="coloredBlur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+            </defs>
+            <circle className="orb-ring outer" cx="110" cy="110" r="86" />
+            {styleRings > 1 ? <circle className="orb-ring inner" cx="110" cy="110" r="70" /> : null}
+            <circle className="orb-core" cx="110" cy="110" r="54" filter="url(#orbGlow)" />
+          </svg>
+        </div>
+        <div className="presence-last-message">{String(lastAssistantMessage || "I'm here.")}</div>
+        <div className="presence-input-row">
+          <input
+            type="text"
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            placeholder="say something..."
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void sendChat();
+              }
+            }}
+            disabled={chatBusy || shutdownInProgress}
+          />
+        </div>
+        <button className="presence-gear" type="button" onClick={() => setOperatorOpen(true)} aria-label="Open operator panel">
+          ⚙
+        </button>
+        <button className="presence-camera-thumb" type="button" onClick={() => setCameraOverlayOpen(true)} aria-label="Expand camera">
+          <img src={frameUrl} alt="camera thumb" />
+        </button>
+      </section>
+      {cameraOverlayOpen && (
+        <div className="camera-overlay" onClick={() => setCameraOverlayOpen(false)}>
+          <img src={frameUrl} alt="camera expanded" />
+        </div>
+      )}
+
+      <div className={`operator-backdrop ${operatorOpen ? "open" : ""}`} onClick={() => setOperatorOpen(false)} />
+      <div className={`op-body operator-drawer ${operatorOpen ? "open" : ""} ${shutdownInProgress ? "shutdown-locked" : ""}`}>
+        <button className="operator-close" type="button" onClick={() => setOperatorOpen(false)}>
+          ×
+        </button>
         <nav className="op-nav" aria-label="Primary">
           {TABS.map((t) => (
             <button
@@ -464,6 +793,16 @@ export default function App() {
                       onError={() => setCameraFrameOk(false)}
                       style={{ display: cameraFrameOk ? "block" : "none" }}
                     />
+                  </div>
+                  <div className="chat-orb-wrap">
+                    <div className={`orb-shell chat-orb shape-${orbVisual.shape} pulse-${shutdownInProgress ? "offline" : orbPulseMode}`}>
+                      <svg className="orb-svg" viewBox="0 0 220 220" role="img" aria-label={`Ava orb ${primaryEmotion}`}>
+                        <circle className="orb-ring outer" cx="110" cy="110" r="86" />
+                        <circle className="orb-ring inner" cx="110" cy="110" r="70" />
+                        <circle className="orb-core" cx="110" cy="110" r="54" />
+                      </svg>
+                    </div>
+                    <div className="chat-orb-label">{primaryEmotion}</div>
                   </div>
                   <Section title="Awareness">
                     <Kv
@@ -537,6 +876,45 @@ export default function App() {
             </div>
           )}
 
+          {tab === "brain" && (
+            <div className="op-pane op-pane-brain">
+              <div className="brain-layout">
+                <div className="brain-canvas-wrap">
+                  <svg ref={brainSvgRef} className="brain-canvas" />
+                </div>
+                <aside className="brain-side-panel">
+                  <h3>Brain Activity</h3>
+                  <p className="op-muted">Active nodes: {brainActive.active_nodes.length}</p>
+                  <div className="brain-active-list">
+                    {(brainActive.active_nodes || []).slice(0, 12).map((n) => (
+                      <div key={n.id} className="brain-active-item">
+                        <span style={{ color: n.color }}>{n.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <h3>Selected Node</h3>
+                  {selectedBrainNode ? (
+                    <div className="brain-node-details">
+                      <p>{selectedBrainNode.label}</p>
+                      <p>Type: {selectedBrainNode.type}</p>
+                      <p>Weight: {Number(selectedBrainNode.weight || 0).toFixed(2)}</p>
+                      <p>Activations: {selectedBrainNode.activation_count}</p>
+                      <p>Last: {selectedBrainNode.last_activated ? new Date(selectedBrainNode.last_activated * 1000).toLocaleString() : "—"}</p>
+                      <p>{selectedBrainNode.notes || "No notes"}</p>
+                      <p>Connected: {selectedBrainNeighbors.map((n) => n.label).join(", ") || "None"}</p>
+                    </div>
+                  ) : (
+                    <p className="op-muted">Click a node to inspect details.</p>
+                  )}
+                  <h3>Stats</h3>
+                  <p>Total nodes: {brainGraph.nodes.length}</p>
+                  <p>Total edges: {brainGraph.edges.length}</p>
+                  <p>Active (30s): {brainActive.active_nodes.length}</p>
+                </aside>
+              </div>
+            </div>
+          )}
+
           {tab === "status" && (
             <div className="op-pane">
               <h1 className="op-h1">Status</h1>
@@ -590,6 +968,59 @@ export default function App() {
                   </Section>
                 </>
               )}
+            </div>
+          )}
+
+          {tab === "voice" && (
+            <div className="op-pane voice-pane">
+              <h1 className="op-h1">Voice</h1>
+              <Section title="Mood display">
+                <div className="voice-mood-card" style={{ borderColor: orbVisual.color }}>
+                  <div className="voice-mood-primary" style={{ color: orbVisual.color }}>
+                    {primaryEmotion}
+                  </div>
+                  <div className="voice-mood-secondary">
+                    {secondaryEmotions.map((e, idx) => (
+                      <div key={idx} className="voice-mood-row">
+                        <span>{String(e.emotion ?? "")}</span>
+                        <div className="voice-bar">
+                          <div style={{ width: `${Math.round(Number(e.intensity ?? 0) * 100)}%` }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </Section>
+              <div className="voice-orb-center">
+                <div className={`orb-shell shape-${orbVisual.shape} pulse-${shutdownInProgress ? "offline" : orbPulseMode}`}>
+                  <svg className="orb-svg" viewBox="0 0 220 220" role="img" aria-label={`Ava orb ${primaryEmotion}`}>
+                    <circle className="orb-ring outer" cx="110" cy="110" r="86" />
+                    <circle className="orb-ring inner" cx="110" cy="110" r="70" />
+                    <circle className="orb-core" cx="110" cy="110" r="54" />
+                  </svg>
+                </div>
+              </div>
+              <Section title="What Ava sees">
+                <div className="camera-frame-shell">
+                  <img className="camera-frame" src={frameUrl} alt="Ava camera feed voice tab" />
+                </div>
+                <p className="op-muted">{sceneSummary}</p>
+                <p className="op-muted">
+                  Seen person: {personIdentity} ({personConfidencePct}%)
+                </p>
+              </Section>
+              <Section title="Voice controls">
+                <button type="button" className="btn primary voice-mic-btn">
+                  Mic
+                </button>
+                <div className="row-gap">
+                  <button type="button" className="btn ghost" onClick={() => void toggleTts()}>
+                    TTS {Boolean(tts?.enabled) ? "On" : "Off"}
+                  </button>
+                  <span className="op-muted">Voice activity: {Boolean(tts?.enabled) ? "speaking ready" : "idle"}</span>
+                  <span className="op-muted">Engine: {String(tts?.engine ?? "none")}</span>
+                </div>
+              </Section>
             </div>
           )}
 
