@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { API_BASE, getJson, getText, postJson } from "./api";
+import { API_BASE, ApiLogEntry, getJson, getText, postJson, registerApiLogger } from "./api";
 import { JsonBlock, Kv, Section } from "./components/Ui";
 
 /** Operator HTTP API aggregate (brain/operator_server.py — started from avaagent.py). */
@@ -13,6 +13,7 @@ const TABS = [
   { id: "models" as const, label: "Models / Brains" },
   { id: "workbench" as const, label: "Workbench" },
   { id: "identity" as const, label: "Identity" },
+  { id: "debug" as const, label: "Debug" },
 ];
 type TabId = (typeof TABS)[number]["id"];
 
@@ -47,29 +48,71 @@ export default function App() {
     user: "",
   });
 
-  const poll = useCallback(async () => {
+  const [apiCallLog, setApiCallLog] = useState<ApiLogEntry[]>([]);
+  const [lastChatResponse, setLastChatResponse] = useState<Record<string, unknown> | null>(null);
+  const [lastSnapshotRaw, setLastSnapshotRaw] = useState<Snapshot | null>(null);
+  const [debugExportText, setDebugExportText] = useState<string>("");
+  const [debugExportBusy, setDebugExportBusy] = useState(false);
+  const [appEventLog, setAppEventLog] = useState<{ ts: string; message: string }[]>([]);
+  const prevOnlineRef = useRef<boolean | null>(null);
+
+  const pushEvent = useCallback((message: string) => {
+    const row = { ts: new Date().toISOString(), message };
+    setAppEventLog((prev) => [row, ...prev].slice(0, 400));
+  }, []);
+
+  useEffect(() => {
+    registerApiLogger((entry) => {
+      setApiCallLog((prev) => [entry, ...prev].slice(0, 50));
+    });
+    return () => registerApiLogger(null);
+  }, []);
+
+  const refreshSnapshotOnly = useCallback(async () => {
     setPollErr("");
     try {
-      const h = await fetch(`${API_BASE}/api/v1/health`, { method: "GET" });
-      if (!h.ok) throw new Error(`${h.status}`);
+      await getJson<{ ok?: boolean }>("/api/v1/health");
       const s = await getJson<Snapshot>("/api/v1/snapshot");
       setSnap(s);
+      setLastSnapshotRaw(s);
       setOnline(true);
       setLastUpdated(typeof s.ts === "number" ? s.ts * 1000 : Date.now());
     } catch (e) {
       setOnline(false);
       setSnap(null);
+      setLastSnapshotRaw(null);
       setPollErr(e instanceof Error ? e.message : String(e));
     }
+  }, []);
+
+  const pollChatHistory = useCallback(async (): Promise<ChatMessage[] | null> => {
     try {
-      const histRes = await getJson<{ ok?: boolean; messages?: ChatMessage[] }>(
-        "/api/v1/chat/history"
-      );
-      if (Array.isArray(histRes.messages)) setChatHist(histRes.messages);
+      const histRes = await getJson<{ ok?: boolean; messages?: ChatMessage[] }>("/api/v1/chat/history");
+      if (Array.isArray(histRes.messages)) {
+        setChatHist(histRes.messages);
+        return histRes.messages;
+      }
     } catch {
       /* optional */
     }
+    return null;
   }, []);
+
+  const poll = useCallback(async () => {
+    await refreshSnapshotOnly();
+    await pollChatHistory();
+  }, [refreshSnapshotOnly, pollChatHistory]);
+
+  useEffect(() => {
+    if (prevOnlineRef.current === null) {
+      prevOnlineRef.current = online;
+      return;
+    }
+    if (prevOnlineRef.current !== online) {
+      pushEvent(`Backend ${online ? "online" : "offline"}`);
+      prevOnlineRef.current = online;
+    }
+  }, [online, pushEvent]);
 
   useEffect(() => {
     void poll();
@@ -126,22 +169,77 @@ export default function App() {
     setChatBusy(true);
     setChatThinking(true);
     setLastChatErr("");
+    pushEvent(`Chat: sending user message (${t.length} chars)`);
     setChatHist((prev) => [...prev, { role: "user", content: t }]);
     setChatInput("");
     try {
       const response = await postJson<Record<string, unknown>>("/api/v1/chat", { message: t });
-      console.log("[ava-control chat] raw POST /api/v1/chat response:", JSON.stringify(response));
+      setLastChatResponse({
+        ...response,
+        debug_reply_source:
+          typeof response.debug_reply_source === "string" ? response.debug_reply_source : "empty",
+      });
+
       const reply =
         (typeof response.reply === "string" && response.reply.trim()) ||
         (typeof response.assistant_reply === "string" && response.assistant_reply.trim()) ||
         (typeof response.message === "string" && response.message.trim()) ||
+        (typeof response.text === "string" && response.text.trim()) ||
         "";
+
       if (reply) {
         setChatHist((prev) => [...prev, { role: "assistant", content: reply }]);
+        pushEvent(`Chat: received reply (${reply.length} chars)`);
+        void refreshSnapshotOnly();
+        return;
       }
-      await poll();
+
+      // 2) Empty / missing reply — sync from canonical history (Gradio path may have updated it)
+      pushEvent("Chat: empty reply field — refreshing /api/v1/chat/history");
+      const msgs = await pollChatHistory();
+
+      let recovered = false;
+      if (msgs && msgs.length > 0) {
+        let userIdx = -1;
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          const m = msgs[i];
+          if (m.role === "user" && String(m.content ?? "").trim() === t) {
+            userIdx = i;
+            break;
+          }
+        }
+        const next = userIdx >= 0 ? msgs[userIdx + 1] : undefined;
+        if (next?.role === "assistant" && String(next.content ?? "").trim()) {
+          recovered = true;
+        }
+      }
+
+      if (!recovered) {
+        const errMsg =
+          "No reply from Ava: the \"reply\" field was empty and chat history did not show an assistant message after your text.";
+        setLastChatErr(errMsg);
+        setChatHist((prev) => [
+          ...prev,
+          {
+            role: "system",
+            content:
+              "No reply received (empty \"reply\" from server and nothing in history yet). Open the Debug tab or try again.",
+          },
+          {
+            role: "system",
+            content: `Raw /api/v1/chat response:\n${JSON.stringify(response, null, 2)}`,
+          },
+        ]);
+        pushEvent("Chat: no reply after POST and history poll");
+      } else {
+        setLastChatErr("");
+        pushEvent("Chat: recovered assistant turn from history");
+      }
+
+      void refreshSnapshotOnly();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      pushEvent(`Chat send error: ${msg}`);
       if (msg.includes("404")) {
         setLastChatErr("Chat endpoint not yet wired. Expected path: /api/v1/chat");
       } else {
@@ -161,11 +259,14 @@ export default function App() {
         cognitive_mode: overrideMode.trim() || null,
       });
       setRouteMsg(`Override applied: ${JSON.stringify(r)}`);
+      pushEvent(`Model routing override applied (${JSON.stringify(r)})`);
       setOverrideModel("");
       setOverrideMode("");
       await poll();
     } catch (e) {
-      setRouteMsg(e instanceof Error ? e.message : String(e));
+      const m = e instanceof Error ? e.message : String(e);
+      pushEvent(`Model override failed: ${m}`);
+      setRouteMsg(m);
     }
   };
 
@@ -203,13 +304,52 @@ export default function App() {
     try {
       const path = action === "approve" ? "/api/v1/workbench/approve" : "/api/v1/workbench/reject";
       const payload = { proposal_id: proposalId || selectedProposalId || null };
+      pushEvent(`Workbench: ${action} proposal ${payload.proposal_id ?? "(none)"}`);
       const res = await postJson<Record<string, unknown>>(path, payload);
       setWbActionMsg(String(res.message ?? `${action} request sent`));
       await poll();
     } catch (e) {
-      setWbActionMsg(e instanceof Error ? e.message : String(e));
+      const m = e instanceof Error ? e.message : String(e);
+      pushEvent(`Workbench ${action} error: ${m}`);
+      setWbActionMsg(m);
     }
   };
+
+  const fetchDebugExport = async () => {
+    setDebugExportBusy(true);
+    try {
+      const text = await getText("/api/v1/debug/export");
+      setDebugExportText(text);
+      pushEvent("Fetched GET /api/v1/debug/export");
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e);
+      setDebugExportText(`(error) ${m}`);
+      pushEvent(`Debug export failed: ${m}`);
+    } finally {
+      setDebugExportBusy(false);
+    }
+  };
+
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      pushEvent(`Copied ${label} to clipboard`);
+    } catch (e) {
+      pushEvent(`Clipboard error (${label}): ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const lastReplyPresent =
+    lastChatResponse &&
+    (
+      (typeof lastChatResponse.reply === "string" && lastChatResponse.reply.trim() !== "") ||
+      (typeof lastChatResponse.assistant_reply === "string" &&
+        lastChatResponse.assistant_reply.trim() !== "") ||
+      (typeof lastChatResponse.message === "string" && lastChatResponse.message.trim() !== "") ||
+      (typeof lastChatResponse.text === "string" && lastChatResponse.text.trim() !== "")
+    );
+
+  const lastReplyEmpty = lastChatResponse !== null && !lastReplyPresent;
 
   return (
     <div className="app operator-app">
@@ -286,12 +426,20 @@ export default function App() {
                     {displayMessages.length === 0 && (
                       <p className="op-muted">No messages yet. Send text below — history syncs from the canonical log.</p>
                     )}
-                    {displayMessages.map((m, i) => (
-                      <div key={i} className={`chat-bubble chat-${m.role === "assistant" ? "assistant" : "user"}`}>
-                        <span className="chat-role">{m.role ?? "?"}</span>
-                        <div className="chat-text">{String(m.content ?? "")}</div>
-                      </div>
-                    ))}
+                    {displayMessages.map((m, i) => {
+                      const rk =
+                        m.role === "assistant"
+                          ? "assistant"
+                          : m.role === "system"
+                            ? "system"
+                            : "user";
+                      return (
+                        <div key={i} className={`chat-bubble chat-${rk}`}>
+                          <span className="chat-role">{m.role ?? "?"}</span>
+                          <div className="chat-text">{String(m.content ?? "")}</div>
+                        </div>
+                      );
+                    })}
                     {chatThinking && (
                       <div className="typing-line">
                         <span className="typing-dot" />
@@ -518,6 +666,127 @@ export default function App() {
                   </Section>
                 </>
               )}
+            </div>
+          )}
+
+          {tab === "debug" && (
+            <div className="op-pane op-pane-debug">
+              <h1 className="op-h1">Debug</h1>
+              <p className="op-lead">
+                Operator HTTP instrumentation. Paste <strong>Backend Debug Export</strong> for a full Ava handoff.
+              </p>
+
+              <Section title="1 — Live API response log">
+                <div className="debug-toolbar">
+                  <button type="button" className="btn ghost" onClick={() => setApiCallLog([])}>
+                    Clear log
+                  </button>
+                  <span className="op-muted">{apiCallLog.length}/50 entries · newest first</span>
+                </div>
+                <div className="debug-log-scroll">
+                  {apiCallLog.length === 0 ? (
+                    <p className="op-muted">No API calls recorded yet.</p>
+                  ) : (
+                    apiCallLog.map((e, idx) => (
+                      <div key={`${e.timestamp}-${e.endpoint}-${idx}`} className="debug-api-entry">
+                        <div className="debug-api-meta">
+                          <span className="debug-ts">{e.timestamp}</span>
+                          <span className={`debug-status ${e.status >= 400 ? "bad" : ""}`}>{e.status}</span>
+                          <span className="debug-endpoint">{e.endpoint}</span>
+                        </div>
+                        <pre className="debug-pre">{e.responseBody}</pre>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </Section>
+
+              <Section title="2 — Last chat response (POST /api/v1/chat)">
+                {lastChatResponse === null ? (
+                  <p className="op-muted">No chat POST completed in this session yet.</p>
+                ) : (
+                  <>
+                    <p className="debug-reply-flag">
+                      reply field:{" "}
+                      <strong className={lastReplyPresent ? "debug-ok" : "debug-bad"}>
+                        {lastReplyPresent ? "present (non-empty)" : "missing or empty"}
+                      </strong>
+                    </p>
+                    <p className="debug-reply-flag">
+                      debug_reply_source:{" "}
+                      <strong>
+                        {typeof lastChatResponse.debug_reply_source === "string"
+                          ? lastChatResponse.debug_reply_source
+                          : "empty"}
+                      </strong>
+                    </p>
+                    {lastReplyEmpty ? (
+                      <p className="debug-fat-warn">
+                        Reply text was empty after checking reply → assistant_reply → message → text. Inspect JSON below.
+                      </p>
+                    ) : null}
+                    <pre className="debug-pre">{JSON.stringify(lastChatResponse, null, 2)}</pre>
+                  </>
+                )}
+              </Section>
+
+              <Section title="3 — Backend debug export">
+                <div className="debug-toolbar">
+                  <button type="button" className="btn primary" disabled={debugExportBusy} onClick={() => void fetchDebugExport()}>
+                    {debugExportBusy ? "Fetching…" : "Fetch debug export"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    disabled={!debugExportText}
+                    onClick={() => void copyToClipboard(debugExportText, "debug export")}
+                  >
+                    Copy to clipboard
+                  </button>
+                </div>
+                <p className="op-muted">
+                  GET <code>/api/v1/debug/export</code> — plain-text bundle from{" "}
+                  <code>build_debug_export(host)</code>.
+                </p>
+                <pre className="debug-pre tall">{debugExportText || "(not fetched)"}</pre>
+              </Section>
+
+              <Section title="4 — Snapshot raw (last poll)">
+                <button
+                  type="button"
+                  className="btn ghost"
+                  disabled={!lastSnapshotRaw}
+                  onClick={() =>
+                    lastSnapshotRaw && void copyToClipboard(JSON.stringify(lastSnapshotRaw, null, 2), "snapshot JSON")
+                  }
+                >
+                  Copy to clipboard
+                </button>
+                <pre className="debug-pre tall">
+                  {lastSnapshotRaw ? JSON.stringify(lastSnapshotRaw, null, 2) : "(no snapshot yet)"}
+                </pre>
+              </Section>
+
+              <Section title="5 — App event log">
+                <button
+                  type="button"
+                  className="btn ghost"
+                  disabled={appEventLog.length === 0}
+                  onClick={() =>
+                    void copyToClipboard(
+                      appEventLog.map((r) => `[${r.ts}] ${r.message}`).join("\n"),
+                      "event log"
+                    )
+                  }
+                >
+                  Copy to clipboard
+                </button>
+                <pre className="debug-pre tall">
+                  {appEventLog.length === 0
+                    ? "(no events)"
+                    : appEventLog.map((r) => `[${r.ts}] ${r.message}`).join("\n")}
+                </pre>
+              </Section>
             </div>
           )}
         </main>

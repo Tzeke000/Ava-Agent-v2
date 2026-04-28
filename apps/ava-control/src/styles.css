@@ -777,3 +777,98 @@ kbd {
   background: #07090d;
   border: 1px solid var(--border);
 }
+
+.chat-system .chat-text {
+  color: var(--warn);
+}
+.chat-system {
+  border-left: 3px solid var(--warn);
+  padding-left: 0.5rem;
+}
+
+.op-pane-debug {
+  max-width: 920px;
+}
+.debug-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 0.65rem;
+}
+.debug-log-scroll {
+  max-height: min(52vh, 560px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #07090d;
+  padding: 0.5rem 0.65rem;
+}
+.debug-api-entry {
+  margin-bottom: 1rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid #252d3a;
+}
+.debug-api-entry:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+.debug-api-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.85rem;
+  align-items: baseline;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.76rem;
+  margin-bottom: 0.35rem;
+}
+.debug-ts {
+  color: var(--muted);
+}
+.debug-endpoint {
+  color: #b8d4ff;
+}
+.debug-status {
+  font-weight: 600;
+  color: var(--ok);
+}
+.debug-status.bad {
+  color: #ff8a8a;
+}
+.debug-pre {
+  margin: 0;
+  padding: 0.45rem 0.55rem;
+  border-radius: 6px;
+  background: #06080c;
+  border: 1px solid var(--border);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 0.76rem;
+  line-height: 1.42;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.debug-pre.tall {
+  max-height: min(42vh, 440px);
+  overflow: auto;
+}
+.debug-fat-warn {
+  margin: 0.35rem 0 0.65rem;
+  padding: 0.55rem 0.65rem;
+  border-radius: 6px;
+  background: #3a1515;
+  border: 1px solid #8a3030;
+  color: #ffb4b4;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.debug-reply-flag {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+}
+.debug-ok {
+  color: var(--ok);
+}
+.debug-bad {
+  color: #ff8a8a;
+}

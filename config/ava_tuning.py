@@ -358,6 +358,8 @@ class SelfTestConfig:
 @dataclass(frozen=True)
 class WorkbenchConfig:
     recurring_warning_streak_min: int = 3
+    """Proposal types to omit from the repair queue (merge with state/workbench/suppress_proposals.json)."""
+    suppress_proposal_types: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -467,7 +469,7 @@ class ModelCapabilityProfileDef:
     fallback_priority: int = 100
 
 
-# Default: one neutral profile; extend with more ``ModelCapabilityProfileDef`` for your Ollama pulls.
+# Config profiles override neutral "discovered" entries for the same tag name.
 DEFAULT_MODEL_CAPABILITY_PROFILES: tuple[ModelCapabilityProfileDef, ...] = (
     ModelCapabilityProfileDef(
         model_name="llama3.1:8b",
@@ -478,6 +480,42 @@ DEFAULT_MODEL_CAPABILITY_PROFILES: tuple[ModelCapabilityProfileDef, ...] = (
         summarization_suitability=0.55,
         fallback_priority=10,
     ),
+    ModelCapabilityProfileDef(
+        model_name="mistral:7b",
+        cognitive_modes=("social_chat_mode", "fallback_safe_mode"),
+        latency_tendency=0.75,
+        reasoning_strength=0.55,
+        coding_suitability=0.52,
+        summarization_suitability=0.58,
+        fallback_priority=5,
+    ),
+    ModelCapabilityProfileDef(
+        model_name="gemma2:9b",
+        cognitive_modes=("coding_repair_mode", "deep_reasoning_mode", "memory_maintenance_mode"),
+        latency_tendency=0.60,
+        reasoning_strength=0.65,
+        coding_suitability=0.68,
+        summarization_suitability=0.70,
+        fallback_priority=8,
+    ),
+    ModelCapabilityProfileDef(
+        model_name="qwen2.5:14b",
+        cognitive_modes=("deep_reasoning_mode", "memory_maintenance_mode"),
+        latency_tendency=0.35,
+        reasoning_strength=0.85,
+        coding_suitability=0.80,
+        summarization_suitability=0.82,
+        fallback_priority=15,
+    ),
+    ModelCapabilityProfileDef(
+        model_name="deepseek-r1:8b",
+        cognitive_modes=("deep_reasoning_mode", "coding_repair_mode"),
+        latency_tendency=0.55,
+        reasoning_strength=0.88,
+        coding_suitability=0.75,
+        summarization_suitability=0.70,
+        fallback_priority=12,
+    ),
 )
 
 
@@ -486,10 +524,10 @@ class ModelRoutingConfig:
     """Per–cognitive-mode preferred models; fallback + global safety net."""
 
     default_model: str = "llama3.1:8b"
-    social_chat_model: str = "llama3.1:8b"
-    deep_reasoning_model: str = "llama3.1:8b"
-    coding_repair_model: str = "llama3.1:8b"
-    memory_maintenance_model: str = "llama3.1:8b"
+    social_chat_model: str = "mistral:7b"
+    deep_reasoning_model: str = "qwen2.5:14b"
+    coding_repair_model: str = "gemma2:9b"
+    memory_maintenance_model: str = "qwen2.5:14b"
     perception_support_model: str = "llama3.1:8b"
     # Uncertain classification / conservative path — same default tag unless you tune it.
     fallback_safe_model: str = "llama3.1:8b"

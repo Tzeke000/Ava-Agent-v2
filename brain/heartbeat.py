@@ -17,6 +17,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Optional
 
+from .model_routing import FALLBACK_SAFE_MODE
 from .perception_types import (
     CuriosityResult,
     HeartbeatCarryoverState,
@@ -143,6 +144,10 @@ def _workbench_runtime_digest(g: dict[str, Any]) -> str:
 def _update_route_fallback_streak(st: HeartbeatState, route: Optional[ModelRoutingResult]) -> int:
     if route is None:
         return int(st.meta.get("route_fallback_streak", 0) or 0)
+    mode = str(getattr(route, "cognitive_mode", "") or "").strip()
+    if mode and mode != FALLBACK_SAFE_MODE:
+        st.meta["route_fallback_streak"] = 0
+        return 0
     sel = (str(getattr(route, "selected_model", "") or "")).strip()
     fb = (str(getattr(route, "fallback_model", "") or "")).strip()
     cont = bool(getattr(route, "continuity_preserved", True))
