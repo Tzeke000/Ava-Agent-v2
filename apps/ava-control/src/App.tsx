@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
 import { API_BASE, ApiLogEntry, getJson, getText, postJson, registerApiLogger } from "./api";
 import { JsonBlock, Kv, Section } from "./components/Ui";
+import OrbCanvas from "./components/OrbCanvas";
 
 /** Operator HTTP API aggregate (brain/operator_server.py — started from avaagent.py). */
 type Snapshot = Record<string, unknown>;
@@ -13,6 +14,7 @@ const TABS = [
   { id: "brain" as const, label: "Brain" },
   { id: "status" as const, label: "Status / Heartbeat" },
   { id: "memory" as const, label: "Memory" },
+  { id: "tools" as const, label: "Tools" },
   { id: "models" as const, label: "Models / Brains" },
   { id: "finetune" as const, label: "Finetune" },
   { id: "workbench" as const, label: "Workbench" },
@@ -36,6 +38,25 @@ type EmotionVisual = {
     | "tall";
   pulse: "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "confused" | "offline";
 };
+
+function hexToRgbTriplet(hex: string): string {
+  const clean = hex.replace("#", "").trim();
+  const full = clean.length === 3 ? clean.split("").map((c) => `${c}${c}`).join("") : clean;
+  const n = Number.parseInt(full.slice(0, 6), 16);
+  if (!Number.isFinite(n)) return "26 108 245";
+  return `${(n >> 16) & 255} ${(n >> 8) & 255} ${n & 255}`;
+}
+
+function shadeHex(hex: string, factor: number): string {
+  const clean = hex.replace("#", "").trim();
+  const full = clean.length === 3 ? clean.split("").map((c) => `${c}${c}`).join("") : clean;
+  const n = Number.parseInt(full.slice(0, 6), 16);
+  if (!Number.isFinite(n)) return hex;
+  const r = Math.max(0, Math.min(255, Math.round(((n >> 16) & 255) * factor)));
+  const g = Math.max(0, Math.min(255, Math.round(((n >> 8) & 255) * factor)));
+  const b = Math.max(0, Math.min(255, Math.round((n & 255) * factor)));
+  return `rgb(${r}, ${g}, ${b})`;
+}
 
 type BrainNode = {
   id: string;
@@ -120,6 +141,7 @@ export default function App() {
   const chatScrollRef = useRef<HTMLDivElement | null>(null);
   const [cameraTick, setCameraTick] = useState(() => Date.now());
   const [cameraFrameOk, setCameraFrameOk] = useState(false);
+  const [presenceCameraOk, setPresenceCameraOk] = useState(false);
   const [brainGraph, setBrainGraph] = useState<{ nodes: BrainNode[]; edges: BrainEdge[]; stats?: Record<string, unknown> }>({
     nodes: [],
     edges: [],
@@ -157,14 +179,18 @@ export default function App() {
   const [shutdownGoodbye, setShutdownGoodbye] = useState("");
   const [shutdownDone, setShutdownDone] = useState(false);
   const [shutdownError, setShutdownError] = useState<string>("");
+  const [shutdownWindowCloseHint, setShutdownWindowCloseHint] = useState(false);
+  const [inputMuted, setInputMuted] = useState(false);
+  const [backendShutdownDetected, setBackendShutdownDetected] = useState(false);
   const [operatorOpen, setOperatorOpen] = useState(false);
   const [cameraOverlayOpen, setCameraOverlayOpen] = useState(false);
   const prevOnlineRef = useRef<boolean | null>(null);
+  const appStartedAtRef = useRef(Date.now());
 
   const pushEvent = useCallback((message: string) => {
     const row = { ts: new Date().toISOString(), message };
     setAppEventLog((prev) => [row, ...prev].slice(0, 400));
-  }, []);
+  }, [shutdownDone, shutdownInProgress]);
 
   useEffect(() => {
     registerApiLogger((entry) => {
@@ -181,8 +207,12 @@ export default function App() {
       setSnap(s);
       setLastSnapshotRaw(s);
       setOnline(true);
+      setBackendShutdownDetected(false);
       setLastUpdated(typeof s.ts === "number" ? s.ts * 1000 : Date.now());
     } catch (e) {
+      if (prevOnlineRef.current === true || shutdownInProgress || shutdownDone) {
+        setBackendShutdownDetected(true);
+      }
       setOnline(false);
       setSnap(null);
       setLastSnapshotRaw(null);
@@ -376,8 +406,13 @@ export default function App() {
   const tts = asRecord(snap?.tts);
   const mood = asRecord(snap?.mood);
   const style = asRecord(snap?.style);
+  const snapshotBrainGraph = asRecord(snap?.brain_graph);
+  const snapshotNodesByType = asRecord(snapshotBrainGraph?.nodes_by_type);
+  const toolsBlock = asRecord(snap?.tools);
+  const toolsRegistry = asRecord(toolsBlock?.tools_registry);
 
   const sendChat = async () => {
+    if (inputMuted) return;
     const t = chatInput.trim();
     if (!t) return;
     setChatBusy(true);
@@ -511,9 +546,11 @@ export default function App() {
     String(perception?.face_status ?? "").trim() || String(ribbon?.nuance_tone ?? "").trim() || "Neutral / steady";
   const primaryEmotion = String(mood?.primary_emotion ?? "calmness").toLowerCase();
   const orbVisual = EMOTION_VISUALS[primaryEmotion] ?? EMOTION_VISUALS.calmness;
-  const styleOrbSize = Number(style?.orb_base_size ?? 180);
+  const effectiveOrbColor = backendShutdownDetected ? "#6b7280" : orbVisual.color;
   const styleGlow = Number(style?.orb_glow_intensity ?? 0.8);
-  const styleRings = Math.max(1, Number(style?.orb_ring_count ?? 2));
+  const orbMidColor = shadeHex(effectiveOrbColor, 1.08);
+  const orbDarkColor = shadeHex(effectiveOrbColor, 0.52);
+  const orbDeepColor = shadeHex(effectiveOrbColor, 0.32);
   const secondaryEmotions = Array.isArray(mood?.secondary_emotions)
     ? (mood?.secondary_emotions as Array<Record<string, unknown>>)
     : [];
@@ -521,7 +558,7 @@ export default function App() {
   const lastAssistantMessage = [...chatHist]
     .reverse()
     .find((m) => String(m.role ?? "") === "assistant")?.content ?? "";
-  const orbPulseMode = !online
+  const orbPulseMode = backendShutdownDetected || !online
     ? "offline"
     : Boolean(tts?.enabled)
       ? "speaking"
@@ -531,6 +568,11 @@ export default function App() {
           : "thinking"
         : orbVisual.pulse;
   const deepReasoningMode = String(models?.cognitive_mode ?? "").toLowerCase().includes("deep");
+  const presenceStatusMessage = backendShutdownDetected
+    ? "Ava has shut down."
+    : String(lastAssistantMessage || "I'm here.");
+  const uptimeMs = Math.max(0, Date.now() - appStartedAtRef.current);
+  const uptimeLabel = `${Math.floor(uptimeMs / 3600000)}h ${Math.floor((uptimeMs % 3600000) / 60000)}m`;
 
   const updatedLabel = lastUpdated ? new Date(lastUpdated).toLocaleString() : "—";
   const frameUrl = `${API_BASE}/api/v1/vision/latest_frame?t=${cameraTick}`;
@@ -669,17 +711,25 @@ export default function App() {
     setShutdownInProgress(true);
     setShutdownError("");
     setShutdownGoodbye("");
+    setShutdownWindowCloseHint(false);
     try {
       const res = await postJson<Record<string, unknown>>("/api/v1/shutdown", {});
       const goodbye = String(res.goodbye ?? "Goodnight, Zeke.");
       setShutdownGoodbye(goodbye);
       pushEvent(`Shutdown endpoint returned note_saved=${String(res.note_saved ?? false)}`);
-      window.setTimeout(() => {
+      window.setTimeout(async () => {
         setShutdownDone(true);
+        setBackendShutdownDetected(true);
         try {
-          window.close();
+          const { getCurrentWindow } = await import("@tauri-apps/api/window");
+          await getCurrentWindow().close();
         } catch {
-          // Browser fallback.
+          setShutdownWindowCloseHint(true);
+          try {
+            window.close();
+          } catch {
+            // Browser fallback.
+          }
         }
       }, 3000);
     } catch (e) {
@@ -749,8 +799,11 @@ export default function App() {
       className="app operator-app presence-root"
       style={
         {
-          "--orb-color": orbVisual.color,
-          "--orb-size": `${styleOrbSize}px`,
+          "--orb-color": effectiveOrbColor,
+          "--orb-rgb": hexToRgbTriplet(effectiveOrbColor),
+          "--orb-mid": orbMidColor,
+          "--orb-dark": orbDarkColor,
+          "--orb-deep": orbDeepColor,
           "--orb-glow": String(styleGlow),
         } as any
       }
@@ -758,13 +811,15 @@ export default function App() {
       <header className="op-header">
         <div className="op-brand">
           <span className="op-title">Ava</span>
-          <span className={`op-pill ${online ? "on" : "off"}`}>{online ? "Live" : "Offline"}</span>
+          <span className={`op-status-dot ${online ? "on" : "off"}`} aria-hidden="true" />
+          <span className="op-status-text">{online ? "Live" : "Offline"}</span>
         </div>
         <div className="op-meta">
           <span className="op-meta-item">Brain {String(models?.selected_model ?? "—")}</span>
           <span className="op-meta-item">Heartbeat {String(hb?.heartbeat_mode ?? "—")}</span>
           <span className="op-meta-item op-meta-issue">Issue {String(hb?.runtime_active_issue_summary ?? "none")}</span>
           <span className="op-meta-item">Updated {updatedLabel}</span>
+          {inputMuted ? <span className="input-muted-pill">Input muted</span> : null}
           <button
             type="button"
             className="btn ghost op-header-btn"
@@ -787,52 +842,91 @@ export default function App() {
 
       {!online && (
         <div className="op-banner">
-          Backend not responding on :5876. Start <code>avaagent.py</code> (operator HTTP must be enabled).{" "}
-          {pollErr ? `(${pollErr})` : ""}
+          {backendShutdownDetected ? (
+            "Ava has shut down."
+          ) : (
+            <>
+              Backend not responding on :5876. Start <code>avaagent.py</code> (operator HTTP must be enabled).{" "}
+              {pollErr ? `(${pollErr})` : ""}
+            </>
+          )}
         </div>
       )}
 
       <section className="presence-stage">
-        <div className="presence-emotion" style={{ color: orbVisual.color }}>
-          feeling {primaryEmotion}
+        <div className="presence-hud top-left" style={{ color: effectiveOrbColor }}>
+          EMOTION: {primaryEmotion}
         </div>
-        <div className={`orb-shell shape-${orbVisual.shape} pulse-${shutdownInProgress ? "offline" : orbPulseMode}`}>
-          <svg className="orb-svg" viewBox="0 0 220 220" role="img" aria-label={`Ava orb ${primaryEmotion}`}>
-            <defs>
-              <filter id="orbGlow" x="-50%" y="-50%" width="200%" height="200%">
-                <feGaussianBlur stdDeviation="8" result="coloredBlur" />
-                <feMerge>
-                  <feMergeNode in="coloredBlur" />
-                  <feMergeNode in="SourceGraphic" />
-                </feMerge>
-              </filter>
-            </defs>
-            <circle className="orb-ring outer" cx="110" cy="110" r="86" />
-            {styleRings > 1 ? <circle className="orb-ring inner" cx="110" cy="110" r="70" /> : null}
-            <circle className="orb-core" cx="110" cy="110" r="54" filter="url(#orbGlow)" />
-          </svg>
+        <div className="presence-hud top-right">
+          HEARTBEAT: {String(hb?.heartbeat_mode ?? "idle")}
         </div>
-        <div className="presence-last-message">{String(lastAssistantMessage || "I'm here.")}</div>
+        <div className="presence-orb-wrap">
+          <div className="presence-orb-line" aria-hidden="true" />
+          <div className="orb-canvas-shell">
+            <OrbCanvas
+              emotion={primaryEmotion}
+              emotionColor={effectiveOrbColor}
+              state={shutdownInProgress ? "offline" : (orbPulseMode as any)}
+              size={300}
+            />
+          </div>
+        </div>
+        <div className="presence-hud bottom-left">
+          NEURAL ACTIVITY: {Number(snapshotBrainGraph?.total_nodes ?? brainGraph.nodes.length)}
+        </div>
+        <div className="presence-hud bottom-right">
+          UPTIME: {uptimeLabel}
+        </div>
+        <div className="presence-last-message">{presenceStatusMessage}</div>
         <div className="presence-input-row">
           <input
             type="text"
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
-            placeholder="say something..."
+            placeholder={inputMuted ? "YOUR INPUT IS MUTED" : "SPEAK TO AVA..."}
             onKeyDown={(e) => {
+              if (inputMuted) return;
               if (e.key === "Enter") {
                 e.preventDefault();
                 void sendChat();
               }
             }}
-            disabled={chatBusy || shutdownInProgress}
+            disabled={chatBusy || shutdownInProgress || inputMuted}
           />
         </div>
+        <button
+          type="button"
+          className={`mute-input-btn ${inputMuted ? "muted" : ""}`}
+          onClick={() => setInputMuted((v) => !v)}
+          aria-label={inputMuted ? "Unmute your input" : "Mute your input"}
+          title={inputMuted ? "Input muted" : "Input on"}
+        >
+          <span className="mute-input-icon" aria-hidden="true">{inputMuted ? "🎙️✕" : "🎙️"}</span>
+          <span className="mute-input-label">{inputMuted ? "Input muted — Ava can't hear you" : "Input on"}</span>
+        </button>
         <button className="presence-gear" type="button" onClick={() => setOperatorOpen(true)} aria-label="Open operator panel">
           ⚙
         </button>
         <button className="presence-camera-thumb" type="button" onClick={() => setCameraOverlayOpen(true)} aria-label="Expand camera">
-          <img src={frameUrl} alt="camera thumb" />
+          {presenceCameraOk ? (
+            <img
+              src={frameUrl}
+              alt="camera thumb"
+              onLoad={() => setPresenceCameraOk(true)}
+              onError={() => setPresenceCameraOk(false)}
+            />
+          ) : (
+            <span className="presence-camera-empty">No camera</span>
+          )}
+          <img
+            src={frameUrl}
+            alt=""
+            aria-hidden="true"
+            className="presence-camera-probe"
+            onLoad={() => setPresenceCameraOk(true)}
+            onError={() => setPresenceCameraOk(false)}
+          />
+          <span className="presence-camera-scene">{sceneSummary}</span>
         </button>
       </section>
       {cameraOverlayOpen && (
@@ -879,12 +973,13 @@ export default function App() {
                     />
                   </div>
                   <div className="chat-orb-wrap">
-                    <div className={`orb-shell chat-orb shape-${orbVisual.shape} pulse-${shutdownInProgress ? "offline" : orbPulseMode}`}>
-                      <svg className="orb-svg" viewBox="0 0 220 220" role="img" aria-label={`Ava orb ${primaryEmotion}`}>
-                        <circle className="orb-ring outer" cx="110" cy="110" r="86" />
-                        <circle className="orb-ring inner" cx="110" cy="110" r="70" />
-                        <circle className="orb-core" cx="110" cy="110" r="54" />
-                      </svg>
+                    <div className="chat-orb">
+                      <OrbCanvas
+                        emotion={primaryEmotion}
+                        emotionColor={effectiveOrbColor}
+                        state={shutdownInProgress ? "offline" : (orbPulseMode as any)}
+                        size={120}
+                      />
                     </div>
                     <div className="chat-orb-label">{primaryEmotion}</div>
                   </div>
@@ -936,9 +1031,10 @@ export default function App() {
                       rows={3}
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
-                      placeholder="Message Ava…"
-                      disabled={chatBusy}
+                      placeholder={inputMuted ? "Your input is muted" : "Message Ava…"}
+                      disabled={chatBusy || inputMuted}
                       onKeyDown={(e) => {
+                        if (inputMuted) return;
                         if (e.key === "Enter" && !e.shiftKey) {
                           e.preventDefault();
                           void sendChat();
@@ -946,7 +1042,7 @@ export default function App() {
                       }}
                     />
                     <div className="chat-actions">
-                      <button type="button" className="btn primary" disabled={chatBusy || !online} onClick={() => void sendChat()}>
+                      <button type="button" className="btn primary" disabled={chatBusy || !online || inputMuted} onClick={() => void sendChat()}>
                         {chatBusy ? "Sending…" : "Send"}
                       </button>
                       <button type="button" className="btn ghost" disabled title="Voice capture not wired in operator API yet">
@@ -994,6 +1090,19 @@ export default function App() {
                   <p>Total nodes: {brainGraph.nodes.length}</p>
                   <p>Total edges: {brainGraph.edges.length}</p>
                   <p>Active (30s): {brainActive.active_nodes.length}</p>
+                  <p>Most activated: {String(snapshotBrainGraph?.most_activated ?? "—")}</p>
+                  <p>
+                    Last bootstrap:{" "}
+                    {Number(snapshotBrainGraph?.last_bootstrap ?? 0) > 0
+                      ? new Date(Number(snapshotBrainGraph?.last_bootstrap) * 1000).toLocaleString()
+                      : "—"}
+                  </p>
+                  <p>
+                    Types: person {Number(snapshotNodesByType?.person ?? 0)}, topic {Number(snapshotNodesByType?.topic ?? 0)},
+                    emotion {Number(snapshotNodesByType?.emotion ?? 0)}, memory {Number(snapshotNodesByType?.memory ?? 0)},
+                    opinion {Number(snapshotNodesByType?.opinion ?? 0)}, curiosity {Number(snapshotNodesByType?.curiosity ?? 0)},
+                    self {Number(snapshotNodesByType?.self ?? 0)}, event {Number(snapshotNodesByType?.event ?? 0)}
+                  </p>
                 </aside>
               </div>
             </div>
@@ -1076,13 +1185,12 @@ export default function App() {
                 </div>
               </Section>
               <div className="voice-orb-center">
-                <div className={`orb-shell shape-${orbVisual.shape} pulse-${shutdownInProgress ? "offline" : orbPulseMode}`}>
-                  <svg className="orb-svg" viewBox="0 0 220 220" role="img" aria-label={`Ava orb ${primaryEmotion}`}>
-                    <circle className="orb-ring outer" cx="110" cy="110" r="86" />
-                    <circle className="orb-ring inner" cx="110" cy="110" r="70" />
-                    <circle className="orb-core" cx="110" cy="110" r="54" />
-                  </svg>
-                </div>
+                <OrbCanvas
+                  emotion={primaryEmotion}
+                  emotionColor={effectiveOrbColor}
+                  state={shutdownInProgress ? "offline" : (orbPulseMode as any)}
+                  size={220}
+                />
               </div>
               <Section title="What Ava sees">
                 <div className="camera-frame-shell">
@@ -1094,7 +1202,7 @@ export default function App() {
                 </p>
               </Section>
               <Section title="Voice controls">
-                <button type="button" className="btn primary voice-mic-btn">
+                <button type="button" className="btn primary voice-mic-btn" disabled={inputMuted}>
                   Mic
                 </button>
                 <div className="row-gap">
@@ -1104,6 +1212,30 @@ export default function App() {
                   <span className="op-muted">Voice activity: {Boolean(tts?.enabled) ? "speaking ready" : "idle"}</span>
                   <span className="op-muted">Engine: {String(tts?.engine ?? "none")}</span>
                 </div>
+              </Section>
+            </div>
+          )}
+
+          {tab === "tools" && (
+            <div className="op-pane">
+              <h1 className="op-h1">Tools</h1>
+              <p className="op-lead">Ava can use these tools autonomously (Tier 1) or with verbal check-in (Tier 2).</p>
+              <Section title="Registry">
+                <Kv
+                  items={[
+                    { label: "Tool count", value: Number(toolsRegistry?.tool_count ?? 0) },
+                    { label: "Last tool used", value: toolsBlock?.last_tool_used ?? "—" },
+                    { label: "Last tool result", value: toolsBlock?.last_tool_result ?? "—" },
+                    { label: "Execution count", value: Number(toolsBlock?.tool_execution_count ?? 0) },
+                  ]}
+                />
+              </Section>
+              <Section title="Available tools">
+                {Array.isArray(toolsRegistry?.available_tools) && toolsRegistry.available_tools.length ? (
+                  <JsonBlock data={toolsRegistry.available_tools} />
+                ) : (
+                  <p className="op-muted">No tools published in snapshot yet.</p>
+                )}
               </Section>
             </div>
           )}
@@ -1443,6 +1575,7 @@ export default function App() {
             <h2>{shutdownGoodbye ? "Goodnight from Ava" : "Ava is saving her thoughts..."}</h2>
             {shutdownGoodbye ? <p className="shutdown-goodbye-text">{shutdownGoodbye}</p> : <p>Please wait.</p>}
             {shutdownDone ? <p className="shutdown-goodbye-done">Ava has shut down.</p> : null}
+            {shutdownWindowCloseHint ? <p className="shutdown-goodbye-done">Ava has shut down. You can close this window.</p> : null}
             {shutdownError ? <p className="op-error">{shutdownError}</p> : null}
           </div>
         </div>

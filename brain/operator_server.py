@@ -376,7 +376,28 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "last_tool_result": str(host.get("_desktop_last_tool_result") or "")[:200],
         "tool_execution_count": int(host.get("_desktop_tool_execution_count", 0) or 0),
         "pending_tier2_proposals": len(list(host.get("_desktop_tier2_pending") or [])),
+        "tools_registry": {"available_tools": [], "tool_count": 0},
     }
+    try:
+        reg = host.get("_tool_registry") or host.get("_desktop_tool_registry")
+        if reg is not None and callable(getattr(reg, "list_tools", None)):
+            rows = list(reg.list_tools() or [])
+            tools_block["tools_registry"] = {"available_tools": rows, "tool_count": len(rows)}
+    except Exception:
+        pass
+    visual_memory_block = {
+        "cluster_count": 0,
+        "named_clusters": 0,
+        "most_seen": "",
+    }
+    try:
+        vm = host.get("_visual_memory_summary")
+        if isinstance(vm, dict):
+            visual_memory_block["cluster_count"] = int(vm.get("cluster_count") or 0)
+            visual_memory_block["named_clusters"] = int(vm.get("named_clusters") or 0)
+            visual_memory_block["most_seen"] = str(vm.get("most_seen") or "")
+    except Exception:
+        pass
     tts_obj = host.get("tts_engine")
     tts_block = {
         "available": bool(getattr(tts_obj, "is_available", lambda: False)()) if tts_obj is not None else False,
@@ -442,6 +463,46 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
 
+    brain_graph_block: dict[str, Any] = {
+        "total_nodes": 0,
+        "total_edges": 0,
+        "active_nodes": 0,
+        "nodes_by_type": {
+            "person": 0,
+            "topic": 0,
+            "emotion": 0,
+            "memory": 0,
+            "opinion": 0,
+            "curiosity": 0,
+            "self": 0,
+            "event": 0,
+        },
+        "most_activated": "",
+        "last_bootstrap": 0.0,
+    }
+    try:
+        cg = host.get("_concept_graph")
+        if cg is not None and callable(getattr(cg, "get_graph_data", None)):
+            payload = cg.get_graph_data() or {}
+            stats = dict(payload.get("stats") or {})
+            brain_graph_block["total_nodes"] = int(stats.get("total_nodes") or len(payload.get("nodes") or []))
+            brain_graph_block["total_edges"] = int(stats.get("total_edges") or len(payload.get("edges") or []))
+            active_ids = host.get("_active_concept_nodes")
+            if isinstance(active_ids, list):
+                brain_graph_block["active_nodes"] = len([x for x in active_ids if str(x).strip()])
+            else:
+                brain_graph_block["active_nodes"] = int(stats.get("active_nodes_30s") or 0)
+            by_type = stats.get("nodes_by_type")
+            if isinstance(by_type, dict):
+                merged = dict(brain_graph_block["nodes_by_type"])
+                for k, v in by_type.items():
+                    merged[str(k)] = int(v or 0)
+                brain_graph_block["nodes_by_type"] = merged
+            brain_graph_block["most_activated"] = str(stats.get("most_activated") or "")
+            brain_graph_block["last_bootstrap"] = float(stats.get("last_bootstrap") or payload.get("last_bootstrap") or 0.0)
+    except Exception:
+        pass
+
     debug_human = {
         "ribbon": ribbon,
         "heartbeat": heartbeat_block,
@@ -457,6 +518,8 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "style": style_block,
         "deep_self": deep_self_block,
         "inner_life": inner_life,
+        "brain_graph": brain_graph_block,
+        "visual_memory": visual_memory_block,
         "reply_path": host.get("reply_path_meta") if isinstance(host.get("reply_path_meta"), dict) else {},
     }
 
@@ -475,6 +538,8 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "style": style_block,
         "deep_self": deep_self_block,
         "inner_life": inner_life,
+        "brain_graph": brain_graph_block,
+        "visual_memory": visual_memory_block,
         "debug": debug_human,
         "ts": __import__("time").time(),
     }
@@ -725,7 +790,18 @@ def create_app():
         g = _g()
         cg = g.get("_concept_graph")
         if cg is None or not callable(getattr(cg, "get_graph_data", None)):
-            return {"nodes": [], "edges": [], "stats": {"total_nodes": 0, "total_edges": 0, "active_nodes_30s": 0}}
+            return {
+                "nodes": [],
+                "edges": [],
+                "stats": {
+                    "total_nodes": 0,
+                    "total_edges": 0,
+                    "active_nodes_30s": 0,
+                    "nodes_by_type": {"person": 0, "topic": 0, "emotion": 0, "memory": 0, "opinion": 0, "curiosity": 0, "self": 0, "event": 0},
+                    "most_activated": "",
+                    "last_bootstrap": 0.0,
+                },
+            }
         try:
             payload = cg.get_graph_data()
             if isinstance(payload, dict):
@@ -986,7 +1062,7 @@ def create_app():
                     note_saved = True
         except Exception as e:
             return {"ok": False, "error": str(e), "goodbye": goodbye, "note_saved": note_saved}
-        _schedule_graceful_shutdown(delay_seconds=1.2)
+        threading.Timer(2.0, os._exit, args=[0]).start()
         return {"ok": True, "goodbye": goodbye, "note_saved": note_saved}
 
     @app.post("/api/v1/style")

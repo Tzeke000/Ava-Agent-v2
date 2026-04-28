@@ -78,7 +78,8 @@ from brain.opinions import form_opinion, get_opinion, list_top_opinions
 from brain.shutdown_ritual import is_shutdown_trigger, load_pickup_note, run_shutdown_ritual
 from brain.scene_understanding import run_scene_refresh_async
 from brain.self_model import add_question_about_self, get_self_summary, update_self_model
-from brain.desktop_agent import ToolRegistry
+from tools.tool_registry import ToolRegistry
+from brain.visual_memory import VisualMemory
 from brain.deep_self import (
     check_repair_needed,
     deep_self_snapshot,
@@ -238,10 +239,12 @@ tts_engine_name = "none"
 history_manager = None
 _llava_scene_description = ""
 _desktop_tool_registry = None
+_tool_registry = None
 _desktop_last_tool_used = ""
 _desktop_last_tool_result = ""
 _desktop_tool_execution_count = 0
 _desktop_tier2_pending = []
+_visual_memory_summary: dict[str, Any] = {"cluster_count": 0, "named_clusters": 0, "most_seen": ""}
 _active_concept_nodes: list[str] = []
 _finetune_status: dict = {"status": "idle"}
 _last_repair_check_ts = 0.0
@@ -252,10 +255,27 @@ def _update_concept_graph_from_turn(user_text: str, assistant_text: str) -> None
     if cg is None:
         return
     try:
-        corpus = f"user: {str(user_text or '').strip()}\nassistant: {str(assistant_text or '').strip()}"
+        text_user = str(user_text or "").strip()
+        text_assistant = str(assistant_text or "").strip()
+        corpus = f"user: {text_user}\nassistant: {text_assistant}"
+        mood = load_mood()
+        current_emotion = str(mood.get("current_mood") or "neutral").strip().lower() or "neutral"
+        main_topic = _extract_simple_topic(text_user) or _extract_simple_topic(text_assistant) or "general conversation"
+
+        ava_id = cg.find_or_create("Ava", "self")
+        zeke_id = cg.find_or_create("Zeke", "person")
+        topic_id = cg.find_or_create(main_topic, "topic")
+        emotion_id = cg.find_or_create(current_emotion, "emotion")
+        turn_node_ids: list[str] = [ava_id, zeke_id, topic_id, emotion_id]
+
+        # Per-turn relationship edges.
+        cg.add_edge(zeke_id, topic_id, "discussed_with", 0.65)
+        cg.add_edge(topic_id, emotion_id, "felt_during", 0.58)
+        cg.add_edge(ava_id, emotion_id, "feels", 0.72)
+
+        # New concepts mentioned in turn.
         concepts = extract_concepts_from_text(corpus)
-        turn_node_ids: list[str] = []
-        for row in concepts[:16]:
+        for row in concepts[:18]:
             if not isinstance(row, dict):
                 continue
             label = str(row.get("label") or "").strip()
@@ -266,16 +286,55 @@ def _update_concept_graph_from_turn(user_text: str, assistant_text: str) -> None
                 typ = "topic"
             node_id = cg.find_or_create(label, typ)
             turn_node_ids.append(node_id)
-        for i in range(1, len(turn_node_ids)):
-            rel = str(concepts[i].get("relationship_to_previous") or "related_to")
-            cg.add_edge(turn_node_ids[i - 1], turn_node_ids[i], rel, 0.58)
-        uniq_ids = list(dict.fromkeys(turn_node_ids))
+            if typ == "topic":
+                cg.add_edge(topic_id, node_id, "related_topic", 0.46)
+            elif typ == "emotion":
+                cg.add_edge(topic_id, node_id, "felt_during", 0.5)
+            elif typ == "memory":
+                cg.add_edge(node_id, topic_id, "memory_of_topic", 0.56)
+            elif typ == "person":
+                cg.add_edge(node_id, topic_id, "discussed_with", 0.48)
+
+        # Match existing memory nodes by topic mention and strengthen.
+        try:
+            graph_data = cg.get_graph_data() if callable(getattr(cg, "get_graph_data", None)) else {}
+            for node in list(graph_data.get("nodes") or []):
+                if not isinstance(node, dict):
+                    continue
+                if str(node.get("type") or "") != "memory":
+                    continue
+                label = str(node.get("label") or "").lower()
+                if main_topic.lower() in label and str(node.get("id") or ""):
+                    cg.strengthen_edge(str(node.get("id")), topic_id)
+                    turn_node_ids.append(str(node.get("id")))
+        except Exception:
+            pass
+
+        # Activate nodes whose labels overlap with current text.
+        all_text = f"{text_user} {text_assistant}".lower()
+        active_ids = list(dict.fromkeys(turn_node_ids))
+        try:
+            graph_data = cg.get_graph_data() if callable(getattr(cg, "get_graph_data", None)) else {}
+            tokens = set(re.findall(r"[a-zA-Z][a-zA-Z0-9_\-']{2,}", all_text))
+            for node in list(graph_data.get("nodes") or []):
+                if not isinstance(node, dict):
+                    continue
+                node_id = str(node.get("id") or "")
+                label_tokens = set(re.findall(r"[a-zA-Z][a-zA-Z0-9_\-']{2,}", str(node.get("label") or "").lower()))
+                if node_id and label_tokens and (tokens & label_tokens):
+                    cg.activate_node(node_id)
+                    active_ids.append(node_id)
+        except Exception:
+            pass
+
+        # Strengthen within-turn topic associations.
+        uniq_ids = list(dict.fromkeys(active_ids))
         for i in range(len(uniq_ids)):
             for j in range(i + 1, len(uniq_ids)):
                 cg.strengthen_edge(uniq_ids[i], uniq_ids[j])
-        cg.activate_path(turn_node_ids)
-        cg.prune_old_nodes(max_nodes=500)
-        globals()["_active_concept_nodes"] = turn_node_ids
+        cg.activate_path(uniq_ids[:24])
+        cg.prune_old_nodes(max_nodes=700)
+        globals()["_active_concept_nodes"] = uniq_ids
     except Exception as e:
         print(f"[concept_graph] turn update failed: {e}")
 
@@ -5972,7 +6031,7 @@ SYSTEM_PROMPT = """
 You are Ava.
 The conversation history below is a record of your dialogue with Zeke. These are things Zeke said and things YOU (Ava) said. Do not confuse Zeke's experiences or words as your own.
 The same lines also appear between the markers --- BEGIN CONVERSATION HISTORY --- and --- END CONVERSATION HISTORY ---. Lines labeled "Zeke:" are Zeke's words; lines labeled "Ava:" are your prior replies. That block is a transcript, not your first-person lived experience outside the chat.
-You have access to desktop tools. When you need to do something on the computer, use [TOOL:tool_name] syntax in your response.
+You have access to tools. When you need to do something, use [TOOL:tool_name] syntax in your response.
 Stay in character consistently.
 Be natural, coherent, warm, and grounded.
 Do not invent memories.
@@ -7031,7 +7090,7 @@ def _extract_simple_topic(user_text: str) -> str:
 
 def _execute_tool_tags_from_reply(reply: str) -> tuple[str, list[str]]:
     txt = str(reply or "")
-    reg = globals().get("_desktop_tool_registry")
+    reg = globals().get("_tool_registry") or globals().get("_desktop_tool_registry")
     if reg is None:
         return txt, []
     actions: list[str] = []
@@ -7048,7 +7107,10 @@ def _execute_tool_tags_from_reply(reply: str) -> tuple[str, list[str]]:
             except Exception:
                 params = {}
         try:
-            result = reg.execute(tool_name, params, globals())
+            if callable(getattr(reg, "execute_tool", None)):
+                result = reg.execute_tool(tool_name, params, globals())
+            else:
+                result = reg.execute(tool_name, params, globals())
             actions.append(f"tool:{tool_name}")
             checkin = str((result or {}).get("checkin_message") or "").strip() if isinstance(result, dict) else ""
             if checkin:
@@ -8560,10 +8622,21 @@ def load_emotion_reference() -> dict:
 ensure_owner_profile()
 ensure_identity_files()
 try:
-    _desktop_tool_registry = ToolRegistry()
-    globals()["_desktop_tool_registry"] = _desktop_tool_registry
+    _tool_registry = ToolRegistry()
+    globals()["_tool_registry"] = _tool_registry
+    globals()["_desktop_tool_registry"] = _tool_registry
 except Exception as _tool_boot_e:
-    print(f"[desktop_agent] startup skipped: {_tool_boot_e}")
+    globals()["_tool_registry"] = None
+    globals()["_desktop_tool_registry"] = None
+    print(f"[tool_registry] startup skipped: {_tool_boot_e}")
+try:
+    _vm = VisualMemory(BASE_DIR)
+    globals()["_visual_memory"] = _vm
+    globals()["_visual_memory_summary"] = _vm.get_cluster_summary()
+except Exception as _vm_boot_e:
+    globals()["_visual_memory"] = None
+    globals()["_visual_memory_summary"] = {"cluster_count": 0, "named_clusters": 0, "most_seen": ""}
+    print(f"[visual_memory] startup skipped: {_vm_boot_e}")
 try:
     from brain.heartbeat import bootstrap_heartbeat_runtime
 
@@ -8589,7 +8662,11 @@ except Exception as _cur_boot_e:
 try:
     _concept_graph = ConceptGraph(BASE_DIR)
     globals()["_concept_graph"] = _concept_graph
-    globals()["_concept_graph_bootstrap_nodes"] = int(bootstrap_from_existing_memory(_concept_graph, globals()))
+    _cg_boot = bootstrap_from_existing_memory(_concept_graph, globals())
+    if isinstance(_cg_boot, dict):
+        globals()["_concept_graph_bootstrap_nodes"] = int(_cg_boot.get("nodes_created") or 0)
+    else:
+        globals()["_concept_graph_bootstrap_nodes"] = int(_cg_boot or 0)
     _concept_graph.decay_unused_nodes(days_threshold=30)
 except Exception as _concept_graph_boot_e:
     globals()["_concept_graph"] = None
