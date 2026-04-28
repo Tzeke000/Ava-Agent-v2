@@ -28,7 +28,7 @@ echo [ava-launch] === Ava desktop launch =======================================
 echo [ava-launch] Repo: %~dp0
 echo.
 
-echo [ava-launch] Step 1/4: Starting Python backend ^(avaagent.py, minimized^)...
+echo [ava-launch] Step 1/4: Starting Python backend ^(avaagent.py + watchdog, minimized^)...
 start "Ava Python" /MIN /D "%~dp0" python avaagent.py
 if errorlevel 1 (
   echo [ava-launch] ERROR: could not start python avaagent.py ^(is Python on PATH?^).
@@ -36,6 +36,10 @@ if errorlevel 1 (
   exit /b 1
 )
 echo [ava-launch] Step 1/4: OK — Python process started ^(separate window^).
+if exist "%~dp0scripts\watchdog.py" (
+  start "Ava Watchdog" /MIN /D "%~dp0" python scripts\watchdog.py
+  echo [ava-launch] Step 1/4: Watchdog started.
+)
 
 if not exist "%~dp0wait_operator_http.ps1" (
   echo [ava-launch] ERROR: missing "%~dp0wait_operator_http.ps1" ^(required for startup wait^).
