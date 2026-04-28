@@ -84,6 +84,7 @@ def evaluate_proactive_triggers(
     acquisition_freshness: str,
     visual_truth_trusted: bool,
     voice_user_turn_priority: bool = False,
+    runtime_silence_bias: float = 0.0,
 ) -> ProactiveTriggerResult:
     """Evaluate proactive trigger recommendation with conservative suppression gates."""
     try:
@@ -99,6 +100,7 @@ def evaluate_proactive_triggers(
             acquisition_freshness=acquisition_freshness,
             visual_truth_trusted=visual_truth_trusted,
             voice_user_turn_priority=voice_user_turn_priority,
+            runtime_silence_bias=runtime_silence_bias,
         )
     except Exception as e:
         print(f"[proactive_triggers] failed: {e}\n{traceback.format_exc()}")
@@ -130,6 +132,7 @@ def _evaluate_proactive_triggers_inner(
     acquisition_freshness: str,
     visual_truth_trusted: bool,
     voice_user_turn_priority: bool = False,
+    runtime_silence_bias: float = 0.0,
 ) -> ProactiveTriggerResult:
     if voice_user_turn_priority:
         return ProactiveTriggerResult(
@@ -278,6 +281,14 @@ def _evaluate_proactive_triggers_inner(
             )
         )
 
+    rsb = _clamp01(float(runtime_silence_bias))
+    if rsb > 0.14:
+        factor = max(0.52, 1.0 - 0.52 * rsb)
+        for c in candidates:
+            if c.trigger_type != "hold_silence_trigger":
+                c.trigger_score = _clamp01(float(c.trigger_score) * factor)
+                c.trigger_priority = _clamp01(float(c.trigger_priority) * factor)
+
     # Pick top candidate by score then priority.
     primary = sorted(candidates, key=lambda c: (float(c.trigger_score), float(c.trigger_priority)), reverse=True)[0]
     should_trigger = bool(primary.trigger_type != "no_trigger" and primary.suggested_action != "hold_silence")
@@ -313,6 +324,7 @@ def _evaluate_proactive_triggers_inner(
         suggested_action=primary.suggested_action if should_trigger else "wait",
         caution_flags=sorted(set(caution_flags + list(primary.caution_flags))),
         supporting_evidence={
+            "runtime_silence_bias": rsb,
             "event_type": event_type,
             "importance_score": float(mi.decision.importance_score),
             "importance_label": mi.decision.importance_label,

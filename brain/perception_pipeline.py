@@ -9,7 +9,7 @@ self-tests (Phase 15) → workbench proposals (Phase 16) → reflection/self-mod
 contemplation (Phase 18) → social continuity (Phase 23) → memory refinement (Phase 24) →
 model routing (Phase 25) → curiosity (Phase 26) → outcome learning (Phase 27) →
 conversational nuance (Phase 28) → multi-session strategic continuity (Phase 29) →
-supervised self-improvement loop (Phase 30) → package →
+supervised self-improvement loop (Phase 30) → heartbeat + adaptive learning (Phase 31) → package →
 :class:`perception.PerceptionState` via :mod:`brain.perception_state_adapter`.
 
 Failures in one stage do not abort the turn; each stage returns safe defaults and ``StageResult``.
@@ -53,6 +53,10 @@ from .outcome_learning import build_outcome_learning_result_safe
 from .conversational_nuance import build_conversational_nuance_safe
 from .session_continuity import build_strategic_continuity_safe
 from .self_improvement_loop import build_supervised_self_improvement_loop_safe
+from .heartbeat import run_heartbeat_tick_safe
+from .adaptive_learning import run_adaptive_learning_safe
+from .runtime_presence import build_runtime_presence_safe
+from .concern_reconciliation import run_runtime_concern_reconciliation_safe
 from .relationship_model import build_social_continuity_result
 from .contemplation import build_contemplation_result
 from .perception_state_adapter import bundle_to_perception_state
@@ -525,6 +529,7 @@ def run_perception_pipeline(
         acquisition_freshness=str(af),
         visual_truth_trusted=trusted,
         voice_user_turn_priority=bool(g.get("_voice_user_turn_priority")),
+        runtime_silence_bias=float(g.get("_runtime_proactive_silence_bias", 0.0) or 0.0),
     )
     print(
         f"[perception_pipeline] proactive={pt.trigger_type} "
@@ -724,6 +729,61 @@ def run_perception_pipeline(
         f"active={ilp.loop_active}"
     )
 
+    hb = run_heartbeat_tick_safe(
+        g=g,
+        user_text=ut,
+        selftests=st,
+        workbench=wb,
+        strategic_continuity=sc,
+        curiosity=cq,
+        outcome_learning=ol,
+        improvement_loop=ilp,
+        social_continuity=soc,
+        model_routing=route_res,
+        memory_refinement=mr,
+    )
+    al = run_adaptive_learning_safe(
+        g=g,
+        heartbeat=hb,
+        outcome_learning=ol,
+        curiosity=cq,
+        reflection=rf,
+        contemplation=ct,
+        social_continuity=soc,
+        conversational_nuance=cn,
+        model_routing=route_res,
+        memory_refinement=mr,
+    )
+    rp = build_runtime_presence_safe(
+        g=g,
+        heartbeat=hb,
+        adaptive_learning=al,
+        strategic_continuity=sc,
+        improvement_loop=ilp,
+        workbench=wb,
+        selftests=st,
+        social_continuity=soc,
+    )
+    g["_runtime_proactive_silence_bias"] = float((rp.meta or {}).get("proactive_silence_bias", 0.2) or 0.2)
+    print(
+        f"[perception_pipeline] heartbeat={hb.heartbeat_mode} "
+        f"tick={hb.heartbeat_tick_id} learn_update={bool(al.learning_update_applied)} "
+        f"presence={rp.presence_mode}"
+    )
+
+    concern_reconciliation = run_runtime_concern_reconciliation_safe(
+        g=g,
+        trusted=trusted,
+        acquisition_freshness=str(af),
+        identity_resolution=id_res,
+        quality=qual,
+        selftests=st,
+        workbench=wb,
+        improvement_loop=ilp,
+        heartbeat=hb,
+        runtime_presence=rp,
+    )
+
     print(
         f"[perception_pipeline] package trusted={trusted} vision="
         f"{getattr(resolved, 'vision_status', 'n/a') if resolved else 'n/a'}"
@@ -759,6 +819,10 @@ def run_perception_pipeline(
         conversational_nuance=cn,
         strategic_continuity=sc,
         improvement_loop=ilp,
+        heartbeat=hb,
+        adaptive_learning=al,
+        runtime_presence=rp,
+        concern_reconciliation=concern_reconciliation,
     )
     record_calibration_tick(bundle)
     return bundle

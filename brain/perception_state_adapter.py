@@ -39,6 +39,9 @@ def _finalize_perception_runtime_context(state: Any, bundle: PerceptionPipelineB
     """Attach Phase 22 voice through Phase 30 improvement loop (after strategic continuity)."""
     from .conversational_nuance import apply_conversational_nuance_to_perception_state
     from .self_improvement_loop import apply_improvement_loop_to_perception_state
+    from .heartbeat import apply_heartbeat_to_perception_state
+    from .adaptive_learning import apply_adaptive_learning_to_perception_state
+    from .runtime_presence import apply_runtime_presence_to_perception_state
     from .session_continuity import apply_strategic_continuity_to_perception_state
     from .curiosity import apply_curiosity_to_perception_state
     from .memory_refinement import apply_memory_refinement_to_perception_state
@@ -56,6 +59,12 @@ def _finalize_perception_runtime_context(state: Any, bundle: PerceptionPipelineB
     apply_conversational_nuance_to_perception_state(state, bundle)
     apply_strategic_continuity_to_perception_state(state, bundle)
     apply_improvement_loop_to_perception_state(state, bundle)
+    apply_heartbeat_to_perception_state(state, bundle)
+    apply_adaptive_learning_to_perception_state(state, bundle)
+    apply_runtime_presence_to_perception_state(state, bundle)
+    from .concern_reconciliation import apply_concern_reconciliation_to_perception_state
+
+    apply_concern_reconciliation_to_perception_state(state, bundle)
     return state
 
 

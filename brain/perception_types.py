@@ -36,6 +36,7 @@ Downstream code adapts a :class:`PerceptionPipelineBundle` to :class:`perception
 - **Phase 28 conversational nuance** — :class:`NuanceSignal`, :class:`ToneGuidanceProfile`, :class:`ConversationalNuanceResult`; ``brain.conversational_nuance`` (bounded tone/pacing/restraint guidance — no direct response rewrite).
 - **Phase 29 multi-session continuity** — :class:`ContinuityThread`, :class:`SessionCarryoverSummary`, :class:`StrategicContinuityResult`; ``brain.session_continuity`` (bounded carryover; **ava_core/** ``IDENTITY.md`` / ``SOUL.md`` / ``USER.md`` read first as authoritative anchors — read-only here; ``BOOTSTRAP.md`` omitted once core identity is established).
 - **Phase 30 supervised self-improvement loop** — :class:`ImprovementCycle`, :class:`ImprovementLoopResult`, :class:`ImprovementStepStatus`; ``brain.self_improvement_loop`` (issue → proposal → approval → execution → reflection — **descriptive only**, no auto-approve/execute).
+- **Phase 31 heartbeat & adaptive learning** — :class:`HeartbeatEvent`, :class:`HeartbeatState`, :class:`HeartbeatTickResult`, :class:`AdaptiveLearningResult`; ``brain.heartbeat``, ``brain.adaptive_learning`` (quiet background continuity + bounded preference updates — **no** safety/approval bypass).
 """
 from __future__ import annotations
 
@@ -1094,6 +1095,189 @@ class ImprovementLoopResult:
     meta: dict[str, Any] = field(default_factory=dict)
 
 
+# --- Phase 31 — heartbeat runtime & bounded adaptive learning ---
+
+
+class HeartbeatMode:
+    """Soft operational modes for :class:`HeartbeatTickResult` (Phase 31)."""
+
+    IDLE_MONITORING = "idle_monitoring"
+    ACTIVE_PRESENCE = "active_presence"
+    CONVERSATION_ACTIVE = "conversation_active"
+    MAINTENANCE_WATCH = "maintenance_watch"
+    LEARNING_REVIEW = "learning_review"
+    QUIET_RECOVERY = "quiet_recovery"
+    NO_HEARTBEAT = "no_heartbeat"
+
+
+@dataclass
+class HeartbeatEvent:
+    """One heartbeat-relevant observation (bounded, descriptive)."""
+
+    kind: str = ""
+    detail: str = ""
+    significance: float = 0.0
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class HeartbeatState:
+    """Persisted heartbeat cadence counters (Phase 31)."""
+
+    tick_id: int = 0
+    last_wallclock: float = 0.0
+    last_rich_learning_ts: float = 0.0
+    last_digest: str = ""
+    silence_streak: int = 0
+    last_emit_sig: str = ""
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class HeartbeatTickResult:
+    """One heartbeat cycle snapshot — lightweight background continuity."""
+
+    heartbeat_active: bool = False
+    heartbeat_tick_id: int = 0
+    heartbeat_mode: str = HeartbeatMode.NO_HEARTBEAT
+    last_tick_time: float = 0.0
+    tick_reason: str = ""
+    important_state_change: bool = False
+    suggested_action: str = ""
+    should_remain_silent: bool = True
+    heartbeat_summary: str = ""
+    carryover: Optional["HeartbeatCarryoverState"] = None
+    events: list[HeartbeatEvent] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class LearningPreferenceShift:
+    """One bounded preference delta for logging / inspection (Phase 31)."""
+
+    focus: str = ""
+    before: float = 0.5
+    after: float = 0.5
+    reason: str = ""
+    evidence: str = ""
+
+
+@dataclass
+class HeartbeatCarryoverState:
+    """Small restart-safe snapshot for heartbeat continuity (not a memory dump)."""
+
+    last_recorded_mode: str = ""
+    strategic_headline_digest: str = ""
+    model_route_fallback_streak: int = 0
+    last_selected_model: str = ""
+    last_fallback_model: str = ""
+    workbench_signal_digest: str = ""
+    tick_id_at_snapshot: int = 0
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AdaptiveLearningResult:
+    """Bounded adaptive preference adjustments — evidence-weighted, no safety rewrite."""
+
+    learning_update_applied: bool = False
+    learning_focus: str = ""
+    learning_summary: str = ""
+    learning_confidence: float = 0.0
+    preference_shifts: list["LearningPreferenceShift"] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class StartupResumeSummary:
+    """Phase 32 — quiet startup carryover flags (descriptive only)."""
+
+    heartbeat_carryover_loaded: bool = False
+    adaptive_preferences_loaded: bool = False
+    session_state_present: bool = False
+    quiet_monitoring_default: bool = True
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class OperatorStatusSnapshot:
+    """Phase 32 — compact operator-facing lines (no approval side effects)."""
+
+    heartbeat_line: str = ""
+    learning_line: str = ""
+    maintenance_line: str = ""
+    threads_line: str = ""
+    workbench_line: str = ""
+    rollup: str = ""
+
+
+@dataclass
+class RuntimePresenceResult:
+    """Phase 32 — unified runtime / maintenance / learning visibility (bounded)."""
+
+    presence_mode: str = "quiet_monitoring"
+    startup_loaded: bool = False
+    continuity_loaded: bool = False
+    active_issue_summary: str = ""
+    active_threads_summary: str = ""
+    maintenance_status_summary: str = ""
+    learning_status_summary: str = ""
+    heartbeat_status_summary: str = ""
+    operator_status_summary: str = ""
+    ready_state: str = "steady"
+    operator_view: Optional[OperatorStatusSnapshot] = None
+    startup_resume: Optional[StartupResumeSummary] = None
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ConcernRecord:
+    """Persistent concern entry (reconciled against current evidence; not a memory dump)."""
+
+    concern_id: str
+    concern_type: str
+    status: str
+    created_at: float
+    last_seen_at: float
+    supporting_evidence: dict[str, Any] = field(default_factory=dict)
+    current_evidence: dict[str, Any] = field(default_factory=dict)
+    resolution_reason: str = ""
+    should_surface_now: bool = False
+    cooldown_until: float = 0.0
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ConcernStatusUpdate:
+    """One status transition from a reconciliation pass."""
+
+    concern_id: str
+    concern_type: str
+    prior_status: str
+    new_status: str
+    resolution_reason: str = ""
+    should_surface_now: bool = False
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ConcernReconciliationResult:
+    """Output of startup/runtime concern reconciliation."""
+
+    updates: list[ConcernStatusUpdate] = field(default_factory=list)
+    active_count: int = 0
+    top_active_concern: str = ""
+    summary: str = ""
+    surfaced_any: bool = False
+    notes: list[str] = field(default_factory=list)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
 @dataclass
 class ContinuityOutput:
     """Stage 5 — identity continuity / tracking + Phase 7 structured result."""
@@ -1176,3 +1360,8 @@ class PerceptionPipelineBundle:
     strategic_continuity: Optional[StrategicContinuityResult] = None
     # Phase 30 — supervised self-improvement loop (descriptive only)
     improvement_loop: Optional[ImprovementLoopResult] = None
+    # Phase 31 — heartbeat & bounded adaptive learning (quiet background continuity)
+    heartbeat: Optional[HeartbeatTickResult] = None
+    adaptive_learning: Optional[AdaptiveLearningResult] = None
+    runtime_presence: Optional[RuntimePresenceResult] = None
+    concern_reconciliation: Optional[ConcernReconciliationResult] = None
