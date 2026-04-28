@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import * as THREE from "three";
 
 export interface OrbProps {
@@ -8,12 +8,15 @@ export interface OrbProps {
   size?: number;
 }
 
-type ParticleData = {
-  base: THREE.Vector3;
-  phase: number;
+type ParticleBand = "inner" | "mid" | "outer";
+type ParticleData = { base: THREE.Vector3; phase: number; drift: THREE.Vector3; band: ParticleBand };
+type StreamData = {
+  line: THREE.Line;
+  points: THREE.Vector3[];
+  baseOpacity: number;
   speed: number;
-  drift: THREE.Vector3;
-  radial: number;
+  phase: number;
+  radialBias: number;
 };
 
 function hexToColor(hex: string): THREE.Color {
@@ -24,18 +27,44 @@ function hexToColor(hex: string): THREE.Color {
   }
 }
 
+function randomPointInSphere(radius = 1): THREE.Vector3 {
+  const u = Math.random();
+  const v = Math.random();
+  const w = Math.random();
+  const theta = 2 * Math.PI * u;
+  const phi = Math.acos(2 * v - 1);
+  const r = radius * Math.cbrt(w);
+  return new THREE.Vector3(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi));
+}
+
+function makeGlowTexture(): THREE.Texture {
+  const c = document.createElement("canvas");
+  c.width = 128;
+  c.height = 128;
+  const ctx = c.getContext("2d");
+  if (!ctx) return new THREE.Texture();
+  const g = ctx.createRadialGradient(64, 64, 6, 64, 64, 64);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(0.25, "rgba(255,255,255,0.75)");
+  g.addColorStop(0.55, "rgba(170,200,255,0.3)");
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(c);
+  tex.needsUpdate = true;
+  return tex;
+}
+
 export default function OrbCanvas({ emotionColor, state, size = 300 }: OrbProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const stateRef = useRef(state);
   const colorRef = useRef<THREE.Color>(hexToColor(emotionColor));
   const targetColorRef = useRef<THREE.Color>(hexToColor(emotionColor));
-  const frameRef = useRef<number>(0);
-  const pointLightRef = useRef<THREE.PointLight | null>(null);
+  const rafRef = useRef<number>(0);
 
-  const particleCount = useMemo(() => {
-    if (size <= 130) return 1100;
-    if (size <= 220) return 1700;
-    return 2200;
-  }, [size]);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   useEffect(() => {
     targetColorRef.current = hexToColor(emotionColor);
@@ -46,103 +75,160 @@ export default function OrbCanvas({ emotionColor, state, size = 300 }: OrbProps)
     if (!host) return;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 1000);
-    camera.position.z = 5.2;
+    const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 100);
+    camera.position.z = 2.8;
+    camera.lookAt(0, 0, 0);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setClearColor(0x000000, 0);
+    renderer.domElement.style.background = "transparent";
+    renderer.domElement.style.width = "100%";
+    renderer.domElement.style.height = "100%";
+    renderer.domElement.style.display = "block";
     host.appendChild(renderer.domElement);
 
-    const ambient = new THREE.AmbientLight(0x223344, 0.28);
+    const ambient = new THREE.AmbientLight(0x222233, 0.22);
     scene.add(ambient);
-    const point = new THREE.PointLight(0x6699ff, 1.35, 28, 2);
-    point.position.set(0, 0, 0);
-    pointLightRef.current = point;
+    const point = new THREE.PointLight(0xffffff, 2.0, 5);
     scene.add(point);
 
-    const geom = new THREE.BufferGeometry();
-    const positions = new Float32Array(particleCount * 3);
-    const colors = new Float32Array(particleCount * 3);
-    const sizes = new Float32Array(particleCount);
-    const pdata: ParticleData[] = [];
+    const orbRoot = new THREE.Group();
+    const innerGroup = new THREE.Group();
+    const streamGroup = new THREE.Group();
+    orbRoot.add(innerGroup);
+    orbRoot.add(streamGroup);
+    scene.add(orbRoot);
 
-    const baseColor = colorRef.current.clone();
+    const coreMaterial = new THREE.MeshBasicMaterial({
+      color: colorRef.current.clone().lerp(new THREE.Color("#ffffff"), 0.4),
+      transparent: true,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const coreMesh = new THREE.Mesh(new THREE.SphereGeometry(0.15, 32, 32), coreMaterial);
+    innerGroup.add(coreMesh);
+
+    const streamCount = 16;
+    const streams: StreamData[] = [];
+    for (let i = 0; i < streamCount; i++) {
+      const controlPoints = Array.from({ length: 6 }, () => randomPointInSphere(0.95));
+      const curve = new THREE.CatmullRomCurve3(controlPoints, false, "catmullrom", 0.45);
+      const points = curve.getPoints(60);
+      const geom = new THREE.BufferGeometry().setFromPoints(points);
+      const mat = new THREE.LineBasicMaterial({
+        color: colorRef.current,
+        transparent: true,
+        opacity: 0.62 + Math.random() * 0.2,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const line = new THREE.Line(geom, mat);
+      streamGroup.add(line);
+      streams.push({
+        line,
+        points,
+        baseOpacity: mat.opacity,
+        speed: 0.3 + Math.random() * 0.8,
+        phase: Math.random() * Math.PI * 2,
+        radialBias: 0.7 + Math.random() * 0.35,
+      });
+    }
+
+    const particleCount = 1500;
+    const pGeom = new THREE.BufferGeometry();
+    const pPos = new Float32Array(particleCount * 3);
+    const pCol = new Float32Array(particleCount * 3);
+    const pSize = new Float32Array(particleCount);
+    const pdata: ParticleData[] = [];
     for (let i = 0; i < particleCount; i++) {
-      const u = Math.random();
-      const v = Math.random();
-      const theta = 2 * Math.PI * u;
-      const phi = Math.acos(2 * v - 1);
-      const radius = 1.35 + (Math.random() - 0.5) * 0.24;
-      const base = new THREE.Vector3(
-        radius * Math.sin(phi) * Math.cos(theta),
-        radius * Math.sin(phi) * Math.sin(theta),
-        radius * Math.cos(phi)
-      );
+      const roll = Math.random();
+      const band: ParticleBand = roll < 0.5 ? "inner" : roll < 0.82 ? "mid" : "outer";
+      let radius = 0;
+      if (band === "inner") radius = 0.1 + Math.random() * 0.3;
+      else if (band === "mid") radius = 0.4 + Math.random() * 0.3;
+      else radius = 0.7 + Math.random() * 0.3;
+      const base = randomPointInSphere(1).normalize().multiplyScalar(radius);
       pdata.push({
         base,
         phase: Math.random() * Math.PI * 2,
-        speed: 0.4 + Math.random() * 1.2,
-        drift: new THREE.Vector3((Math.random() - 0.5) * 0.03, (Math.random() - 0.5) * 0.03, (Math.random() - 0.5) * 0.03),
-        radial: radius,
+        drift: new THREE.Vector3((Math.random() - 0.5) * 0.025, (Math.random() - 0.5) * 0.025, (Math.random() - 0.5) * 0.025),
+        band,
       });
-      positions[i * 3 + 0] = base.x;
-      positions[i * 3 + 1] = base.y;
-      positions[i * 3 + 2] = base.z;
-      const bright = THREE.MathUtils.clamp(1.4 - radius * 0.35, 0.55, 1.25);
-      const c = baseColor.clone().multiplyScalar(bright);
-      colors[i * 3 + 0] = c.r;
-      colors[i * 3 + 1] = c.g;
-      colors[i * 3 + 2] = c.b;
-      sizes[i] = 1.5 + Math.random() * 1.35;
+      pPos[i * 3] = base.x;
+      pPos[i * 3 + 1] = base.y;
+      pPos[i * 3 + 2] = base.z;
+      if (band === "inner") pSize[i] = 3;
+      else if (band === "mid") pSize[i] = 2;
+      else pSize[i] = 1;
     }
-
-    geom.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geom.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    geom.setAttribute("size", new THREE.BufferAttribute(sizes, 1));
-
-    const mat = new THREE.ShaderMaterial({
+    pGeom.setAttribute("position", new THREE.BufferAttribute(pPos, 3));
+    pGeom.setAttribute("color", new THREE.BufferAttribute(pCol, 3));
+    pGeom.setAttribute("size", new THREE.BufferAttribute(pSize, 1));
+    const pMat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
       vertexColors: true,
       blending: THREE.AdditiveBlending,
-      uniforms: {
-        uScale: { value: 1.0 },
-      },
+      uniforms: { uScale: { value: 1 } },
       vertexShader: `
         attribute float size;
         varying vec3 vColor;
         uniform float uScale;
         void main() {
           vColor = color;
-          vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          gl_PointSize = size * uScale * (300.0 / -mv.z);
-          gl_Position = projectionMatrix * mv;
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          gl_PointSize = size * uScale * (300.0 / -mvPosition.z);
+          gl_Position = projectionMatrix * mvPosition;
         }
       `,
       fragmentShader: `
         varying vec3 vColor;
         void main() {
-          vec2 p = gl_PointCoord - vec2(0.5);
-          float d = length(p);
-          float alpha = smoothstep(0.5, 0.08, d);
-          gl_FragColor = vec4(vColor, alpha);
+          float d = length(gl_PointCoord - vec2(0.5));
+          float a = smoothstep(0.5, 0.08, d);
+          gl_FragColor = vec4(vColor, a);
         }
       `,
     });
-    const points = new THREE.Points(geom, mat);
-    scene.add(points);
+    const points = new THREE.Points(pGeom, pMat);
+    innerGroup.add(points);
+
+    const shellMaterial = new THREE.MeshBasicMaterial({
+      color: colorRef.current,
+      transparent: true,
+      opacity: 0.1,
+      wireframe: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const shell = new THREE.Mesh(new THREE.SphereGeometry(1, 22, 22), shellMaterial);
+    orbRoot.add(shell);
+
+    const haloTexture = makeGlowTexture();
+    const haloMaterial = new THREE.SpriteMaterial({
+      map: haloTexture,
+      color: colorRef.current,
+      transparent: true,
+      opacity: 0.2,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const halo = new THREE.Sprite(haloMaterial);
+    halo.scale.set(3.5, 3.5, 1);
+    scene.add(halo);
 
     const tmp = new THREE.Vector3();
-    const shootBase = Math.floor(Math.random() * particleCount);
+    const flashTimer = { value: 0 };
 
     const resize = () => {
       const w = host.clientWidth || size;
       const h = host.clientHeight || size;
       renderer.setSize(w, h, false);
-      camera.aspect = w / Math.max(h, 1);
+      camera.aspect = w / Math.max(1, h);
       camera.updateProjectionMatrix();
-      mat.uniforms.uScale.value = Math.max(0.65, Math.min(1.45, w / 240));
+      pMat.uniforms.uScale.value = Math.max(0.62, Math.min(1.35, w / 240));
     };
     resize();
     const ro = new ResizeObserver(() => resize());
@@ -150,115 +236,114 @@ export default function OrbCanvas({ emotionColor, state, size = 300 }: OrbProps)
 
     const animate = () => {
       const t = performance.now() * 0.001;
-      frameRef.current = requestAnimationFrame(animate);
+      rafRef.current = requestAnimationFrame(animate);
+      colorRef.current.lerp(targetColorRef.current, 0.05);
 
-      // smooth emotion color transition
-      colorRef.current.lerp(targetColorRef.current, 0.04);
-      point.color.copy(colorRef.current);
+      const s = stateRef.current;
+      const isOffline = s === "offline";
+      const activeColor = isOffline ? new THREE.Color("#6b7280") : colorRef.current.clone();
+      point.color.copy(activeColor);
 
-      let speedMul = 1.0;
-      let turbulence = 0.02;
-      let pulse = 1.0;
-      switch (state) {
-        case "bored":
-          speedMul = 0.42;
-          turbulence = 0.006;
-          pulse = 0.93;
-          break;
-        case "thinking":
-          speedMul = 1.4;
-          turbulence = 0.03;
-          pulse = 1.04;
-          break;
-        case "deep":
-          speedMul = 2.0;
-          turbulence = 0.05;
-          pulse = 1.08;
-          break;
-        case "speaking":
-          speedMul = 1.2;
-          turbulence = 0.02;
-          pulse = 1.02;
-          break;
-        case "excited":
-          speedMul = 2.15;
-          turbulence = 0.08;
-          pulse = 1.12;
-          break;
-        case "offline":
-          speedMul = 0.26;
-          turbulence = 0.007;
-          pulse = 0.88;
-          break;
-        default:
-          break;
+      let rot = 0.001;
+      let pulseHz = 1 / 3;
+      let streamDrift = 0.3;
+      let flashChance = 0.006;
+      let burst = 0;
+      if (s === "thinking") { rot = 0.003; pulseHz = 1; streamDrift = 0.6; flashChance = 0.02; }
+      else if (s === "deep") { rot = 0.006; pulseHz = 1.6; streamDrift = 1.0; flashChance = 0.05; }
+      else if (s === "speaking") { rot = 0.0026; pulseHz = 1.9; streamDrift = 0.7; flashChance = 0.03; }
+      else if (s === "bored") { rot = 0.0003; pulseHz = 0.18; streamDrift = 0.12; flashChance = 0.0015; }
+      else if (s === "excited") { rot = 0.008; pulseHz = 2.3; streamDrift = 1.4; flashChance = 0.07; burst = 0.12; }
+      else if (isOffline) { rot = 0.00004; pulseHz = 0.08; streamDrift = 0.06; flashChance = 0; }
+
+      const coreScale = THREE.MathUtils.lerp(0.9, 1.1, 0.5 + 0.5 * Math.sin(t * Math.PI * 2 * pulseHz));
+      coreMesh.scale.setScalar(coreScale + (burst ? Math.abs(Math.sin(t * 6)) * burst : 0));
+      coreMaterial.color.copy(activeColor).lerp(new THREE.Color("#ffffff"), isOffline ? 0.05 : 0.52);
+      coreMaterial.opacity = isOffline ? 0.18 : 0.94;
+      haloMaterial.color.copy(activeColor);
+      haloMaterial.opacity = isOffline ? 0.07 : 0.15 + 0.1 * (0.5 + 0.5 * Math.sin(t * 1.3));
+      shellMaterial.color.copy(activeColor);
+      shellMaterial.opacity = isOffline ? 0.03 : 0.08 + 0.04 * (0.5 + 0.5 * Math.sin(t * 0.8));
+
+      innerGroup.rotation.y += rot;
+      innerGroup.rotation.x += rot * 0.45;
+      streamGroup.rotation.y += rot * 1.25;
+      streamGroup.rotation.x += rot * 0.62;
+      shell.rotation.y -= rot * 0.8;
+      shell.rotation.x -= rot * 0.35;
+
+      if (Math.random() < flashChance) flashTimer.value = 1;
+      flashTimer.value = Math.max(0, flashTimer.value - 0.04);
+
+      for (let i = 0; i < streams.length; i++) {
+        const stream = streams[i];
+        const mat = stream.line.material as THREE.LineBasicMaterial;
+        mat.color.copy(activeColor);
+        const wave = Math.sin(t * streamDrift * stream.speed + stream.phase);
+        const strongFlash = s === "deep" ? 0.45 : 0.22;
+        const flash = flashTimer.value * (s === "deep" ? (i % 3 === 0 ? 1 : 0.6) : (i % 5 === 0 ? 1 : 0.4));
+        mat.opacity = (isOffline ? 0.03 : stream.baseOpacity) + flash * strongFlash;
+        const geom = stream.line.geometry as THREE.BufferGeometry;
+        const attr = geom.getAttribute("position") as THREE.BufferAttribute;
+        for (let p = 0; p < stream.points.length; p++) {
+          const base = stream.points[p];
+          const ripple = s === "speaking" ? Math.sin(t * 7 - p * 0.22) * 0.02 : 0;
+          const excite = s === "excited" ? Math.max(0, Math.sin(t * 10 + stream.phase)) * 0.08 : 0;
+          const amp = (0.03 + excite) * stream.radialBias + ripple;
+          attr.setXYZ(p, base.x + Math.sin(t * streamDrift + p * 0.2 + stream.phase) * amp, base.y + wave * amp, base.z + Math.cos(t * streamDrift + p * 0.23) * amp);
+        }
+        attr.needsUpdate = true;
       }
 
-      const activeColor = state === "offline" ? new THREE.Color("#6b7280") : colorRef.current;
-      const posAttr = geom.getAttribute("position") as THREE.BufferAttribute;
-      const colAttr = geom.getAttribute("color") as THREE.BufferAttribute;
-
+      const posAttr = pGeom.getAttribute("position") as THREE.BufferAttribute;
+      const colAttr = pGeom.getAttribute("color") as THREE.BufferAttribute;
       for (let i = 0; i < particleCount; i++) {
         const p = pdata[i];
         const idx = i * 3;
-        const wave = Math.sin(t * (1.1 * speedMul) + p.phase);
-        const spin = Math.cos(t * (0.9 * speedMul) + p.phase * 0.7);
-
         tmp.copy(p.base);
-        tmp.multiplyScalar(pulse + wave * turbulence);
-        tmp.x += p.drift.x * wave * 2.0;
-        tmp.y += p.drift.y * spin * 2.0;
-        tmp.z += p.drift.z * Math.sin(t * 0.8 + p.phase);
-
-        if (state === "speaking") {
-          const audioWave = Math.sin(t * 8 + p.radial * 22);
-          tmp.multiplyScalar(1 + audioWave * 0.02);
-        } else if (state === "deep") {
-          const spike = Math.sin(t * 18 + p.phase * 2.2);
-          tmp.multiplyScalar(1 + Math.max(0, spike) * 0.06);
-        } else if (state === "excited") {
-          const burst = Math.sin(t * 14 + p.phase);
-          tmp.multiplyScalar(1 + Math.abs(burst) * 0.1);
-        } else if (state === "offline") {
-          tmp.multiplyScalar(1.0 + Math.min(0.55, t * 0.02));
+        const driftWave = Math.sin(t * (0.6 + p.phase) + p.phase) * 0.02;
+        tmp.addScaledVector(p.drift, driftWave * (s === "bored" ? 0.3 : s === "deep" ? 1.2 : 0.8));
+        if (s === "speaking") {
+          const radial = tmp.length();
+          tmp.multiplyScalar(1 + Math.sin(t * 9 - radial * 9) * 0.02);
+        } else if (s === "excited") {
+          tmp.multiplyScalar(1 + Math.abs(Math.sin(t * 10 + p.phase)) * 0.07);
+        } else if (isOffline && p.band === "outer") {
+          tmp.multiplyScalar(1 + 0.0007 * i / particleCount);
         }
-
-        // occasional "shoot out and return"
-        if (i === (shootBase + Math.floor(t * 7.0)) % particleCount && state !== "offline") {
-          tmp.multiplyScalar(1.5 + Math.sin(t * 8) * 0.22);
-        }
-
-        positions[idx + 0] = tmp.x;
-        positions[idx + 1] = tmp.y;
-        positions[idx + 2] = tmp.z;
-
-        const bright = THREE.MathUtils.clamp(1.35 - p.radial * 0.35, 0.5, 1.25);
-        const c = activeColor.clone().multiplyScalar(bright * (state === "deep" ? 1.18 : 1.0));
-        colors[idx + 0] = c.r;
-        colors[idx + 1] = c.g;
-        colors[idx + 2] = c.b;
+        posAttr.setXYZ(i, tmp.x, tmp.y, tmp.z);
+        const c = activeColor.clone();
+        if (p.band === "inner") c.lerp(new THREE.Color("#ffffff"), 0.42).multiplyScalar(isOffline ? 0.3 : 1.28);
+        else if (p.band === "mid") c.multiplyScalar(isOffline ? 0.25 : 0.94);
+        else c.multiplyScalar(isOffline ? 0.18 : 0.5);
+        colAttr.setXYZ(i, c.r, c.g, c.b);
       }
-
       posAttr.needsUpdate = true;
       colAttr.needsUpdate = true;
-      points.rotation.y += 0.0025 * speedMul;
-      points.rotation.x += 0.0015 * speedMul;
+
       renderer.render(scene, camera);
     };
     animate();
 
     return () => {
-      cancelAnimationFrame(frameRef.current);
+      cancelAnimationFrame(rafRef.current);
       ro.disconnect();
-      scene.remove(points);
-      geom.dispose();
-      mat.dispose();
+      streams.forEach((s) => {
+        s.line.geometry.dispose();
+        (s.line.material as THREE.Material).dispose();
+      });
+      pGeom.dispose();
+      pMat.dispose();
+      shell.geometry.dispose();
+      shellMaterial.dispose();
+      coreMesh.geometry.dispose();
+      coreMaterial.dispose();
+      haloTexture.dispose();
+      haloMaterial.dispose();
       renderer.dispose();
-      if (renderer.domElement.parentElement === host) {
-        host.removeChild(renderer.domElement);
-      }
+      if (renderer.domElement.parentElement === host) host.removeChild(renderer.domElement);
     };
-  }, [particleCount, size, state]);
+  }, [size]);
 
   return (
     <div
@@ -268,8 +353,11 @@ export default function OrbCanvas({ emotionColor, state, size = 300 }: OrbProps)
         height: `${size}px`,
         maxWidth: "100%",
         maxHeight: "100%",
+        position: "relative",
+        overflow: "visible",
+        background: "transparent",
       }}
-      aria-label="Ava particle orb"
+      aria-label="Ava energy orb"
       role="img"
     />
   );

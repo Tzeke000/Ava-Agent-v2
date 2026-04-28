@@ -146,6 +146,8 @@ export default function App() {
     nodes: [],
     edges: [],
   });
+  const [brainLoading, setBrainLoading] = useState(false);
+  const [brainGraphError, setBrainGraphError] = useState<string>("");
   const [brainActive, setBrainActive] = useState<{ active_nodes: BrainNode[]; firing_paths: BrainEdge[] }>({
     active_nodes: [],
     firing_paths: [],
@@ -292,20 +294,37 @@ export default function App() {
     return () => window.clearInterval(id);
   }, []);
 
-  const pollBrainGraph = useCallback(async () => {
+  const pollBrainGraph = useCallback(async (reason = "interval") => {
+    setBrainLoading(true);
+    setBrainGraphError("");
+    pushEvent(`Brain graph fetch start (${reason})`);
     try {
       const res = await getJson<{ nodes?: BrainNode[]; edges?: BrainEdge[]; stats?: Record<string, unknown> }>(
         "/api/v1/brain/graph"
       );
+      const nodes = Array.isArray(res.nodes) ? res.nodes : [];
+      const edges = Array.isArray(res.edges) ? res.edges : [];
+      pushEvent(`Brain graph fetch success: nodes=${nodes.length}, edges=${edges.length}`);
       setBrainGraph({
-        nodes: Array.isArray(res.nodes) ? res.nodes : [],
-        edges: Array.isArray(res.edges) ? res.edges : [],
+        nodes,
+        edges,
         stats: res.stats ?? {},
       });
-    } catch {
-      // optional endpoint
+      console.log("[brain] /api/v1/brain/graph", { nodes: nodes.length, edges: edges.length });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setBrainGraphError(msg);
+      pushEvent(`Brain graph fetch failed: ${msg}`);
+      console.log("[brain] /api/v1/brain/graph failed", msg);
+      setBrainGraph({
+        nodes: [],
+        edges: [],
+        stats: {},
+      });
+    } finally {
+      setBrainLoading(false);
     }
-  }, []);
+  }, [pushEvent]);
 
   const pollBrainActive = useCallback(async () => {
     try {
@@ -320,14 +339,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void pollBrainGraph();
+    if (tab !== "brain") return;
+    void pollBrainGraph("tab-open");
     void pollBrainActive();
     const id = window.setInterval(() => {
-      void pollBrainGraph();
+      void pollBrainGraph("interval");
       void pollBrainActive();
     }, 3000);
     return () => window.clearInterval(id);
-  }, [pollBrainGraph, pollBrainActive]);
+  }, [pollBrainGraph, pollBrainActive, tab]);
 
   const fetchFinetuneStatus = useCallback(async () => {
     try {
@@ -592,13 +612,20 @@ export default function App() {
   }, [selectedBrainNode, brainGraph.edges, brainGraph.nodes]);
 
   useEffect(() => {
-    if (!brainSvgRef.current || tab !== "brain") return;
-    const svg = d3.select(brainSvgRef.current);
-    svg.selectAll("*").remove();
-    const width = brainSvgRef.current.clientWidth || 900;
-    const height = brainSvgRef.current.clientHeight || 620;
-    svg.attr("viewBox", `0 0 ${width} ${height}`);
-    const g = svg.append("g");
+    if (tab !== "brain") return;
+    if (!brainSvgRef.current) return;
+    if (!brainGraph.nodes.length) return;
+
+    const svgEl = brainSvgRef.current;
+    let sim: d3.Simulation<any, undefined> | null = null;
+    const init = window.requestAnimationFrame(() => {
+      if (!svgEl) return;
+      const svg = d3.select(svgEl);
+      svg.selectAll("*").remove();
+      const width = svgEl.clientWidth || 900;
+      const height = svgEl.clientHeight || 620;
+      svg.attr("viewBox", `0 0 ${width} ${height}`);
+      const g = svg.append("g");
 
     const nodes = brainGraph.nodes.map((n) => ({ ...n })) as Array<BrainNode & { x?: number; y?: number; fx?: number | null; fy?: number | null }>;
     const links = brainGraph.edges.map((e) => ({ ...e })) as Array<BrainEdge & { source: any; target: any }>;
@@ -608,11 +635,14 @@ export default function App() {
     });
     svg.call(zoom);
 
-    const sim = d3
-      .forceSimulation(nodes as any)
-      .force("link", d3.forceLink(links as any).id((d: any) => d.id).distance(95))
-      .force("charge", d3.forceManyBody().strength(-210))
-      .force("center", d3.forceCenter(width * 0.4, height * 0.5));
+      sim = d3
+        .forceSimulation(nodes as any)
+        .force("link", d3.forceLink(links as any).id((d: any) => d.id).distance(95))
+        .force("charge", d3.forceManyBody().strength(-210))
+        .force("center", d3.forceCenter(width * 0.4, height * 0.5))
+        .alpha(1)
+        .alphaTarget(0.08)
+        .restart();
 
     const link = g
       .append("g")
@@ -647,7 +677,7 @@ export default function App() {
         d3
           .drag<SVGCircleElement, any>()
           .on("start", (event, d) => {
-            if (!event.active) sim.alphaTarget(0.3).restart();
+            if (!event.active) sim?.alphaTarget(0.3).restart();
             d.fx = d.x;
             d.fy = d.y;
           })
@@ -656,7 +686,7 @@ export default function App() {
             d.fy = event.y;
           })
           .on("end", (event, d) => {
-            if (!event.active) sim.alphaTarget(0);
+            if (!event.active) sim?.alphaTarget(0);
             d.fx = null;
             d.fy = null;
           })
@@ -681,20 +711,32 @@ export default function App() {
       .attr("font-size", 10)
       .text((d) => (d.label.length > 12 ? `${d.label.slice(0, 12)}…` : d.label));
 
-    sim.on("tick", () => {
-      link
-        .attr("x1", (d: any) => d.source.x)
-        .attr("y1", (d: any) => d.source.y)
-        .attr("x2", (d: any) => d.target.x)
-        .attr("y2", (d: any) => d.target.y);
-      node.attr("cx", (d: any) => d.x).attr("cy", (d: any) => d.y);
-      labels.attr("x", (d: any) => d.x).attr("y", (d: any) => d.y + 24).attr("text-anchor", "middle");
+      sim.on("tick", () => {
+        link
+          .attr("x1", (d: any) => d.source.x)
+          .attr("y1", (d: any) => d.source.y)
+          .attr("x2", (d: any) => d.target.x)
+          .attr("y2", (d: any) => d.target.y);
+        node.attr("cx", (d: any) => d.x).attr("cy", (d: any) => d.y);
+        labels.attr("x", (d: any) => d.x).attr("y", (d: any) => d.y + 24).attr("text-anchor", "middle");
+      });
     });
 
     return () => {
-      sim.stop();
+      window.cancelAnimationFrame(init);
+      sim?.stop();
     };
   }, [brainGraph, activeBrainIdSet, deepReasoningMode, tab]);
+
+  useEffect(() => {
+    if (tab !== "brain") return;
+    if (brainLoading) return;
+    if (brainGraph.nodes.length > 0) return;
+    const retry = window.setTimeout(() => {
+      void pollBrainGraph("empty-retry");
+    }, 1200);
+    return () => window.clearTimeout(retry);
+  }, [tab, brainGraph.nodes.length, pollBrainGraph, brainLoading]);
 
   const toggleTts = async () => {
     try {
@@ -854,28 +896,32 @@ export default function App() {
       )}
 
       <section className="presence-stage">
-        <div className="presence-hud top-left" style={{ color: effectiveOrbColor }}>
-          EMOTION: {primaryEmotion}
-        </div>
-        <div className="presence-hud top-right">
-          HEARTBEAT: {String(hb?.heartbeat_mode ?? "idle")}
+        <div className="presence-hud-row">
+          <div className="presence-hud" style={{ color: effectiveOrbColor }}>
+            EMOTION: {primaryEmotion}
+          </div>
+          <div className="presence-hud">
+            HEARTBEAT: {String(hb?.heartbeat_mode ?? "idle")}
+          </div>
         </div>
         <div className="presence-orb-wrap">
-          <div className="presence-orb-line" aria-hidden="true" />
           <div className="orb-canvas-shell">
             <OrbCanvas
               emotion={primaryEmotion}
               emotionColor={effectiveOrbColor}
               state={shutdownInProgress ? "offline" : (orbPulseMode as any)}
-              size={300}
+              size={320}
             />
           </div>
         </div>
-        <div className="presence-hud bottom-left">
-          NEURAL ACTIVITY: {Number(snapshotBrainGraph?.total_nodes ?? brainGraph.nodes.length)}
-        </div>
-        <div className="presence-hud bottom-right">
-          UPTIME: {uptimeLabel}
+        <div className="presence-orb-line" aria-hidden="true" />
+        <div className="presence-hud-row presence-hud-row-bottom">
+          <div className="presence-hud">
+            NEURAL ACTIVITY: {Number(snapshotBrainGraph?.total_nodes ?? brainGraph.nodes.length)}
+          </div>
+          <div className="presence-hud">
+            UPTIME: {uptimeLabel}
+          </div>
         </div>
         <div className="presence-last-message">{presenceStatusMessage}</div>
         <div className="presence-input-row">
@@ -1060,6 +1106,14 @@ export default function App() {
             <div className="op-pane op-pane-brain">
               <div className="brain-layout">
                 <div className="brain-canvas-wrap">
+                  {brainLoading && (
+                    <div className="brain-loading-overlay">Loading brain graph...</div>
+                  )}
+                  {!brainLoading && brainGraph.nodes.length === 0 && (
+                    <div className="brain-loading-overlay empty">
+                      {brainGraphError ? `Graph fetch failed: ${brainGraphError}` : "Graph empty — run bootstrap in console"}
+                    </div>
+                  )}
                   <svg ref={brainSvgRef} className="brain-canvas" />
                 </div>
                 <aside className="brain-side-panel">
