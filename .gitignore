@@ -7,3 +7,10 @@ state/**/*.tmp
 memory/**/*.tmp
 
 chatlog.jsonl
+
+memory/chroma.sqlite3
+state/
+profiles/
+ava_mood.json
+memory/self reflection/
+chatlog.jsonl
