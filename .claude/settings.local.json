@@ -11,7 +11,10 @@
       "Bash(py -3.11 -m py_compile brain/heartbeat.py)",
       "Bash(git commit -m 'phase 45: concept graph evolution — decay, richer relations, prompt injection, bootstrap *)",
       "Bash(py -3.11 -m py_compile tools/tool_registry.py)",
-      "Bash(git commit -m 'phase 46: hot-reload tool registry + tools/reload endpoint *)"
+      "Bash(git commit -m 'phase 46: hot-reload tool registry + tools/reload endpoint *)",
+      "Bash(py -3.11 -m py_compile scripts/watchdog.py)",
+      "Bash(py -3.11 -m py_compile tools/system/restart_tool.py)",
+      "Bash(git commit -m 'phase 47: watchdog restart system *)"
     ]
   }
 }
