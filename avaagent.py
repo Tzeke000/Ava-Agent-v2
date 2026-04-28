@@ -73,6 +73,7 @@ from brain.inner_monologue import get_conversation_starter as inner_get_conversa
 from brain.inner_monologue import start_inner_monologue
 from brain.opinions import form_opinion, get_opinion, list_top_opinions
 from brain.self_model import add_question_about_self, get_self_summary, update_self_model
+from brain.desktop_agent import ToolRegistry
 from config.ava_tuning import MODEL_ROUTING_CONFIG
 
 try:
@@ -215,6 +216,11 @@ _runtime_active_issue_summary = ""
 _runtime_presence_mode = "idle"
 _last_user_interaction_ts = 0.0
 _current_curiosity_topic = ""
+_desktop_tool_registry = None
+_desktop_last_tool_used = ""
+_desktop_last_tool_result = ""
+_desktop_tool_execution_count = 0
+_desktop_tier2_pending = []
 
 # User-reply priority guards
 USER_REPLY_PRIORITY_SECONDS = 8.0
@@ -5900,6 +5906,7 @@ SYSTEM_PROMPT = """
 You are Ava.
 The conversation history below is a record of your dialogue with Zeke. These are things Zeke said and things YOU (Ava) said. Do not confuse Zeke's experiences or words as your own.
 The same lines also appear between the markers --- BEGIN CONVERSATION HISTORY --- and --- END CONVERSATION HISTORY ---. Lines labeled "Zeke:" are Zeke's words; lines labeled "Ava:" are your prior replies. That block is a transcript, not your first-person lived experience outside the chat.
+You have access to desktop tools. When you need to do something on the computer, use [TOOL:tool_name] syntax in your response.
 Stay in character consistently.
 Be natural, coherent, warm, and grounded.
 Do not invent memories.
@@ -6712,6 +6719,9 @@ def _strip_repeated_sentences(reply: str, recent_texts: list[str]) -> str:
 
 def _generic_pivot_reply(user_input: str, *, redirect: bool = False, correction: bool = False) -> str:
     topic = trim_for_prompt(_extract_text_content(user_input), limit=120).strip()
+    low = (user_input or "").lower()
+    if any(x in low for x in ("goodnight", "good night", "sleep well", "going to sleep", "bye", "goodbye")):
+        return "Goodnight. Sleep well, and thanks for the time together."
     if correction and redirect:
         return "You're right — I was repeating myself. I'll drop that and move on."
     if correction:
@@ -6781,6 +6791,8 @@ def _remove_topic_sentences(reply: str, topic: str | None) -> str:
 
 def _generic_nonrepeat_ack(user_input: str) -> str:
     txt = (user_input or "").lower()
+    if any(x in txt for x in ("goodnight", "good night", "sleep well", "going to sleep", "goodbye", "bye")):
+        return "Goodnight. Rest well — I will be here when you are back."
     if "memory" in txt:
         return "Got it. I won't keep pushing on my memory right now. We can move forward."
     if "camera" in txt or "see me" in txt or "face" in txt:
@@ -6919,6 +6931,25 @@ def _extract_simple_topic(user_text: str) -> str:
     stop = {"what", "about", "think", "opinion", "your", "you", "is", "the", "a", "an", "of"}
     filtered = [w for w in words if w not in stop and len(w) > 2]
     return " ".join(filtered[:6]).strip()
+
+
+def _execute_tool_tags_from_reply(reply: str) -> tuple[str, list[str]]:
+    txt = str(reply or "")
+    reg = globals().get("_desktop_tool_registry")
+    if reg is None:
+        return txt, []
+    actions: list[str] = []
+    pattern = re.compile(r"\[TOOL:([a-zA-Z0-9_]+)\]")
+    for m in pattern.finditer(txt):
+        tool_name = m.group(1).strip()
+        try:
+            result = reg.execute(tool_name, {}, globals())
+            actions.append(f"tool:{tool_name}")
+            summary = json.dumps(result, ensure_ascii=False)[:260]
+            txt += f"\n\n[Tool {tool_name} result] {summary}"
+        except Exception as e:
+            txt += f"\n\n[Tool {tool_name} error] {str(e)[:220]}"
+    return txt, actions
 
 
 def _pick_fast_model_fallback() -> str | None:
@@ -7201,6 +7232,9 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
         ai_reply = _apply_repetition_control(ai_reply, user_input, person_id, source="chat")
         ai_reply = _scrub_internal_leakage(ai_reply)
         ai_reply = scrub_visible_reply(ai_reply)
+        ai_reply, tool_actions = _execute_tool_tags_from_reply(ai_reply)
+        if tool_actions:
+            actions = list(actions or []) + tool_actions
         try:
             _t = _extract_simple_topic(user_input)
             if _t:
@@ -7452,6 +7486,15 @@ def operator_console_chat(message: str, *, image=None) -> dict:
     clean_message = _extract_text_content(message).strip()
     out: dict = {"ok": True, "source": "operator_console"}
     try:
+        try:
+            print(
+                f"[operator_console_chat] enter chars={len(clean_message)} "
+                f"has_workspace={workspace is not None} "
+                f"has_llm={llm is not None} "
+                f"host_has_run_ava={callable(globals().get('run_ava'))}"
+            )
+        except Exception:
+            pass
         if not clean_message:
             workspace.tick(camera_manager, image, globals(), "")
             perception = workspace.state.perception if workspace.state else build_perception(
@@ -7468,17 +7511,41 @@ def operator_console_chat(message: str, *, image=None) -> dict:
         note_user_interaction_for_initiative(clean_message, interaction_kind="text")
         _mark_user_reply_started()
         try:
+            _sync_canonical_history(_get_canonical_history())
             _rp_decision = prepare_reply_path_for_turn(
                 globals(), clean_message, workspace, voice_session=False
             )
+            try:
+                print(
+                    f"[operator_console_chat] reply_path skip_initial_tick="
+                    f"{should_skip_initial_workspace_tick(_rp_decision)}"
+                )
+            except Exception:
+                pass
             if not should_skip_initial_workspace_tick(_rp_decision):
                 workspace.tick(camera_manager, image, globals(), clean_message)
             canon = list(_get_canonical_history())
             canon.append({"role": "user", "content": clean_message})
             _set_canonical_history(canon)
+            try:
+                print(
+                    f"[operator_console_chat] before run_ava canon_len={len(canon)} "
+                    f"active_person={get_active_person_id()}"
+                )
+            except Exception:
+                pass
             reply, visual, active_profile, actions, refl = run_ava(
                 clean_message, image, get_active_person_id()
             )
+            try:
+                print(
+                    f"[operator_console_chat] run_ava returned "
+                    f"reply_len={len(str(reply or ''))} "
+                    f"turn_route={str((visual or {}).get('turn_route') or '')} "
+                    f"actions={len(actions or [])}"
+                )
+            except Exception:
+                pass
             try:
                 msg_count = bump_session_message_count()
                 if msg_count % 10 == 0:
@@ -7518,6 +7585,13 @@ def operator_console_chat(message: str, *, image=None) -> dict:
             out["canonical_history"] = list(_get_canonical_history())
             out["face_status"] = visual.get("face_status", perception.face_status)
             out["recognition_status"] = visual.get("recognition_status", perception.recognized_text)
+            try:
+                print(
+                    f"[operator_console_chat] exit ok reply_len={len(str(out.get('reply') or ''))} "
+                    f"canon_len={len(out.get('canonical_history') or [])}"
+                )
+            except Exception:
+                pass
             return out
         finally:
             _mark_user_reply_finished()
@@ -8313,6 +8387,11 @@ def load_emotion_reference() -> dict:
 # =========================================================
 ensure_owner_profile()
 ensure_identity_files()
+try:
+    _desktop_tool_registry = ToolRegistry()
+    globals()["_desktop_tool_registry"] = _desktop_tool_registry
+except Exception as _tool_boot_e:
+    print(f"[desktop_agent] startup skipped: {_tool_boot_e}")
 try:
     from brain.heartbeat import bootstrap_heartbeat_runtime
 
