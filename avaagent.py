@@ -338,6 +338,26 @@ def _update_concept_graph_from_turn(user_text: str, assistant_text: str) -> None
         cg.activate_path(uniq_ids[:24])
         cg.prune_old_nodes(max_nodes=700)
         globals()["_active_concept_nodes"] = uniq_ids
+
+        # Phase 45 bootstrap: boost concepts Ava actually used, decay ignored ones
+        try:
+            injected = list(globals().get("_last_injected_concept_ids") or [])
+            if injected and text_assistant:
+                reply_lower = text_assistant.lower()
+                used, ignored = [], []
+                for nid in injected:
+                    node = cg.nodes.get(nid)
+                    if node is None:
+                        continue
+                    label_lower = node.label.lower()
+                    if label_lower and label_lower in reply_lower:
+                        used.append(nid)
+                    else:
+                        ignored.append(nid)
+                if callable(getattr(cg, "boost_from_usage", None)):
+                    cg.boost_from_usage(used, ignored)
+        except Exception:
+            pass
     except Exception as e:
         print(f"[concept_graph] turn update failed: {e}")
 
@@ -6380,14 +6400,26 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
         _pickup_note_once = f"[Ava's note to herself from last session: {_pickup_note}]"
         globals()["pickup_note"] = None
     _associated_memories_line = "(none)"
+    _injected_concept_ids: list[str] = []
     try:
         _cg = globals().get("_concept_graph")
         if _cg is not None and callable(getattr(_cg, "get_related_concepts", None)):
             _topic = _extract_simple_topic(user_input)
             if _topic:
-                _rels = _cg.get_related_concepts(_topic, max_hops=2)[:3]
+                _rels = _cg.get_related_concepts(_topic, max_hops=2)[:5]
                 if _rels:
-                    _associated_memories_line = " -> ".join(str(r.get("label") or r.get("id") or "") for r in _rels if isinstance(r, dict))
+                    _parts = []
+                    for r in _rels:
+                        if not isinstance(r, dict):
+                            continue
+                        _lbl = str(r.get("label") or r.get("id") or "")
+                        _rel = str(r.get("relationship") or "related_to")
+                        _via = str(r.get("via") or "")
+                        _via_str = f" (via {_via})" if _via and _via != _lbl else ""
+                        _parts.append(f"{_lbl} [{_rel}{_via_str}]")
+                        _injected_concept_ids.append(str(r.get("id") or ""))
+                    _associated_memories_line = ", ".join(_parts)
+        globals()["_last_injected_concept_ids"] = _injected_concept_ids
     except Exception:
         _associated_memories_line = "(none)"
 

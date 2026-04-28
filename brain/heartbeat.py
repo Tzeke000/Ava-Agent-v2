@@ -509,6 +509,20 @@ def _run_heartbeat_tick(
         if mode == HeartbeatMode.LEARNING_REVIEW:
             st.meta["last_learning_review_wall"] = now
 
+    # Phase 45: weekly concept graph decay
+    _WEEK_SECONDS = 7 * 24 * 3600
+    _last_decay = float(st.meta.get("last_concept_decay_wall") or 0)
+    if (now - _last_decay) >= _WEEK_SECONDS:
+        try:
+            _cg = g.get("_concept_graph") if isinstance(g, dict) else None
+            if _cg is not None and callable(getattr(_cg, "decay_unused_nodes", None)):
+                _decayed = _cg.decay_unused_nodes(days_threshold=30)
+                if _decayed:
+                    print(f"[heartbeat] concept_graph weekly decay: {_decayed} nodes affected")
+                st.meta["last_concept_decay_wall"] = now
+        except Exception:
+            pass
+
     st.last_wallclock = now
 
     carry = HeartbeatCarryoverState(

@@ -267,7 +267,6 @@ class ConceptGraph:
     def get_related_concepts(self, topic: str, max_hops: int = 2) -> list[dict[str, Any]]:
         start_id = _slugify(topic)
         if start_id not in self.nodes:
-            # fallback: direct label match
             for nid, node in self.nodes.items():
                 if node.label.strip().lower() == (topic or "").strip().lower():
                     start_id = nid
@@ -278,12 +277,16 @@ class ConceptGraph:
         visited: set[str] = {start_id}
         queue: list[tuple[str, int, float]] = [(start_id, 0, 1.0)]
         scored: dict[str, float] = {}
+        # Track best relationship label per target
+        best_rel: dict[str, str] = {}
+        best_via: dict[str, str] = {}
         while queue:
             current, hop, path_strength = queue.pop(0)
             if hop >= max_hops:
                 continue
             for edge in self.edges:
                 nxt = ""
+                rel = str(edge.relationship or "related_to")
                 if edge.source == current:
                     nxt = edge.target
                 elif edge.target == current:
@@ -291,7 +294,11 @@ class ConceptGraph:
                 if not nxt or nxt not in self.nodes:
                     continue
                 weight = path_strength * float(edge.strength or 0.0) * (0.92**hop)
-                scored[nxt] = max(scored.get(nxt, 0.0), weight)
+                if weight > scored.get(nxt, 0.0):
+                    scored[nxt] = weight
+                    best_rel[nxt] = rel
+                    via_label = str(self.nodes[current].label if current in self.nodes else current)
+                    best_via[nxt] = via_label
                 if nxt not in visited:
                     visited.add(nxt)
                     queue.append((nxt, hop + 1, weight))
@@ -299,10 +306,29 @@ class ConceptGraph:
         for nid, score in sorted(scored.items(), key=lambda kv: kv[1], reverse=True):
             if nid == start_id:
                 continue
-            row = asdict(self.nodes[nid])
+            node = self.nodes[nid]
+            if node.archived:
+                continue
+            row = asdict(node)
             row["association_strength"] = round(score, 4)
+            row["relationship"] = best_rel.get(nid, "related_to")
+            row["via"] = best_via.get(nid, "")
             results.append(row)
         return results
+
+    def boost_from_usage(self, used_concept_ids: list[str], ignored_concept_ids: list[str]) -> None:
+        """Bootstrap: concepts Ava actually referenced gain weight; ignored ones lose weight."""
+        for nid in used_concept_ids:
+            node = self.nodes.get(nid)
+            if node:
+                node.weight = _clamp(node.weight + 0.06, 0.0, 1.0)
+                node.activation_count += 1
+        for nid in ignored_concept_ids:
+            node = self.nodes.get(nid)
+            if node:
+                node.weight = _clamp(node.weight - 0.02, 0.0, 1.0)
+        if used_concept_ids or ignored_concept_ids:
+            self._save()
 
     def strengthen_edge(self, source_id: str, target_id: str) -> None:
         if source_id == target_id or source_id not in self.nodes or target_id not in self.nodes:
