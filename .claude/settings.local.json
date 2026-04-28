@@ -21,7 +21,8 @@
       "Bash(git commit -m 'phases 51-54: accessibility, screenshots, computer control, stats *)",
       "Bash(python -c \"import json,sys; p=json.load\\(sys.stdin\\); print\\(json.dumps\\({**p.get\\('dependencies',{}\\), **p.get\\('devDependencies',{}\\)}, indent=2\\)\\)\")",
       "Bash(py -3.11 -m py_compile brain/wake_word.py brain/leisure.py tools/games/dino_game.py tools/games/minecraft/minecraft_tool.py avaagent.py brain/heartbeat.py)",
-      "Bash(git commit -m 'phases 57-60: wake word, leisure, dino game, minecraft bot *)"
+      "Bash(git commit -m 'phases 57-60: wake word, leisure, dino game, minecraft bot *)",
+      "Bash(py -3.11 -m py_compile brain/episodic_memory.py brain/goal_system_v2.py brain/relationship_arc.py brain/deep_self.py brain/model_routing.py brain/operator_server.py tools/ava/goal_tool.py tools/ava/self_modification_tool.py tools/games/minecraft/companion_tool.py avaagent.py)"
     ]
   }
 }

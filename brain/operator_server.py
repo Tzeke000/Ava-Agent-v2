@@ -1224,6 +1224,34 @@ def create_app():
             "cleared_mode": cleared_mode,
         }
 
+    @app.get("/api/v1/identity/proposals")
+    def identity_proposals() -> dict[str, Any]:
+        try:
+            import json
+            from pathlib import Path
+            p = Path(_g().get("BASE_DIR") or ".") / "state" / "identity_proposals.jsonl"
+            proposals = []
+            if p.is_file():
+                for line in p.read_text(encoding="utf-8").splitlines()[-50:]:
+                    try:
+                        proposals.append(json.loads(line))
+                    except Exception:
+                        continue
+            return {"ok": True, "proposals": proposals}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
+    @app.post("/api/v1/identity/proposals/approve")
+    async def approve_identity_proposal(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+        text = str(body.get("text") or "").strip()
+        if not text:
+            return {"ok": False, "error": "text required"}
+        try:
+            from brain.deep_self import approve_identity_addition
+            return approve_identity_addition(text, _g())
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
     @app.get("/api/v1/identity/{which}")
     def identity(which: str) -> PlainTextResponse:
         text, err = _read_identity_file(_g(), which)

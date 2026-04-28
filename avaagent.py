@@ -4168,6 +4168,20 @@ def _session_state_atexit():
         save_session_state(st)
     except Exception:
         pass
+    # Phase 65: save mood carryover on shutdown
+    try:
+        _mood_now = load_mood()
+        _carryover = {
+            "mood": _mood_now,
+            "shutdown_ts": time.time(),
+            "shutdown_iso": now_iso(),
+        }
+        _co_path = STATE_DIR / "mood_carryover.json"
+        _co_path.write_text(
+            json.dumps(_carryover, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
 
 
 def _write_ava_pid_file():
@@ -6436,6 +6450,19 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
     except Exception:
         _associated_memories_line = "(none)"
 
+    # Phase 64: inject relevant episodic memories
+    _episodic_block = ""
+    try:
+        from brain.episodic_memory import get_episodic_memory
+        _eps = get_episodic_memory(BASE_DIR).search_episodes(user_input[:300], limit=3)
+        if _eps:
+            _ep_lines = []
+            for ep in _eps:
+                _ep_lines.append(f"[{ep.get('topic','')}] {ep.get('summary','')} (felt: {ep.get('emotional_context','')})")
+            _episodic_block = "\n".join(_ep_lines)
+    except Exception:
+        pass
+
     prompt = f"""
 {personality}
 
@@ -6491,6 +6518,8 @@ DYNAMIC SELF / MEMORY READER:
 
 ACTIVE WINDOW: {globals().get("_active_window_title") or "(unknown)"}
 
+{(lambda: __import__('brain.relationship_arc', fromlist=['build_relationship_stage_block']).build_relationship_stage_block(globals()))() if True else ""}
+
 INNER LIFE SNAPSHOT:
 - current_thought: {_inner_thought or "(none recent)"}
 - current_curiosity: {_curiosity_topic or "(none)"}
@@ -6498,6 +6527,8 @@ INNER LIFE SNAPSHOT:
 - zeke_mind_model: {_mind_model_summary}
 - top_opinions: {json.dumps(_opinions, ensure_ascii=False)}
 ASSOCIATED MEMORIES: {_associated_memories_line}
+EPISODIC MEMORIES (what I remember feeling in similar past moments):
+{_episodic_block or "(none yet)"}
 pending_repair_note: {_pending_repair_note or "(none)"}
 {_pickup_note_once}
 
@@ -6524,7 +6555,14 @@ Respond as Ava.
     try:
         persona_block = build_persona_block(active_profile)
         trust_note = f"[Trust level: {get_trust_label(active_profile).upper()} ({get_trust_level(active_profile)})]"
-        injected = f"{_AVA_IDENTITY_BLOCK}\n\n{persona_block}\n\n{trust_note}"
+        # Phase 68: inject Ava's own approved identity extensions
+        try:
+            from brain.deep_self import load_identity_extensions as _lie68
+            _ext68 = _lie68(globals())
+            _id_ext_p68 = f"\n\nIDENTITY EXTENSIONS (Ava's own additions):\n{_ext68}" if _ext68 else ""
+        except Exception:
+            _id_ext_p68 = ""
+        injected = f"{_AVA_IDENTITY_BLOCK}{_id_ext_p68}\n\n{persona_block}\n\n{trust_note}"
         if messages and isinstance(messages[0], SystemMessage):
             messages[0].content = injected + "\n\n" + messages[0].content
         else:
@@ -6688,7 +6726,14 @@ Respond as Ava — concise and natural unless they explicitly ask for depth or t
     try:
         persona_block = build_persona_block(active_profile)
         trust_note = f"[Trust level: {get_trust_label(active_profile).upper()} ({get_trust_level(active_profile)})]"
-        injected = f"{_AVA_IDENTITY_BLOCK}\n\n{persona_block}\n\n{trust_note}"
+        # Phase 68: inject Ava's own approved identity extensions
+        try:
+            from brain.deep_self import load_identity_extensions as _lie68
+            _ext68 = _lie68(globals())
+            _id_ext_p68 = f"\n\nIDENTITY EXTENSIONS (Ava's own additions):\n{_ext68}" if _ext68 else ""
+        except Exception:
+            _id_ext_p68 = ""
+        injected = f"{_AVA_IDENTITY_BLOCK}{_id_ext_p68}\n\n{persona_block}\n\n{trust_note}"
         if messages and isinstance(messages[0], SystemMessage):
             messages[0].content = injected + "\n\n" + messages[0].content
         else:
@@ -7283,6 +7328,23 @@ def finalize_ava_turn(
         pass
     try:
         _update_concept_graph_from_turn(user_input, ai_reply)
+    except Exception:
+        pass
+    # Phase 64: store episode after meaningful turn
+    try:
+        _ep_importance = float((reflection or {}).get("importance", 0.4))
+        _ep_topic = _extract_simple_topic(user_input) or "conversation"
+        _ep_summary = f"Zeke: {user_input[:150]} | Ava: {ai_reply[:200]}"
+        _ep_emotion = str(load_mood().get("current_mood") or "neutral")
+        from brain.episodic_memory import get_episodic_memory
+        get_episodic_memory(BASE_DIR).store_episode(
+            topic=_ep_topic,
+            summary=_ep_summary,
+            emotional_context=_ep_emotion,
+            importance=_ep_importance,
+            people_present=[person_id],
+            novelty=0.5,
+        )
     except Exception:
         pass
     try:
@@ -8830,6 +8892,30 @@ if not MOOD_PATH.exists():
     save_mood(enrich_mood_state(default_mood()))
 else:
     save_mood(load_mood())
+
+# Phase 65: apply mood carryover with decay
+try:
+    import json as _json_p65
+    _co_path = STATE_DIR / "mood_carryover.json"
+    if _co_path.is_file():
+        _co = _json_p65.loads(_co_path.read_text(encoding="utf-8"))
+        _co_mood = _co.get("mood") or {}
+        _co_ts = float(_co.get("shutdown_ts") or 0)
+        _absent_hours = (time.time() - _co_ts) / 3600 if _co_ts > 0 else 999
+        if _absent_hours < 72 and isinstance(_co_mood, dict):
+            # Decay: 20% per hour, hard floor at 30% for strong emotions
+            _decay = max(0.0, 1.0 - 0.20 * _absent_hours)
+            if _absent_hours > 8:
+                _decay = max(0.30, _decay)
+            _base_mood = load_mood()
+            for _k, _v in _co_mood.items():
+                if isinstance(_v, float):
+                    _co_mood[_k] = _v * _decay
+            _base_mood.update({k: v for k, v in _co_mood.items() if k in _base_mood and isinstance(v, float)})
+            save_mood(enrich_mood_state(_base_mood))
+            print(f"[mood_carryover] applied decay={_decay:.2f} absent_hours={_absent_hours:.1f}")
+except Exception as _p65_e:
+    print(f"[mood_carryover] skipped: {_p65_e}")
 
 if not ACTIVE_PERSON_PATH.exists():
     save_active_person_state(OWNER_PERSON_ID, source="startup")
