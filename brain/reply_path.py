@@ -11,6 +11,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
+from .concern_reconciliation import concern_surface_gate
+
 # Max age of last workspace refresh before forcing a fresh tick (seconds).
 FAST_PATH_MAX_WS_AGE_SEC = 15.0
 
@@ -330,7 +332,10 @@ def build_fast_path_snapshot(perception: Any | None, g: dict[str, Any]) -> FastP
             cc = int(getattr(perception, "active_concern_count", 0) or 0)
             top = str(getattr(perception, "top_active_concern", "") or "")[:120]
             crs = str(getattr(perception, "concern_reconciliation_summary", "") or "")[:200]
-            concern_line = f"concerns_active={cc} top={top!r} recap={crs}"
+            cam_gate = concern_surface_gate("camera_stale", g) or concern_surface_gate("recognition_uncertain", g)
+            maint_gate = concern_surface_gate("maintenance_workbench", g) or concern_surface_gate("recurring_warning", g)
+            if cam_gate or maint_gate:
+                concern_line = f"concerns_active={cc} top={top!r} recap={crs}"
     except Exception:
         concern_line = ""
 

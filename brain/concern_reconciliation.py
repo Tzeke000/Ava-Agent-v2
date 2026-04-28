@@ -35,6 +35,12 @@ _REGISTRY_PATH = _CONCERN_DIR / "concerns_registry.json"
 
 _COOLDOWN_SEC = 6 * 3600
 _RESOLVED_QUIET_SEC = 2 * 3600
+_USER_DISMISS_COOLDOWN_SEC = 3600
+
+_CAMERA_FRESH_RESOLVE_SEC = 30.0
+_CAMERA_STALE_FLAG_SEC = 60.0
+_CAMERA_CONF_GOOD = 0.40
+_CAMERA_CONF_LOW = 0.25
 
 CT_CAMERA_STALE = "camera_stale"
 CT_RECOGNITION_UNCERTAIN = "recognition_uncertain"
@@ -115,6 +121,7 @@ def gather_runtime_evidence(
     improvement_loop: Optional[ImprovementLoopResult],
     heartbeat: Optional[HeartbeatTickResult],
     runtime_presence: Optional[RuntimePresenceResult],
+    host_or_g: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     st_ov = "ok"
     failed: list[str] = []
@@ -141,6 +148,21 @@ def gather_runtime_evidence(
 
     fq = float(getattr(qual, "frame_quality", 0.0) or 0.0) if qual is not None else None
 
+    age = None
+    if runtime_presence is not None and hasattr(runtime_presence, "meta"):
+        try:
+            age = runtime_presence.meta.get("camera_age_sec")
+        except Exception:
+            age = None
+    if age is None and isinstance(heartbeat, HeartbeatTickResult):
+        try:
+            age = heartbeat.meta.get("camera_age_sec") if isinstance(heartbeat.meta, dict) else None
+        except Exception:
+            age = None
+    if age is None and isinstance(host_or_g, dict):
+        age = _camera_age_seconds(host_or_g)
+    recog_conf = float(getattr(id_res, "identity_confidence", 0.0) or 0.0) if id_res is not None else 0.0
+
     ev = {
         "source": "runtime",
         "vision_trusted": bool(trusted),
@@ -156,6 +178,8 @@ def gather_runtime_evidence(
         "heartbeat_mode": hb_mode,
         "presence_mode": rp_mode,
         "camera_quality_gate": fq,
+        "camera_age_sec": age,
+        "recognition_confidence": recog_conf,
     }
     return ev
 
@@ -230,10 +254,39 @@ def _reconcile_one(rec: ConcernRecord, ev: dict[str, Any]) -> tuple[str, str, bo
     wb = bool(ev.get("workbench_has_proposal"))
     ilp_a = bool(ev.get("improvement_loop_active"))
 
+    # User dismissed recently should immediately resolve and stay quiet.
+    udis_map = ev.get("user_dismissed_ts")
+    if isinstance(udis_map, dict):
+        ts = float(udis_map.get(rec.concern_type) or 0.0)
+        if ts > 0 and now - ts <= _USER_DISMISS_COOLDOWN_SEC:
+            return STATUS_RESOLVED, "user_dismissed_recently", False
+
     # Current good state overrides stale worry (prefer present evidence).
     good_vision = bool(vt is True and af in ("fresh", "aging"))
+    cam_age = ev.get("camera_age_sec")
+    try:
+        cam_age_f = float(cam_age) if cam_age is not None else None
+    except Exception:
+        cam_age_f = None
+    rec_conf = float(ev.get("recognition_confidence") or 0.0)
 
     if rec.concern_type == CT_CAMERA_STALE:
+        # Rule B:
+        # - fresh (<30s) + confidence >40% => resolved
+        # - moderate confidence (40-70%) is normal, not a camera problem
+        # - only active concern when: no frame, stale >60s, or confidence <25%
+        if cam_age_f is not None and cam_age_f < _CAMERA_FRESH_RESOLVE_SEC and rec_conf >= _CAMERA_CONF_GOOD:
+            return STATUS_RESOLVED, "camera_fresh_and_confident", False
+        if cam_age_f is None:
+            return STATUS_ACTIVE, "no_frame_available", True
+        if cam_age_f > _CAMERA_STALE_FLAG_SEC:
+            return STATUS_ACTIVE, "frame_stale", True
+        if rec_conf < _CAMERA_CONF_LOW:
+            return STATUS_ACTIVE, "recognition_confidence_low", True
+        if rec_conf >= _CAMERA_CONF_GOOD:
+            return STATUS_RESOLVED, "camera_operating_normally", False
+        return STATUS_RESOLVED, "moderate_confidence_normal_operation", False
+
         if src == "startup":
             if bool(ev.get("camera_recent_ok")) and str(ev.get("health_degraded_mode") or "none") in (
                 "none",
@@ -406,6 +459,65 @@ def reconcile_evidence(ev: dict[str, Any], host_or_g: Optional[dict[str, Any]] =
     )
 
 
+def mark_concern_user_dismissed(concern_type: str, g: dict[str, Any] | None = None) -> None:
+    """
+    Immediately resolve concern type due to explicit user dismissal and add 1h cooldown.
+    """
+    ctype = str(concern_type or "").strip()
+    if not ctype:
+        return
+    now = now_ts()
+    rows, meta = _registry_load()
+    changed = False
+    for raw in rows:
+        if str(raw.get("concern_type") or "") != ctype:
+            continue
+        raw["status"] = STATUS_RESOLVED
+        raw["resolution_reason"] = "user_dismissed"
+        raw["cooldown_until"] = now + _USER_DISMISS_COOLDOWN_SEC
+        raw["should_surface_now"] = False
+        raw["last_seen_at"] = now
+        n = list(raw.get("notes") or [])
+        n.append("user_dismissed_recently")
+        raw["notes"] = n[-12:]
+        changed = True
+    if changed:
+        _registry_save(rows, {**meta, "last_user_dismissal_ts": now})
+    if isinstance(g, dict):
+        m = g.get("_concern_user_dismissed_ts")
+        if not isinstance(m, dict):
+            m = {}
+        m[ctype] = now
+        g["_concern_user_dismissed_ts"] = m
+
+
+def concern_surface_gate(concern_type: str, g: dict[str, Any] | None = None) -> bool:
+    """
+    True only when concern is genuinely active/current and not user-dismissed/cooldowned.
+    """
+    ctype = str(concern_type or "").strip()
+    if not ctype:
+        return False
+    now = now_ts()
+    rows, _meta = _registry_load()
+    matches = [r for r in rows if str(r.get("concern_type") or "") == ctype]
+    if not matches:
+        return False
+    rec = sorted(matches, key=lambda r: float(r.get("last_seen_at") or 0.0), reverse=True)[0]
+    status = str(rec.get("status") or "")
+    if status in (STATUS_RESOLVED, STATUS_WEAKENED, STATUS_ARCHIVED, STATUS_STALE):
+        return False
+    if float(rec.get("cooldown_until") or 0.0) > now:
+        return False
+    if isinstance(g, dict):
+        d = g.get("_concern_user_dismissed_ts")
+        if isinstance(d, dict):
+            ts = float(d.get(ctype) or 0.0)
+            if ts > 0 and now - ts <= _USER_DISMISS_COOLDOWN_SEC:
+                return False
+    return status == STATUS_ACTIVE
+
+
 def run_startup_concern_reconciliation(host: dict[str, Any]) -> ConcernReconciliationResult:
     try:
         ev = gather_startup_evidence(host)
@@ -439,6 +551,7 @@ def run_runtime_concern_reconciliation_safe(
             improvement_loop=improvement_loop,
             heartbeat=heartbeat,
             runtime_presence=runtime_presence,
+            host_or_g=g if isinstance(g, dict) else None,
         )
         return reconcile_evidence(ev, host_or_g=g if isinstance(g, dict) else None)
     except Exception as e:

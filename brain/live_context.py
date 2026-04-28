@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from .concern_reconciliation import concern_surface_gate
+
 
 def _t(s: str | None, n: int) -> str:
     x = " ".join((s or "").split())
@@ -94,14 +96,48 @@ def build_live_context(perception: Any | None, g: dict[str, Any] | None = None) 
 
     maint = str(getattr(perception, "improvement_loop_summary", "") or "")[:160]
     learn = str(getattr(perception, "learning_summary", "") or "")[:140]
-    conc = str(getattr(perception, "concern_reconciliation_summary", "") or "")[:140]
+
+    cam_gate = concern_surface_gate("camera_stale", g) or concern_surface_gate("recognition_uncertain", g)
+    cam_age = None
+    if isinstance(g, dict):
+        p = g.get("CAMERA_LATEST_JSON_PATH")
+        if p:
+            try:
+                import json
+                from pathlib import Path
+                from .shared import iso_to_ts, now_ts
+
+                path = Path(str(p))
+                if path.is_file():
+                    raw = json.loads(path.read_text(encoding="utf-8"))
+                    ts = raw.get("time") or raw.get("capture_ts") or raw.get("wall_time")
+                    if ts:
+                        cam_age = max(0.0, float(now_ts() - iso_to_ts(str(ts))))
+            except Exception:
+                cam_age = None
+    conf = float(getattr(perception, "identity_confidence", 0.0) or 0.0)
+    cam_class = "historical_only"
+    cam_line = ""
+    if cam_age is None:
+        cam_class = "no_frame"
+        cam_line = "camera offline"
+    elif cam_age > 60.0:
+        cam_class = "frame_stale"
+        cam_line = "camera frame stale"
+    elif conf < 0.25:
+        cam_class = "confidence_low"
+        cam_line = "recognition uncertain, not a camera fault"
+    else:
+        cam_class = "no_issue"
+        cam_line = ""
+
     parts = []
     if maint.strip():
         parts.append(f"improvement:{_t(maint, 140)}")
     if learn.strip():
         parts.append(f"learning:{_t(learn, 120)}")
-    if conc.strip():
-        parts.append(f"concerns:{_t(conc, 120)}")
+    if cam_gate and cam_class not in ("no_issue", "historical_only"):
+        parts.append(f"camera:{cam_line}")
     lc.learning_maintenance_note = _t(" | ".join(parts), 320)
     if parts:
         scores.append(0.55)
@@ -113,6 +149,7 @@ def build_live_context(perception: Any | None, g: dict[str, Any] | None = None) 
         snap = g.get("_runtime_self_snapshot") if isinstance(g.get("_runtime_self_snapshot"), dict) else {}
     if snap:
         lc.meta["runtime_snapshot_age_ok"] = bool(snap.get("ts"))
+    lc.meta["camera_context_classification"] = cam_class
 
     lc.meta["fields_populated"] = sum(
         1

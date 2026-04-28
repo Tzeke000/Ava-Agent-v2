@@ -28,7 +28,6 @@ from brain.attention import compute_attention
 from brain.memory import decay_tick
 from brain.workspace import Workspace
 from brain.reply_path import (
-    build_fast_path_snapshot,
     prepare_reply_path_for_turn,
     should_skip_initial_workspace_tick,
 )
@@ -6305,8 +6304,6 @@ def build_prompt_fast(
     mood = load_mood()
 
     face_status = perception.face_status
-    snap = build_fast_path_snapshot(perception, globals())
-
     profile_summary = {
         "person_id": active_profile["person_id"],
         "name": active_profile["name"],
@@ -6347,31 +6344,18 @@ def build_prompt_fast(
     except Exception:
         _voice_conv = ""
 
-    narrative_snip = (ws.self_narrative or "").strip()[:650] if ws.self_narrative else ""
-    narrative_block = (
-        f"SELF NARRATIVE (bounded):\n{narrative_snip}\n\n" if narrative_snip else ""
-    )
-
-    warm_block = (
-        f"{snap.mood_summary}\n"
-        f"Camera: {snap.camera_line}\n"
-        f"Presence: {snap.runtime_presence_line}\n"
-        f"Concerns: {snap.concern_line}\n"
-        f"Relationship/continuity hint: {snap.relationship_hint or '(none)'}\n"
-    )
-
-    _lc_fast = build_live_context(perception, globals())
-    attach_live_context_globals(globals(), _lc_fast)
-    _lc_fast_block = format_live_context_block(_lc_fast, max_chars=520).strip()
-    _live_fast_section = (
-        "LIVE CONTEXT (bounded):\n" + (_lc_fast_block if _lc_fast_block else "(minimal)")
-    )
+    recent_rows = load_recent_chat(limit=12, person_id=active_profile["person_id"])
+    last3 = [r for r in recent_rows if str(r.get("content", "")).strip()][-3:]
+    recent3_block = "\n".join(
+        f"- {str(r.get('role') or '').strip()}: {trim_for_prompt(str(r.get('content') or ''), limit=220)}"
+        for r in last3
+    ) or "(none)"
 
     prompt = f"""{personality}
 
-FAST TURN — answer the user directly first; treat warm state as background only (may be slightly stale).
-
-{narrative_block}
+FAST TURN — answer user directly and briefly.
+Use only core identity/persona + recent messages.
+Do not include camera/concern/reflection/strategic diagnostics unless explicitly asked.
 
 ACTIVE PERSON:
 {json.dumps(profile_summary, indent=2)}
@@ -6382,13 +6366,11 @@ TIME:
 {get_time_status_text()}
 Circadian rhythm: {get_circadian_modifiers()["tone_hint"]}
 
-INTERNAL STATE (cached mood snapshot — no full emotion refresh this turn):
+INTERNAL TONE:
 {mood_to_prompt_text(mood)}
 
-WARM STATE:
-{warm_block}
-
-{_live_fast_section}
+RECENT (last 3):
+{recent3_block}
 
 USER MESSAGE:
 {user_input}
@@ -6791,6 +6773,76 @@ def _load_self_narrative_snippet() -> str | None:
         return None
 
 
+_FAST_REPLY_SIMPLE = {
+    "i'm here",
+    "im here",
+    "hey",
+    "hello",
+    "ok",
+    "okay",
+    "yeah",
+    "yep",
+    "sure",
+}
+_QUESTION_WORDS = {"what", "why", "how", "when", "where", "who", "which", "can", "could", "would", "should", "do", "does"}
+_DEEP_HINT_WORDS = {
+    "memory",
+    "camera",
+    "vision",
+    "identity",
+    "state",
+    "internal",
+    "model",
+    "heartbeat",
+    "workbench",
+    "task",
+    "please",
+    "fix",
+    "build",
+    "update",
+    "change",
+}
+
+
+def classify_reply_depth(user_text: str, g) -> str:
+    """Returns 'fast' or 'deep'."""
+    txt = " ".join((user_text or "").strip().split())
+    if not txt:
+        return "fast"
+    lowered = txt.lower()
+    words = re.findall(r"[a-z0-9']+", lowered)
+    wc = len(words)
+    has_qmark = "?" in lowered
+    has_qword = any(w in _QUESTION_WORDS for w in words[:6]) or any(w in _QUESTION_WORDS for w in words)
+    if has_qmark or has_qword:
+        return "deep"
+    if wc > 15:
+        return "deep"
+    if any(h in lowered for h in _DEEP_HINT_WORDS):
+        return "deep"
+    if lowered in _FAST_REPLY_SIMPLE:
+        return "fast"
+    if wc < 15 and not has_qmark and not has_qword:
+        return "fast"
+    return "deep"
+
+
+def _pick_fast_model_fallback() -> str | None:
+    """Prefer smallest fast local tags for quick conversational acknowledgements."""
+    preferred = ["mistral:7b", "mistral", "llama3.1:8b", "llama3.1", "llama3:8b", "llama3"]
+    try:
+        from brain.model_routing import discover_available_model_tags
+
+        tags, _src = discover_available_model_tags(force=False)
+        tagset = {str(t).strip() for t in (tags or []) if str(t).strip()}
+        for p in preferred:
+            if p in tagset:
+                return p
+    except Exception:
+        pass
+    return None
+
+
 def finalize_ava_turn(
     user_input: str,
     ai_reply: str,
@@ -6882,6 +6934,18 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
         f"input_chars={len(_inp)}"
     )
     try:
+        try:
+            from brain.concern_reconciliation import mark_concern_user_dismissed
+
+            _redir = _user_redirected_topic(user_input)
+            if _redir == "camera":
+                mark_concern_user_dismissed("camera_stale", globals())
+                mark_concern_user_dismissed("recognition_uncertain", globals())
+            elif _redir in ("memory", "general"):
+                mark_concern_user_dismissed("maintenance_workbench", globals())
+        except Exception:
+            pass
+
         active_profile = load_profile_by_id(active_person_id)
 
         if is_blocked(active_profile):
@@ -6950,7 +7014,14 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
                 user_input, ai_reply, visual, active_profile, actions, turn_route="camera_identity"
             )
 
-        use_fast_path = str(globals().get("reply_path_selected") or "") == "fast"
+        _depth = classify_reply_depth(user_input, globals())
+        if _depth == "fast":
+            globals()["reply_path_selected"] = "fast"
+            globals()["reply_path_reason"] = "classify_reply_depth_fast"
+        else:
+            globals()["reply_path_selected"] = "deep"
+            globals()["reply_path_reason"] = "classify_reply_depth_deep"
+        use_fast_path = _depth == "fast"
         if use_fast_path:
             messages, visual, active_profile = build_prompt_fast(
                 user_input, image=image, active_person_id=active_person_id
@@ -6970,7 +7041,14 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
                 _route_model = ""
                 if _perc_r is not None:
                     _route_model = str(getattr(_perc_r, "routing_selected_model", "") or "").strip()
-                if _route_model and _route_model != LLM_MODEL:
+                if use_fast_path:
+                    _fast_model = _pick_fast_model_fallback()
+                    if _fast_model:
+                        _invoke_llm = ChatOllama(model=_fast_model, temperature=0.45)
+                        print(f"[run_ava] fast_path_model={_fast_model}")
+                    elif _route_model and _route_model != LLM_MODEL:
+                        _invoke_llm = ChatOllama(model=_route_model, temperature=0.5)
+                elif _route_model and _route_model != LLM_MODEL:
                     _invoke_llm = ChatOllama(model=_route_model, temperature=0.6)
                     print(f"[run_ava] phase25_routing_model={_route_model}")
             except Exception:
