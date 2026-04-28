@@ -12,6 +12,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import gradio as gr
 import numpy as np
@@ -150,6 +151,7 @@ CAMERA_LATEST_JSON_PATH = CAMERA_STATE_DIR / "latest_snapshot.json"
 HEALTH_STATE_PATH = STATE_DIR / "health_state.json"
 PROSPECTIVE_MEMORY_PATH = STATE_DIR / "prospective_memory.json"
 LIFE_MODEL_PATH = STATE_DIR / "life_model.json"
+AVA_PID_PATH = STATE_DIR / "ava.pid"
 
 MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 PROFILES_DIR.mkdir(parents=True, exist_ok=True)
@@ -244,7 +246,7 @@ _desktop_last_tool_used = ""
 _desktop_last_tool_result = ""
 _desktop_tool_execution_count = 0
 _desktop_tier2_pending = []
-_visual_memory_summary: dict[str, Any] = {"cluster_count": 0, "named_clusters": 0, "most_seen": ""}
+_visual_memory_summary: dict = {"cluster_count": 0, "named_clusters": 0, "most_seen": ""}
 _active_concept_nodes: list[str] = []
 _finetune_status: dict = {"status": "idle"}
 _last_repair_check_ts = 0.0
@@ -4147,6 +4149,22 @@ def _session_state_atexit():
         pass
 
 
+def _write_ava_pid_file():
+    try:
+        AVA_PID_PATH.parent.mkdir(parents=True, exist_ok=True)
+        AVA_PID_PATH.write_text(str(os.getpid()), encoding="utf-8")
+    except Exception as e:
+        print(f"[pid] write failed: {e}")
+
+
+def _delete_ava_pid_file():
+    try:
+        if AVA_PID_PATH.is_file():
+            AVA_PID_PATH.unlink()
+    except Exception:
+        pass
+
+
 def _run_narrative_update_sync():
     try:
         sess = load_session_state()
@@ -4174,6 +4192,7 @@ def _trigger_narrative_update_async():
 
 atexit.register(_session_state_atexit)
 atexit.register(_maybe_update_narrative)
+atexit.register(_delete_ava_pid_file)
 
 
 def get_life_rhythm_prompt_block(person_id: str) -> str:
@@ -8708,6 +8727,7 @@ seed_default_profiles()
 _AVA_IDENTITY_BLOCK = load_ava_identity()
 ensure_emotion_reference_file()
 print_startup_selftest(globals())
+_write_ava_pid_file()
 if not SELF_NARRATIVE_PATH.exists():
     save_self_narrative(load_self_narrative())
     print("[beliefs] self-narrative initialized")

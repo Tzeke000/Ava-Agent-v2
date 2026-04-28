@@ -467,10 +467,21 @@ class ModelCapabilityProfileDef:
     coding_suitability: float = 0.5
     summarization_suitability: float = 0.5
     fallback_priority: int = 100
+    src: str = "config"
 
 
 # Config profiles override neutral "discovered" entries for the same tag name.
 DEFAULT_MODEL_CAPABILITY_PROFILES: tuple[ModelCapabilityProfileDef, ...] = (
+    ModelCapabilityProfileDef(
+        model_name="ava-personal:latest",
+        cognitive_modes=("social_chat_mode", "deep_reasoning_mode", "memory_maintenance_mode", "fallback_safe_mode"),
+        latency_tendency=0.55,
+        reasoning_strength=0.75,
+        coding_suitability=0.65,
+        summarization_suitability=0.72,
+        fallback_priority=3,
+        src="finetuned",
+    ),
     ModelCapabilityProfileDef(
         model_name="llama3.1:8b",
         cognitive_modes=_COGNITIVE_MODES_ALL,
@@ -524,7 +535,7 @@ class ModelRoutingConfig:
     """Per–cognitive-mode preferred models; fallback + global safety net."""
 
     default_model: str = "llama3.1:8b"
-    social_chat_model: str = "mistral:7b"
+    social_chat_model: str = "ava-personal:latest"
     deep_reasoning_model: str = "qwen2.5:14b"
     coding_repair_model: str = "gemma2:9b"
     memory_maintenance_model: str = "qwen2.5:14b"
