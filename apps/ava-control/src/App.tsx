@@ -14,6 +14,7 @@ const TABS = [
   { id: "status" as const, label: "Status / Heartbeat" },
   { id: "memory" as const, label: "Memory" },
   { id: "models" as const, label: "Models / Brains" },
+  { id: "finetune" as const, label: "Finetune" },
   { id: "workbench" as const, label: "Workbench" },
   { id: "identity" as const, label: "Identity" },
   { id: "debug" as const, label: "Debug" },
@@ -53,6 +54,13 @@ type BrainEdge = {
   relationship: string;
   strength: number;
   last_fired: number;
+};
+
+type FinetunePrereq = {
+  ready?: boolean;
+  issues?: string[];
+  checks?: Record<string, boolean>;
+  free_gb?: number;
 };
 
 const EMOTION_VISUALS: Record<string, EmotionVisual> = {
@@ -122,6 +130,11 @@ export default function App() {
   });
   const [selectedBrainNode, setSelectedBrainNode] = useState<BrainNode | null>(null);
   const brainSvgRef = useRef<SVGSVGElement | null>(null);
+  const [finetuneStatus, setFinetuneStatus] = useState<Record<string, unknown>>({});
+  const [finetunePrep, setFinetunePrep] = useState<Record<string, unknown>>({});
+  const [finetunePrereq, setFinetunePrereq] = useState<FinetunePrereq>({});
+  const [finetuneLog, setFinetuneLog] = useState<string[]>([]);
+  const [finetuneBusy, setFinetuneBusy] = useState(false);
 
   const [overrideModel, setOverrideModel] = useState("");
   const [overrideMode, setOverrideMode] = useState("");
@@ -285,6 +298,75 @@ export default function App() {
     }, 3000);
     return () => window.clearInterval(id);
   }, [pollBrainGraph, pollBrainActive]);
+
+  const fetchFinetuneStatus = useCallback(async () => {
+    try {
+      const res = await getJson<Record<string, unknown>>("/api/v1/finetune/status");
+      setFinetuneStatus(res);
+    } catch {
+      // optional endpoint
+    }
+  }, []);
+
+  const fetchFinetuneLog = useCallback(async () => {
+    try {
+      const res = await getJson<{ ok?: boolean; lines?: string[] }>("/api/v1/finetune/log");
+      setFinetuneLog(Array.isArray(res.lines) ? res.lines.slice(-20) : []);
+    } catch {
+      // optional endpoint
+    }
+  }, []);
+
+  const prepareFinetuneDataset = async () => {
+    setFinetuneBusy(true);
+    try {
+      const res = await postJson<Record<string, unknown>>("/api/v1/finetune/prepare", {});
+      setFinetunePrep(res);
+      const validation = asRecord(res.validation);
+      const checks = asRecord(res.checks) as Record<string, boolean> | undefined;
+      setFinetunePrereq({
+        ready: Boolean(res.ok),
+        issues: Array.isArray(validation?.issues) ? (validation?.issues as string[]) : [],
+        checks: checks,
+      });
+      await fetchFinetuneStatus();
+      await fetchFinetuneLog();
+    } catch (e) {
+      setFinetunePrep({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setFinetuneBusy(false);
+    }
+  };
+
+  const startFinetune = async () => {
+    setFinetuneBusy(true);
+    try {
+      const res = await postJson<Record<string, unknown>>("/api/v1/finetune/start", {});
+      const checks = asRecord(res.checks) as Record<string, boolean> | undefined;
+      setFinetunePrereq({
+        ready: Boolean(res.ok),
+        issues: Array.isArray(res.issues) ? (res.issues as string[]) : [],
+        checks,
+      });
+      setFinetunePrep(res);
+      await fetchFinetuneStatus();
+      await fetchFinetuneLog();
+    } catch (e) {
+      setFinetunePrep({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setFinetuneBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    void fetchFinetuneStatus();
+    void fetchFinetuneLog();
+    const id = window.setInterval(() => {
+      void fetchFinetuneStatus();
+      void fetchFinetuneLog();
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [fetchFinetuneStatus, fetchFinetuneLog]);
 
   const ribbon = asRecord(snap?.ribbon);
   const hb = asRecord(snap?.heartbeat_runtime);
@@ -659,6 +741,8 @@ export default function App() {
     );
 
   const lastReplyEmpty = lastChatResponse !== null && !lastReplyPresent;
+  const prereqChecks = finetunePrereq.checks ?? {};
+  const canStartFinetune = Boolean(finetunePrereq.ready);
 
   return (
     <div
@@ -1075,6 +1159,62 @@ export default function App() {
                   </Section>
                 </>
               )}
+            </div>
+          )}
+
+          {tab === "finetune" && (
+            <div className="op-pane">
+              <h1 className="op-h1">Finetune</h1>
+              <p className="op-lead">
+                Fine-tuning takes 30-60 minutes and will use significant CPU/GPU. Ava will continue running during this process.
+              </p>
+              <Section title="Status">
+                <Kv
+                  items={[
+                    { label: "Status", value: finetuneStatus.status ?? "idle" },
+                    { label: "Started", value: finetuneStatus.started_at ? new Date(Number(finetuneStatus.started_at) * 1000).toLocaleString() : "—" },
+                    { label: "Completed", value: finetuneStatus.completed_at ? new Date(Number(finetuneStatus.completed_at) * 1000).toLocaleString() : "—" },
+                    { label: "Examples used", value: finetuneStatus.examples_used ?? finetuneStatus.dataset_count ?? "—" },
+                    { label: "Output model", value: finetuneStatus.output_model ?? "ava-personal:latest" },
+                  ]}
+                />
+              </Section>
+              <Section title="Dataset + Prerequisites">
+                <p className="op-muted">Dataset examples: {String((asRecord(finetunePrep.validation)?.count ?? finetuneStatus.dataset_count ?? 0) as number)}</p>
+                <div className="finetune-checks">
+                  {Object.keys(prereqChecks).length === 0 ? (
+                    <p className="op-muted">Run Prepare Dataset or Start Fine-tune to evaluate prerequisites.</p>
+                  ) : (
+                    Object.entries(prereqChecks).map(([k, v]) => (
+                      <div key={k} className={`finetune-check ${v ? "ok" : "bad"}`}>
+                        {v ? "✓" : "✕"} {k}
+                      </div>
+                    ))
+                  )}
+                </div>
+                {Array.isArray(finetunePrereq.issues) && finetunePrereq.issues.length > 0 ? (
+                  <pre className="mono-block">{finetunePrereq.issues.join("\n")}</pre>
+                ) : null}
+              </Section>
+              <Section title="Actions">
+                <div className="row-gap">
+                  <button type="button" className="btn" onClick={() => void prepareFinetuneDataset()} disabled={finetuneBusy}>
+                    Prepare Dataset
+                  </button>
+                  <button type="button" className="btn primary" onClick={() => void startFinetune()} disabled={finetuneBusy || !canStartFinetune}>
+                    Start Fine-tune
+                  </button>
+                  <button type="button" className="btn ghost" onClick={() => void fetchFinetuneStatus()} disabled={finetuneBusy}>
+                    Check Status
+                  </button>
+                </div>
+                {String(finetuneStatus.status ?? "") === "complete" ? (
+                  <p className="op-note">ava-personal:latest is ready. Switch to it in Models/Brains tab.</p>
+                ) : null}
+              </Section>
+              <Section title="Live Log (last 20 lines)">
+                <pre className="debug-pre tall">{finetuneLog.length ? finetuneLog.join("\n") : "(no finetune log yet)"}</pre>
+              </Section>
             </div>
           )}
 

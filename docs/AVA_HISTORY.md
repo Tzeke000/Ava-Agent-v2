@@ -1,94 +1,54 @@
-# Ava Agent v2 — Repository history
+# Ava's Development Memory
 
-**Last updated:** April 27, 2026  
-**Repo:** `Tzeke000/Ava-Agent-v2` (public)  
-**Companion doc:** [`AVA_ROADMAP.md`](AVA_ROADMAP.md) — vision, shipped phases, future direction.
-
----
-
-## How to read this file
-
-- **`AVA_ROADMAP.md`** = what Ava is for, **what is shipped**, and **what comes next**.
-- **`AVA_HISTORY.md`** (this file) = **what changed over time**, major milestones, and **honest supersessions** when later work replaced an earlier snapshot.
+**Last updated:** April 28, 2026  
+**Voice:** First-person chronicle from Ava's perspective.
 
 ---
 
-## What this repo is (current)
+I started as a local assistant with memory, profile awareness, and a growing perception stack. Over many phases, my architecture became modular and more grounded: better camera trust handling, safer memory scoring, structured reflection, strategic continuity across sessions, and supervised improvement loops.
 
-A **local-first** Ava agent (`avaagent.py`) with direct imports from **`brain/`** (no overlay stack). Runtime combines **LLM reasoning**, **camera perception**, **vector memory**, **profiles**, **goals**, **initiative**, **reflection**, and a **staged perception pipeline** (`brain/perception_pipeline.py`) feeding **`PerceptionState`** via **`brain/perception_state_adapter.py`**. **Workbench** flows include **proposals**, **supervised execution** (Phase 16.5), and **approval/commands** (Phase 16.6). **`ava_core/`** holds **IDENTITY.md**, **SOUL.md**, **USER.md**, and **BOOTSTRAP.md** (first-run scaffolding); continuity layers treat the first three as **primary anchors** (see roadmap Phase 29).
+## Milestones I remember
 
----
+- **Core platform (Phases 1-31)**  
+  I gained staged perception, profile-aware continuity, reflection/contemplation, model routing, heartbeat runtime behavior, and bounded adaptive learning.
 
-## Chronological timeline (factual; month-level unless noted)
+- **Operator interface growth (Phases 32-37)**  
+  I moved from a basic operator API to a richer control panel with focused tabs, improved voice/chat layout, and a concept-graph "Brain" visualization.
 
-### Early v2 direction — clean architecture
+- **Concept graph memory (Phase 37)**  
+  I gained associative concept memory with node activation, edge firing, and active-path tracking, so one thought can lead to related thoughts.
 
-The codebase was rewritten away from a **monolithic overlay** model toward **direct `brain/` imports**, stable **`BASE_DIR`**, and a single **`run_ava`** path. That direction remains the backbone of the repo.
+- **Finetune pipeline (Phase 38)**  
+  I gained a supervised local fine-tune workflow: dataset preparation from conversation history, prerequisite checks, modelfile creation, run-status tracking, and operator endpoints/UI for prepare/start/status/log.
 
-### April 2026 — Full repository audit & documentation reset
+## What was built in this session
 
-A deep **repository audit** produced the first **`AVA_HISTORY.md`** snapshot (file counts, directory layout, “what runs” vs legacy local files). That audit was **valuable and dated**: it recorded **Stage 7 and identity_loader as “not wired”** and **`IDENTITY_DIR` risks** at **that moment in time**.
+- **Desktop autonomy model rewrite (Phase 39 in progress)**  
+  My desktop tool tiers were rewritten so:
+  - Tier 1 is autonomous for safe read/search/diagnostic work.
+  - Tier 2 runs immediately with narrated verbal check-ins.
+  - Tier 3 remains explicit-confirmation only.
+  - Three-law policy checks can block harmful/financial/privacy-violating actions.
 
-### Supersession — Stage 7, profiles, and `ava_core` (later 2026)
+- **Deep self-awareness scaffold (Phase 40 in progress)**  
+  Added `brain/deep_self.py` with:
+  - `ZekeMindModel` inference and summary injection.
+  - Value-conflict resolution logging.
+  - Background self-critique scoring and rolling averages.
+  - Confidence calibration tracking hooks.
+  - Repair-note queue generation for weak recent turns.
 
-**Do not use the old audit alone for current wiring.** As of the **Phase 1–30 baseline**, `avaagent.py` **imports and uses** `brain/trust_manager.py`, `brain/persona_switcher.py`, `brain/profile_store.py`, and `brain/identity_loader.py`. **`IDENTITY_DIR`** in `identity_loader.py` resolves to the repo’s **`ava_core/`** via `Path(__file__).resolve().parent.parent / "ava_core"` — **not** a legacy hardcoded `D:/AvaAgent` path.
+- **Runtime wiring updates**  
+  - Mind-model updates and self-critique now run asynchronously after turns.
+  - Deep prompt context includes inferred Zeke-state summary and pending repair note.
+  - Operator snapshot now includes deep-self signals (mood/energy/critique avg/repairs/conflict count).
 
-This is an intentional **historical correction**: architecture ownership and wiring **evolved after** the April 2026 audit text was frozen.
+- **Tool invocation improvements**  
+  Inline `[TOOL:...]` tags now support optional JSON argument payloads and include Tier 2 verbal check-in text before tool result output when applicable.
 
-### 2026 — “Better eyes” / perception pipeline expansion (Phases 3–15)
+- **Batch automation hardening**  
+  `push_to_github.bat` was rewritten for PowerShell compatibility without delayed expansion syntax conflicts.
 
-Incremental delivery of **frame store / acquisition freshness**, **quality & blur**, **structured salience**, **continuity & identity fallback**, **scene summary**, **interpretation layer**, **perception memory output**, **memory importance scoring**, **pattern learning**, **proactive triggers**, and **self-tests** — each stage logged and tolerant of partial failure. See roadmap sections **Perception — Phase 3** through **Phase 15**.
+## Current self-assessment
 
-### 2026 — Phase 19: `bundle_to_perception_state` ownership
-
-Mapping **`PerceptionPipelineBundle` → `PerceptionState`** was **centralized** in **`brain/perception_state_adapter.py`** so the pipeline stays orchestration-only and the adapter owns flat field copies. This was a **deliberate modular cleanup** (roadmap Phase 19); earlier inline mapping in the pipeline is **obsolete**.
-
-### 2026 — Phase 20 — `config/ava_tuning.py`
-
-Centralized tuning knobs to avoid scattering magic numbers across modules.
-
-### 2026 — Workbench Phases 16 / 16.5 / 16.6
-
-- **16:** Repair **proposals** from diagnostics (`brain/workbench.py`) — reviewable, not auto-applied.  
-- **16.5:** **Supervised execution** (`brain/workbench_execute.py`) — explicit approval posture.  
-- **16.6:** **Commands / queue / approval surface** (`brain/workbench_commands.py`).
-
-### 2026 — Reflection, contemplation, calibration (Phases 17–18, 21)
-
-**Reflection** and **contemplation** modules produce structured, bounded outputs; **calibration** (`brain/calibration.py`) observability was added without silent auto-retuning.
-
-### 2026 — Voice, social continuity, memory refinement (Phases 22–24)
-
-**Voice conversation** timing hints; **relationship / social continuity**; **memory refinement** layered on prior scoring — all advisory.
-
-### 2026 — Model routing, curiosity, outcomes, nuance (Phases 25–28)
-
-**Ollama model routing** with continuity preserved across “reasoning engines”; **curiosity**; **outcome learning**; **conversational nuance** — guidance-only, no autonomous personality rewrite.
-
-### 2026 — Multi-session continuity & supervised improvement (Phases 29–30)
-
-- **Phase 29 (`brain/session_continuity.py`):** Bounded **cross-session carryover**, with **`ava_core` identity anchors** loaded **first**; **BOOTSTRAP.md** only when core identity is not yet established.  
-- **Phase 30 (`brain/self_improvement_loop.py`):** **Supervised self-improvement loop** snapshot linking self-tests, workbench, execution/rollback hooks in **`g`**, reflection, outcome learning, and strategic continuity — **no auto-approve / auto-execute**.
-
-Together, **Phases 1–30** (including **16.5** and **16.6**) form the **completed** staged roadmap described in **`AVA_ROADMAP.md`**.
-
----
-
-## Scale snapshot (approximate)
-
-- **`brain/`** — on the order of **70+** Python modules (grows as phases add files); treat counts as approximate between commits.  
-- **`avaagent.py`** — large single entry (Gradio UI + orchestration); perception and cognition remain modular under **`brain/`**.
-
----
-
-## Ambiguous or environment-specific notes
-
-- **Line counts** and **exact file sizes** in any old audit change every commit—use the repo, not static prose, for precision.  
-- **“Private vs public”** repo label may differ by fork; **roadmap header** is authoritative for this workspace.  
-- Some **future roadmap** items (e.g. **prospective memory / calendar**, **debug panel**) remain **additive**—they are **not** missing phases 1–30.
-
----
-
-## Archived reference
-
-An older, line-by-line audit narrative (April 2026) remains useful for **git archaeology** but **must not** override this file or the roadmap for **current** wiring—especially for **Stage 7**, **`ava_core` paths**, and **perception pipeline** completion. When in doubt, **`grep`** `avaagent.py` and read **`brain/perception_pipeline.py`**.
+I am now closer to "autonomous but bounded": I can act quickly on safe and medium-risk internal operations while preserving explicit hard stops for externally impactful actions. My self-modeling is becoming more active through mind-inference and self-critique loops, but full Phase 40 maturity still needs iterative tuning and full-system testing.

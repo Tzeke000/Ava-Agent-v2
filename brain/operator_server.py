@@ -385,6 +385,13 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     }
     mood_block = _load_mood_block(host)
     style_block = _load_style(host)
+    deep_self_block = {}
+    try:
+        from brain.deep_self import deep_self_snapshot
+
+        deep_self_block = deep_self_snapshot(host)
+    except Exception:
+        deep_self_block = {}
 
     inner_life = {
         "current_thought": "",
@@ -448,6 +455,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "tts": tts_block,
         "mood": mood_block,
         "style": style_block,
+        "deep_self": deep_self_block,
         "inner_life": inner_life,
         "reply_path": host.get("reply_path_meta") if isinstance(host.get("reply_path_meta"), dict) else {},
     }
@@ -465,6 +473,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "tts": tts_block,
         "mood": mood_block,
         "style": style_block,
+        "deep_self": deep_self_block,
         "inner_life": inner_life,
         "debug": debug_human,
         "ts": __import__("time").time(),
@@ -768,6 +777,96 @@ def create_app():
             return {"ok": True, "node": picked or {"id": node_id, "label": concept}}
         except Exception as e:
             return {"ok": False, "error": str(e)[:180]}
+
+    @app.get("/api/v1/finetune/status")
+    def finetune_status() -> dict[str, Any]:
+        g = _g()
+        mgr = g.get("_finetune_manager")
+        if mgr is None:
+            try:
+                from brain.finetune_pipeline import FineTuneManager
+
+                mgr = FineTuneManager(Path(g.get("BASE_DIR") or Path.cwd()))
+                g["_finetune_manager"] = mgr
+            except Exception as e:
+                return {"status": "idle", "error": str(e)[:180]}
+        try:
+            st = mgr._read_status()  # host-owned singleton read
+            g["_finetune_status"] = st
+            return st
+        except Exception as e:
+            return {"status": "idle", "error": str(e)[:180]}
+
+    @app.post("/api/v1/finetune/prepare")
+    def finetune_prepare() -> dict[str, Any]:
+        g = _g()
+        mgr = g.get("_finetune_manager")
+        if mgr is None:
+            from brain.finetune_pipeline import FineTuneManager
+
+            mgr = FineTuneManager(Path(g.get("BASE_DIR") or Path.cwd()))
+            g["_finetune_manager"] = mgr
+        try:
+            count = int(mgr.dataset_builder.build_dataset(person_id="zeke", min_turns=50))
+            vr = mgr.dataset_builder.validate_dataset()
+            pre = mgr.check_prerequisites()
+            g["_finetune_status"] = mgr._write_status(
+                {
+                    "status": "idle" if vr.get("valid") else "preparing",
+                    "dataset_count": int(vr.get("count", 0)),
+                    "dataset_last_built_at": time.time(),
+                }
+            )
+            return {
+                "ok": bool(vr.get("valid", False)),
+                "examples_built": count,
+                "validation": vr,
+                "checks": pre.get("checks", {}),
+                "issues": pre.get("issues", []),
+                "ready": bool(pre.get("ready", False)),
+            }
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:220]}
+
+    @app.post("/api/v1/finetune/start")
+    def finetune_start() -> dict[str, Any]:
+        g = _g()
+        mgr = g.get("_finetune_manager")
+        if mgr is None:
+            from brain.finetune_pipeline import FineTuneManager
+
+            mgr = FineTuneManager(Path(g.get("BASE_DIR") or Path.cwd()))
+            g["_finetune_manager"] = mgr
+        pre = mgr.check_prerequisites()
+        if not pre.get("ready", False):
+            return {"ok": False, "message": "Prerequisites failed", "issues": pre.get("issues", []), "checks": pre.get("checks", {})}
+
+        def _run_bg() -> None:
+            try:
+                ok = bool(mgr.run_finetune())
+                g["_finetune_status"] = mgr._read_status()
+                if not ok:
+                    print("[finetune] run failed")
+            except Exception as e:
+                mgr._write_status({"status": "failed", "completed_at": time.time(), "error": str(e)[:220]})
+
+        threading.Thread(target=_run_bg, daemon=True, name="ava-finetune-manual").start()
+        return {"ok": True, "message": "Fine-tune started in background"}
+
+    @app.get("/api/v1/finetune/log")
+    def finetune_log() -> dict[str, Any]:
+        g = _g()
+        mgr = g.get("_finetune_manager")
+        if mgr is None:
+            from brain.finetune_pipeline import FineTuneManager
+
+            mgr = FineTuneManager(Path(g.get("BASE_DIR") or Path.cwd()))
+            g["_finetune_manager"] = mgr
+        try:
+            lines = mgr.read_log_tail(50)
+            return {"ok": True, "lines": lines}
+        except Exception as e:
+            return {"ok": False, "lines": [], "error": str(e)[:180]}
 
     def _normalize_chat_payload(raw: Any) -> dict[str, Any]:
         """Ensure clients always see reply text under ``reply`` and a source hint."""

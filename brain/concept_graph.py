@@ -34,6 +34,7 @@ class ConceptNode:
     activation_count: int
     color: str
     notes: str
+    archived: bool = False
 
 
 @dataclass
@@ -87,6 +88,7 @@ class ConceptGraph:
                         activation_count=int(row.get("activation_count") or 0),
                         color=str(row.get("color") or TYPE_COLORS.get(str(row.get("type") or "topic"), "#4299e1")),
                         notes=str(row.get("notes") or ""),
+                        archived=bool(row.get("archived", False)),
                     )
                     if node.id:
                         self.nodes[node.id] = node
@@ -147,6 +149,7 @@ class ConceptGraph:
     def find_or_create(self, label: str, type: NodeType) -> str:
         slug = _slugify(label)
         if slug in self.nodes:
+            self.nodes[slug].archived = False
             return slug
         return self.add_node(label, type)
 
@@ -177,6 +180,7 @@ class ConceptGraph:
         node = self.nodes.get(node_id)
         if node is None:
             return
+        node.archived = False
         node.last_activated = time.time()
         node.activation_count += 1
         node.weight = _clamp(node.weight + 0.04, 0.0, 1.0)
@@ -240,6 +244,86 @@ class ConceptGraph:
                 "active_nodes_30s": len(self.get_active_nodes(30)),
             },
         }
+
+    def get_related_concepts(self, topic: str, max_hops: int = 2) -> list[dict[str, Any]]:
+        start_id = _slugify(topic)
+        if start_id not in self.nodes:
+            # fallback: direct label match
+            for nid, node in self.nodes.items():
+                if node.label.strip().lower() == (topic or "").strip().lower():
+                    start_id = nid
+                    break
+        if start_id not in self.nodes:
+            return []
+        max_hops = max(1, int(max_hops or 2))
+        visited: set[str] = {start_id}
+        queue: list[tuple[str, int, float]] = [(start_id, 0, 1.0)]
+        scored: dict[str, float] = {}
+        while queue:
+            current, hop, path_strength = queue.pop(0)
+            if hop >= max_hops:
+                continue
+            for edge in self.edges:
+                nxt = ""
+                if edge.source == current:
+                    nxt = edge.target
+                elif edge.target == current:
+                    nxt = edge.source
+                if not nxt or nxt not in self.nodes:
+                    continue
+                weight = path_strength * float(edge.strength or 0.0) * (0.92**hop)
+                scored[nxt] = max(scored.get(nxt, 0.0), weight)
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append((nxt, hop + 1, weight))
+        results = []
+        for nid, score in sorted(scored.items(), key=lambda kv: kv[1], reverse=True):
+            if nid == start_id:
+                continue
+            row = asdict(self.nodes[nid])
+            row["association_strength"] = round(score, 4)
+            results.append(row)
+        return results
+
+    def strengthen_edge(self, source_id: str, target_id: str) -> None:
+        if source_id == target_id or source_id not in self.nodes or target_id not in self.nodes:
+            return
+        now = time.time()
+        for edge in self.edges:
+            if (
+                (edge.source == source_id and edge.target == target_id)
+                or (edge.source == target_id and edge.target == source_id)
+            ):
+                edge.strength = _clamp(edge.strength + 0.05, 0.0, 1.0)
+                edge.last_fired = now
+                self._save()
+                return
+        self.edges.append(
+            ConceptEdge(
+                source=source_id,
+                target=target_id,
+                relationship="related_to",
+                strength=0.45,
+                last_fired=now,
+            )
+        )
+        self._save()
+
+    def decay_unused_nodes(self, days_threshold: int = 30) -> int:
+        now = time.time()
+        threshold_s = max(1, int(days_threshold or 30)) * 24 * 3600
+        decayed = 0
+        for node in self.nodes.values():
+            age = now - float(node.last_activated or 0.0)
+            if age < threshold_s:
+                continue
+            node.weight = _clamp(node.weight - 0.1, 0.0, 1.0)
+            if node.weight < 0.1:
+                node.archived = True
+            decayed += 1
+        if decayed:
+            self._save()
+        return decayed
 
 
 def _safe_read_json(path: Path) -> Any:
