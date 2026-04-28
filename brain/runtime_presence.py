@@ -6,6 +6,7 @@ one lightweight surface. Does not write ava_core identity files or approve workb
 """
 from __future__ import annotations
 
+import time
 import traceback
 from pathlib import Path
 from typing import Any, Optional
@@ -28,6 +29,9 @@ from .perception_types import (
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SESSION_STATE_PATH = _REPO_ROOT / "state" / "session_state.json"
 
+# Warm self-snapshot TTL hint for consumers (seconds); snapshot refreshes each perception tick.
+_RUNTIME_SELF_SNAPSHOT_MAX_STALE_SEC = 90.0
+
 
 def _clamp01(x: float) -> float:
     return max(0.0, min(1.0, float(x)))
@@ -38,6 +42,90 @@ def _trunc(s: str, n: int = 240) -> str:
     if len(t) <= n:
         return t
     return t[: n - 1].rstrip() + "…"
+
+
+def _heartbeat_focus_line(hb: Optional[HeartbeatTickResult]) -> str:
+    if hb is None:
+        return ""
+    parts = [
+        str(getattr(hb, "heartbeat_mode", "") or "")[:48],
+        str(getattr(hb, "tick_reason", "") or "")[:120],
+        str(getattr(hb, "suggested_action", "") or "")[:120],
+    ]
+    parts = [p for p in parts if p.strip()]
+    if getattr(hb, "heartbeat_summary", "").strip():
+        parts.append(_trunc(str(hb.heartbeat_summary), 160))
+    return _trunc(" | ".join(parts), 260)
+
+
+def _current_focus_composite(
+    hb: Optional[HeartbeatTickResult],
+    al: Optional[AdaptiveLearningResult],
+) -> str:
+    hb_line = _heartbeat_focus_line(hb)
+    lf = ""
+    if al is not None:
+        lf = _trunc(
+            str(getattr(al, "learning_focus", "") or getattr(al, "learning_summary", "") or ""),
+            200,
+        )
+    if hb_line and lf:
+        return _trunc(f"heartbeat: {hb_line}; learning: {lf}", 320)
+    return hb_line or lf or "steady_observation"
+
+
+def _store_runtime_self_snapshot(
+    g: dict[str, Any],
+    *,
+    presence_mode: str,
+    ready_state: str,
+    active_issue: str,
+    threads_sum: str,
+    maintenance_status_summary: str,
+    operator_status_summary: str,
+    learn_sum: str,
+    hb_sum: str,
+    heartbeat: Optional[HeartbeatTickResult],
+    adaptive_learning: Optional[AdaptiveLearningResult],
+    strategic_continuity: Optional[StrategicContinuityResult],
+    improvement_loop: Optional[ImprovementLoopResult],
+    workbench: Optional[WorkbenchProposalResult],
+) -> None:
+    """Bounded warm state for hosts (no full pipeline replay). Refreshed each presence build."""
+    if not isinstance(g, dict):
+        return
+    now = time.time()
+    thread_hint = ""
+    if strategic_continuity is not None and strategic_continuity.active_threads:
+        t0 = strategic_continuity.active_threads[0]
+        thread_hint = _trunc(str(getattr(t0, "summary", "") or getattr(t0, "category", "") or ""), 200)
+    if not thread_hint:
+        thread_hint = str(threads_sum or "")[:200]
+
+    snap = {
+        "version": 1,
+        "ts": now,
+        "max_stale_hint_sec": _RUNTIME_SELF_SNAPSHOT_MAX_STALE_SEC,
+        "heartbeat_mode": str(getattr(heartbeat, "heartbeat_mode", "") or presence_mode)[:48],
+        "current_focus": _current_focus_composite(heartbeat, adaptive_learning),
+        "active_issue": str(active_issue or "")[:400],
+        "active_thread": thread_hint,
+        "runtime_readiness": str(ready_state or "steady")[:32],
+        "learning_focus": str(getattr(adaptive_learning, "learning_focus", "") or "")[:220],
+        "maintenance_state": str(maintenance_status_summary or "")[:400],
+        "operator_summary": str(operator_status_summary or "")[:500],
+        "presence_mode": str(presence_mode or "")[:48],
+        "learning_status_summary": str(learn_sum or "")[:260],
+        "heartbeat_status_summary": str(hb_sum or "")[:260],
+        "workbench_signal": "",
+        "improvement_stage": str(getattr(improvement_loop, "loop_stage", "") or "")[:80]
+        if improvement_loop is not None
+        else "",
+    }
+    if workbench is not None and getattr(workbench, "has_proposal", False):
+        snap["workbench_signal"] = _trunc(str(getattr(workbench.top_proposal, "proposal_type", "") or ""), 120)
+    g["_runtime_self_snapshot"] = snap
+    g["_runtime_self_snapshot_ts"] = now
 
 
 def bootstrap_startup_resume(g: dict[str, Any]) -> None:
@@ -226,25 +314,43 @@ def _build_runtime_presence(
 
     operator_status_summary = rollup
 
+    _store_runtime_self_snapshot(
+        g,
+        presence_mode=presence_mode,
+        ready_state=ready_state,
+        active_issue=active_issue,
+        threads_sum=threads_sum,
+        maintenance_status_summary=maintenance_status_summary,
+        operator_status_summary=operator_status_summary,
+        learn_sum=learn_sum,
+        hb_sum=hb_sum,
+        heartbeat=heartbeat,
+        adaptive_learning=adaptive_learning,
+        strategic_continuity=sc,
+        improvement_loop=ilp,
+        workbench=wb,
+    )
+
     pb = _proactive_silence_bias(heartbeat, adaptive_learning)
 
     meta = {
         "proactive_silence_bias": pb,
         "presence_mode": presence_mode,
         "identity_anchors_respected": True,
+        "runtime_self_snapshot_ts": g.get("_runtime_self_snapshot_ts"),
     }
 
-    # Throttled operational log when mode changes or non-quiet
-    sig = f"{presence_mode}|{maint_parts and 'm' or ''}|{threads_sum[:40]}"
+    sig = f"{presence_mode}|{maint_parts and 'm' or ''}|{threads_sum[:40]}|{active_issue[:40]}"
     last = g.get("_runtime_presence_last_sig")
-    should_log = last != sig
-    if should_log:
-        ai = active_issue[:90] if active_issue else "—"
-        th = _trunc(threads_sum, 72) if threads_sum else "—"
-        print(
-            f"[runtime_presence] mode={presence_mode} ready={ready_state} "
-            f"active_issue={ai} threads={th} summary={operator_status_summary[:120]}"
-        )
+    quiet_chatter = (
+        presence_mode == "quiet_monitoring"
+        and not (active_issue or "").strip()
+        and maintenance_status_summary == "none_pending"
+        and not (threads_sum or "").strip()
+    )
+    issue_log = _trunc(active_issue, 88) if active_issue else "—"
+    if not quiet_chatter and last != sig:
+        print(f"[runtime_presence] mode={presence_mode} ready={ready_state} issue={issue_log}")
     g["_runtime_presence_last_sig"] = sig
 
     return RuntimePresenceResult(

@@ -865,6 +865,141 @@ def build_model_routing_result(
     return res
 
 
+def _trunc_route_reason(s: str, n: int = 220) -> str:
+    t = " ".join((s or "").split())
+    return t if len(t) <= n else t[: n - 1] + "…"
+
+
+def resolve_model_for_execution_path(
+    path: str,
+    g: dict[str, Any] | None,
+    *,
+    user_text: str = "",
+    config: Optional[ModelRoutingConfig] = None,
+    commit_to_globals: bool = True,
+) -> tuple[str, str, str]:
+    """
+    Pick an Ollama model tag for non-pipeline callers (initiative, memory annotation, event extract, etc.).
+
+    Reuses availability discovery, capability registry, warm resolution, stickiness, and cooldown
+    policies from :func:`build_model_routing_result` without requiring a full perception bundle.
+    Returns ``(selected_model, cognitive_mode, compact_reason)``.
+    """
+    cfg = config or MODEL_ROUTING_CONFIG
+    profiles = DEFAULT_MODEL_CAPABILITY_PROFILES
+    ut = (user_text or "").strip()
+    ut_low = ut.lower()
+
+    mode = FALLBACK_SAFE_MODE
+    path_l = (path or "default").strip().lower()
+    if path_l in ("initiative", "autonomous_initiative", "proactive"):
+        mode = SOCIAL_CHAT_MODE
+    elif path_l in ("prospective_events", "event_extract", "calendar_extract"):
+        mode = MEMORY_MAINTENANCE_MODE
+    elif path_l in ("memory_metadata", "memory_tagging", "autoremember"):
+        mode = MEMORY_MAINTENANCE_MODE
+    elif path_l in ("beliefs_narrative", "self_narrative", "narrative_llm"):
+        mode = MEMORY_MAINTENANCE_MODE
+    elif path_l in ("workbench", "coding", "repair", "patch"):
+        mode = CODING_REPAIR_MODE
+    elif path_l in ("reflection_digest", "reflection_heavy", "deep_aux"):
+        mode = DEEP_REASONING_MODE
+    elif path_l in ("voice_aux",):
+        mode = SOCIAL_CHAT_MODE
+
+    code_kw = ("traceback", "syntaxerror", "patch", "diff", ".py", "compile", "exception")
+    if any(k in ut_low for k in code_kw):
+        mode = CODING_REPAIR_MODE
+    mem_kw = ("summarize memory", "prune", "forget old", "dedupe memories")
+    if any(k in ut_low for k in mem_kw):
+        mode = MEMORY_MAINTENANCE_MODE
+
+    available, discovery_source = discover_available_model_tags(force=False)
+    registry = build_runtime_capability_registry(available, profiles)
+    reg_by_name = _registry_map(registry)
+
+    primary_warm, warm_note = _resolve_warm_model_for_mode(mode, cfg, registry, available)
+    explicit_fallback = (cfg.global_fallback_model or cfg.default_model or "").strip()
+
+    selected = primary_warm
+    if available is not None and selected not in available:
+        selected, clamp_note = _pick_available(selected, explicit_fallback, cfg.global_fallback_model, available)
+        warm_note = f"{warm_note}|clamp={clamp_note}"
+
+    last_effective: Optional[str] = None
+    if isinstance(g, dict):
+        le = g.get("_routing_last_effective_model")
+        if isinstance(le, str) and le.strip():
+            last_effective = le.strip()
+
+    floor = _mode_suitability_floor(mode, cfg)
+    urgent = mode in _URGENT_MODES
+    gain_needed = float(cfg.routing_min_switch_gain)
+
+    sel_entry = reg_by_name.get(selected)
+    if sel_entry is None:
+        sel_entry = _neutral_entry(
+            selected, available=available is None or selected in (available or frozenset())
+        )
+    fit_candidate = _fit_for_mode(mode, sel_entry)
+
+    last_entry: Optional[ModelCapabilityEntry] = None
+    fit_last = 0.0
+    if last_effective:
+        last_entry = reg_by_name.get(last_effective)
+        if last_entry is None and (available is None or last_effective in (available or frozenset())):
+            last_entry = _neutral_entry(last_effective, available=True)
+        if last_entry is not None:
+            fit_last = _fit_for_mode(mode, last_entry)
+
+    stick_reason = "none"
+    if (
+        last_effective
+        and last_entry is not None
+        and available is not None
+        and last_effective in available
+        and fit_last >= floor
+        and (fit_candidate - fit_last) < gain_needed
+        and not urgent
+    ):
+        selected = last_effective
+        stick_reason = "prefer_last_engine_branch"
+
+    last_switch_mono = float(g.get("_routing_last_switch_monotonic", 0.0)) if isinstance(g, dict) else 0.0
+    cooldown = float(cfg.routing_switch_cooldown_seconds)
+    since_switch = time.monotonic() - last_switch_mono if last_switch_mono > 0 else cooldown + 1.0
+    if (
+        isinstance(g, dict)
+        and last_effective
+        and selected != last_effective
+        and last_entry is not None
+        and available is not None
+        and last_effective in available
+        and since_switch < cooldown
+        and not urgent
+        and fit_last >= floor
+    ):
+        selected = last_effective
+        stick_reason = "branch_cooldown_hold"
+
+    if available is not None and selected not in available:
+        selected, _ = _pick_available(selected, explicit_fallback, cfg.global_fallback_model, available)
+
+    reason = f"path={path_l} mode={mode} warm={warm_note} stick={stick_reason} discovery={discovery_source}"
+
+    if commit_to_globals or path_l not in ("prospective_events", "event_extract", "calendar_extract"):
+        print(f"[model_routing] path={path_l} selected={selected} reason={_trunc_route_reason(reason)}")
+
+    if commit_to_globals and isinstance(g, dict):
+        prev_sel = str(g.get("_routing_last_effective_model") or "").strip()
+        g["_routing_last_effective_model"] = selected
+        g["_routing_last_cognitive_mode"] = mode
+        if prev_sel != selected:
+            g["_routing_last_switch_monotonic"] = time.monotonic()
+
+    return selected, mode, reason
+
+
 def apply_model_routing_to_perception_state(state: Any, routing: ModelRoutingResult | None) -> None:
     """Copy routing snapshot onto PerceptionState (safe defaults if missing)."""
     if routing is None:

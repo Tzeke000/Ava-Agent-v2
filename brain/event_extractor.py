@@ -10,7 +10,9 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_ollama import ChatOllama
 
+from .model_routing import resolve_model_for_execution_path
 from .prospective import DEFAULT_PROMPT_TEMPLATE, load_pending_events, save_prospective_event
 
 
@@ -140,9 +142,13 @@ def _resolve_due_date(phrase: str, ref: datetime | None = None) -> tuple[str, st
 
 
 def _llm_extract(host: dict, user_text: str) -> dict[str, Any] | None:
-    llm = host.get("llm") if host else None
-    if llm is None:
-        return None
+    tag, _, _ = resolve_model_for_execution_path(
+        "prospective_events",
+        host if isinstance(host, dict) else None,
+        user_text=user_text[:1200],
+        commit_to_globals=False,
+    )
+    llm = ChatOllama(model=tag, temperature=0.35)
     sys = SystemMessage(
         content=(
             "You extract structured data about FUTURE events only. "

@@ -27,6 +27,13 @@ from brain.perception import build_perception
 from brain.attention import compute_attention
 from brain.memory import decay_tick
 from brain.workspace import Workspace
+from brain.reply_path import (
+    build_fast_path_snapshot,
+    prepare_reply_path_for_turn,
+    should_skip_initial_workspace_tick,
+)
+from brain.live_context import attach_live_context_globals, build_live_context, format_live_context_block
+from brain.model_routing import resolve_model_for_execution_path
 from brain.turn_visual import default_visual_payload, normalize_visual_payload
 from brain.identity import IdentityRegistry
 from brain.memory_bridge import MemoryBridge
@@ -5234,7 +5241,11 @@ Rules:
 - do not use markdown or labels
 """
     try:
-        result = llm.invoke([
+        _tag, _, _ = resolve_model_for_execution_path(
+            "initiative", globals(), user_text=str(topic or "")[:900]
+        )
+        _init_llm = ChatOllama(model=_tag, temperature=0.6)
+        result = _init_llm.invoke([
             SystemMessage(content="You are Ava. Speak naturally and briefly, like a real person."),
             HumanMessage(content=prompt)
         ])
@@ -5925,11 +5936,13 @@ Do not use these blocks unless you genuinely want to act.
 llm = ChatOllama(model=LLM_MODEL, temperature=0.6)
 
 
-def call_llm(prompt: str, max_tokens: int = 256) -> str:
+def call_llm(prompt: str, max_tokens: int = 256, *, routing_path: str = "beliefs_narrative") -> str:
     """Host hook for brain.beliefs.update_self_narrative (non-critical path)."""
     try:
         _ = max_tokens  # reserved for future model-specific limits
-        result = llm.invoke([HumanMessage(content=prompt)])
+        tag, _, _ = resolve_model_for_execution_path(routing_path, globals(), user_text=prompt[:1600])
+        model = ChatOllama(model=tag, temperature=0.6)
+        result = model.invoke([HumanMessage(content=prompt)])
         return (getattr(result, "content", None) or str(result)).strip()
     except Exception:
         return ""
@@ -5967,7 +5980,7 @@ Return ONLY valid JSON with these keys:
 "tags": array of 2-6 short lowercase topic tags (single words when possible)
 
 No markdown, no other keys."""
-    raw = call_llm(prompt, max_tokens=260)
+    raw = call_llm(prompt, max_tokens=260, routing_path="memory_metadata")
     if not raw:
         return out
     try:
@@ -6141,6 +6154,14 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
             + "\n".join(f"- {m}" for m in ws.active_memory)
         )
 
+    _lc = build_live_context(perception, globals())
+    attach_live_context_globals(globals(), _lc)
+    _lc_block = format_live_context_block(_lc, max_chars=780).strip()
+    _live_ctx_section = (
+        "LIVE CONTEXT (current relevance — bounded; not exhaustive memory):\n"
+        + (_lc_block if _lc_block else "(no notable live-context signals above baseline)")
+    )
+
     prompt = f"""
 {personality}
 
@@ -6201,6 +6222,8 @@ AVAILABLE READ-ONLY FILES:
 WORKBENCH INDEX:
 {workbench_index}
 
+{_live_ctx_section}
+
 USER MESSAGE:
 {user_input}
 
@@ -6241,6 +6264,175 @@ Respond as Ava.
     except Exception as _e:
         print(f"[visual_pipeline] log failed: {_e}")
     return messages, visual, active_profile
+
+
+def build_prompt_fast(
+    user_input: str, image=None, active_person_id: str | None = None
+) -> tuple[list, dict, dict]:
+    """
+    Lightweight prompt for simple social turns: no vector memory, reflections, workbench index,
+    or dynamic memory bridge. Uses warm-state snapshot + last workspace perception.
+    Skips update_internal_emotions (mood file drift deferred to deep turns).
+    """
+    if active_person_id is None:
+        active_person_id = get_active_person_id()
+
+    ws = workspace.state
+    if ws is None:
+        ws = workspace.tick(camera_manager, image, globals(), user_input)
+
+    perception = ws.perception
+    frame = perception.frame
+    inferred_person_id, infer_source = infer_person_from_text(user_input, active_person_id)
+
+    recognized_text = perception.recognized_text
+    recognized_person_id = perception.face_identity
+    expression_state = update_expression_state(
+        frame,
+        recognized_person_id=recognized_person_id,
+        visual_truth_trusted=perception.visual_truth_trusted,
+    )
+    if recognized_person_id is not None and recognized_person_id != active_person_id:
+        inferred_person_id = recognized_person_id
+        infer_source = "facial_recognition"
+
+    if inferred_person_id != active_person_id:
+        profile = identity_registry.ensure_profile(inferred_person_id, globals(), source=infer_source)
+        active_person_id = profile.get("person_id", inferred_person_id)
+
+    active_profile = set_active_person(active_person_id, source="conversation")
+    personality = load_personality()
+    mood = load_mood()
+
+    face_status = perception.face_status
+    snap = build_fast_path_snapshot(perception, globals())
+
+    profile_summary = {
+        "person_id": active_profile["person_id"],
+        "name": active_profile["name"],
+        "relationship_to_zeke": active_profile["relationship_to_zeke"],
+        "allowed_to_use_computer": active_profile["allowed_to_use_computer"],
+        "relationship_score": round(float(active_profile.get("relationship_score", 0.3)), 4),
+        "notes": active_profile["notes"][:6],
+        "likes": active_profile["likes"][:6],
+        "ava_impressions": active_profile["ava_impressions"][:4],
+    }
+
+    _rs = float(active_profile.get("relationship_score", 0.3))
+    if _rs >= 0.7:
+        _rapport_hint = (
+            "\nRAPPORT: You have strong rapport with this person — be natural, casual, and familiar."
+        )
+    elif _rs < 0.3:
+        _rapport_hint = (
+            "\nRAPPORT: This person is still relatively new to you — be warm but measured."
+        )
+    else:
+        _rapport_hint = ""
+
+    _voice_conv = ""
+    try:
+        if globals().get("_voice_user_turn_priority"):
+            hint = str(getattr(perception, "voice_continuity_hint", "") or "")[:420]
+            vts = getattr(perception, "voice_turn_state", "idle")
+            vwait = bool(getattr(perception, "voice_should_wait", False))
+            vrd = float(getattr(perception, "voice_response_readiness", 0.5) or 0.5)
+            vint = bool(getattr(perception, "voice_interrupted", False))
+            _voice_conv = (
+                "\nVOICE TURN (microphone session — advisory pacing only):\n"
+                f"- turn_state={vts} readiness≈{vrd:.2f} bias_wait={vwait} interrupted={vint}\n"
+                + (f"- continuity_hint: {hint}\n" if hint else "")
+                + "Keep replies concise and speakable.\n"
+            )
+    except Exception:
+        _voice_conv = ""
+
+    narrative_snip = (ws.self_narrative or "").strip()[:650] if ws.self_narrative else ""
+    narrative_block = (
+        f"SELF NARRATIVE (bounded):\n{narrative_snip}\n\n" if narrative_snip else ""
+    )
+
+    warm_block = (
+        f"{snap.mood_summary}\n"
+        f"Camera: {snap.camera_line}\n"
+        f"Presence: {snap.runtime_presence_line}\n"
+        f"Concerns: {snap.concern_line}\n"
+        f"Relationship/continuity hint: {snap.relationship_hint or '(none)'}\n"
+    )
+
+    _lc_fast = build_live_context(perception, globals())
+    attach_live_context_globals(globals(), _lc_fast)
+    _lc_fast_block = format_live_context_block(_lc_fast, max_chars=520).strip()
+    _live_fast_section = (
+        "LIVE CONTEXT (bounded):\n" + (_lc_fast_block if _lc_fast_block else "(minimal)")
+    )
+
+    prompt = f"""{personality}
+
+FAST TURN — answer the user directly first; treat warm state as background only (may be slightly stale).
+
+{narrative_block}
+
+ACTIVE PERSON:
+{json.dumps(profile_summary, indent=2)}
+{_rapport_hint}
+{_voice_conv}
+
+TIME:
+{get_time_status_text()}
+Circadian rhythm: {get_circadian_modifiers()["tone_hint"]}
+
+INTERNAL STATE (cached mood snapshot — no full emotion refresh this turn):
+{mood_to_prompt_text(mood)}
+
+WARM STATE:
+{warm_block}
+
+{_live_fast_section}
+
+USER MESSAGE:
+{user_input}
+
+Respond as Ava — concise and natural unless they explicitly ask for depth or technical detail.
+"""
+
+    messages = [
+        SystemMessage(content=SYSTEM_PROMPT),
+        HumanMessage(content=prompt),
+    ]
+
+    try:
+        persona_block = build_persona_block(active_profile)
+        trust_note = f"[Trust level: {get_trust_label(active_profile).upper()} ({get_trust_level(active_profile)})]"
+        injected = f"{_AVA_IDENTITY_BLOCK}\n\n{persona_block}\n\n{trust_note}"
+        if messages and isinstance(messages[0], SystemMessage):
+            messages[0].content = injected + "\n\n" + messages[0].content
+        else:
+            messages.insert(0, SystemMessage(content=injected))
+    except Exception as _e:
+        print(f"[stage7] persona inject failed (fast path): {_e}")
+
+    visual = {
+        "face_status": face_status,
+        "recognition_status": recognized_text,
+        "expression_status": get_expression_status_text(expression_state),
+        "memory_preview": "",
+        "turn_route": "llm_fast",
+        "visual_truth_trusted": perception.visual_truth_trusted,
+        "vision_status": perception.vision_status,
+        "reply_path": "fast",
+        "reply_path_reason": str(globals().get("reply_path_reason") or "")[:120],
+    }
+    try:
+        print(
+            f"[visual_pipeline] route=llm_fast vision={perception.vision_status} "
+            f"trusted={perception.visual_truth_trusted} face={face_status!r} "
+            f"recog_preview={(recognized_text or '')[:140]!r}"
+        )
+    except Exception as _e:
+        print(f"[visual_pipeline] log failed (fast): {_e}")
+    return messages, visual, active_profile
+
 
 # =========================================================
 # CORE
@@ -6758,12 +6950,19 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
                 user_input, ai_reply, visual, active_profile, actions, turn_route="camera_identity"
             )
 
-        messages, visual, active_profile = build_prompt(
-            user_input, image=image, active_person_id=active_person_id
-        )
+        use_fast_path = str(globals().get("reply_path_selected") or "") == "fast"
+        if use_fast_path:
+            messages, visual, active_profile = build_prompt_fast(
+                user_input, image=image, active_person_id=active_person_id
+            )
+            print("[run_ava] llm_invoke start path=fast")
+        else:
+            messages, visual, active_profile = build_prompt(
+                user_input, image=image, active_person_id=active_person_id
+            )
+            print("[run_ava] llm_invoke start path=deep")
 
         try:
-            print("[run_ava] llm_invoke start")
             _invoke_llm = llm
             try:
                 _ws_st = workspace.state
@@ -6794,9 +6993,18 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
         ai_reply = _apply_repetition_control(ai_reply, user_input, person_id, source="chat")
         ai_reply = _scrub_internal_leakage(ai_reply)
         ai_reply = scrub_visible_reply(ai_reply)
-        print(f"[run_ava] exit route=llm via finalize actions={len(actions)}")
+        _vroute = isinstance(visual, dict) and visual.get("turn_route")
+        print(
+            f"[run_ava] exit route={_vroute or 'llm'} via finalize actions={len(actions)} "
+            f"path={'fast' if use_fast_path else 'deep'}"
+        )
         return finalize_ava_turn(
-            user_input, ai_reply, visual, active_profile, actions, turn_route="llm"
+            user_input,
+            ai_reply,
+            visual,
+            active_profile,
+            actions,
+            turn_route=_vroute or "llm",
         )
     except Exception as e:
         import traceback
@@ -7016,6 +7224,97 @@ def camera_tick_fn(image, history):
         recent_camera_events_text(limit=8)
     )
 
+
+def operator_console_chat(message: str, *, image=None) -> dict:
+    """
+    Operator desktop / HTTP API entry: text chat mirroring the Gradio chat_fn path (camera optional).
+    Keeps canonical history and calls the same run_ava + finalize pipeline as the web UI.
+    """
+    clean_message = _extract_text_content(message).strip()
+    out: dict = {"ok": True, "source": "operator_console"}
+    try:
+        if not clean_message:
+            workspace.tick(camera_manager, image, globals(), "")
+            perception = workspace.state.perception if workspace.state else build_perception(
+                camera_manager, image, globals(), ""
+            )
+            out["ok"] = True
+            out["empty_message"] = True
+            out["face_status"] = perception.face_status
+            out["vision_status"] = perception.vision_status
+            out["canonical_history"] = list(_get_canonical_history())
+            return out
+
+        workspace.record_user_message()
+        note_user_interaction_for_initiative(clean_message, interaction_kind="text")
+        _mark_user_reply_started()
+        try:
+            _rp_decision = prepare_reply_path_for_turn(
+                globals(), clean_message, workspace, voice_session=False
+            )
+            if not should_skip_initial_workspace_tick(_rp_decision):
+                workspace.tick(camera_manager, image, globals(), clean_message)
+            canon = list(_get_canonical_history())
+            canon.append({"role": "user", "content": clean_message})
+            _set_canonical_history(canon)
+            reply, visual, active_profile, actions, refl = run_ava(
+                clean_message, image, get_active_person_id()
+            )
+            try:
+                msg_count = bump_session_message_count()
+                if msg_count % 10 == 0:
+                    recent = load_recent_chat(limit=10, person_id=active_profile["person_id"])
+                    summary = " ".join((r.get("content", "") or "")[:100] for r in recent[-5:])
+                    mood = load_mood()
+                    face_emo = load_expression_state().get("raw_emotion", "neutral")
+                    update_self_narrative(globals(), summary, mood, face_emo)
+            except Exception as e:
+                print(f"[self-narrative] update failed (operator chat): {e}")
+
+            workspace.tick(camera_manager, image, globals(), clean_message)
+            perception = workspace.state.perception if workspace.state else build_perception(
+                camera_manager, image, globals(), clean_message
+            )
+            expr_state = update_expression_state(
+                perception.frame,
+                recognized_person_id=perception.face_identity,
+                visual_truth_trusted=perception.visual_truth_trusted,
+            )
+            if perception.visual_truth_trusted:
+                process_camera_snapshot(
+                    perception.frame,
+                    recognized_text=perception.recognized_text,
+                    recognized_person_id=perception.face_identity,
+                    expression_state=expr_state,
+                )
+
+            out["reply"] = reply
+            out["visual"] = dict(visual or {})
+            out["actions"] = list(actions or [])
+            out["reflection"] = refl if isinstance(refl, dict) else {}
+            out["active_profile"] = {
+                "person_id": active_profile.get("person_id"),
+                "name": active_profile.get("name"),
+            }
+            out["canonical_history"] = list(_get_canonical_history())
+            out["face_status"] = visual.get("face_status", perception.face_status)
+            out["recognition_status"] = visual.get("recognition_status", perception.recognized_text)
+            return out
+        finally:
+            _mark_user_reply_finished()
+    except Exception as e:
+        import traceback
+
+        print(f"[operator_console_chat] {e!r}\n{traceback.format_exc()}")
+        out["ok"] = False
+        out["error"] = str(e)[:800]
+        try:
+            _mark_user_reply_finished()
+        except Exception:
+            pass
+        return out
+
+
 def chat_fn(message, history, image):
     history = _sync_canonical_history(history)
     clean_message = _extract_text_content(message).strip()
@@ -7058,7 +7357,11 @@ def chat_fn(message, history, image):
 
     _mark_user_reply_started()
     try:
-        workspace.tick(camera_manager, image, globals(), clean_message)
+        _rp_decision = prepare_reply_path_for_turn(
+            globals(), clean_message, workspace, voice_session=False
+        )
+        if not should_skip_initial_workspace_tick(_rp_decision):
+            workspace.tick(camera_manager, image, globals(), clean_message)
         canon = list(_get_canonical_history())
         canon.append({"role": "user", "content": clean_message})
         _set_canonical_history(canon)
@@ -7239,7 +7542,11 @@ def voice_fn(audio, history, image):
     try:
         note_user_interaction_for_initiative(text_strip, interaction_kind="voice")
         workspace.record_user_message()
-        workspace.tick(camera_manager, image, globals(), text_strip)
+        _rp_decision_v = prepare_reply_path_for_turn(
+            globals(), text_strip, workspace, voice_session=True
+        )
+        if not should_skip_initial_workspace_tick(_rp_decision_v):
+            workspace.tick(camera_manager, image, globals(), text_strip)
 
         if should_ask_identity_when_no_camera_face(text_strip, image):
             reply = no_face_identity_prompt()
@@ -8042,4 +8349,18 @@ with gr.Blocks(title="Ava — v2") as demo:
     reload_personality_btn.click(reload_personality_fn, inputs=[], outputs=[reload_personality_result])
     dbg_refresh_btn.click(debug_panel_refresh_fn, inputs=[], outputs=[dbg_meta, dbg_goal, dbg_narrative, dbg_refl_health])
 
-demo.launch()
+try:
+    from brain.operator_server import start_operator_http_background
+
+    start_operator_http_background(globals(), operator_console_chat)
+except Exception as _op_http_e:
+    print(f"[operator_http] optional API not started: {_op_http_e}")
+
+_ava_gr_open = os.environ.get("AVA_GRADIO_OPEN", "0").strip().lower() in ("1", "true", "yes")
+_ava_gr_host = os.environ.get("AVA_GRADIO_SERVER_NAME", "127.0.0.1").strip() or "127.0.0.1"
+_ava_gr_port = int(os.environ.get("AVA_GRADIO_SERVER_PORT", "7860") or "7860")
+print(
+    f"[gradio] UI http://{_ava_gr_host}:{_ava_gr_port}/ "
+    f"(set AVA_GRADIO_OPEN=1 to auto-open browser; operator API is separate)"
+)
+demo.launch(server_name=_ava_gr_host, server_port=_ava_gr_port, inbrowser=_ava_gr_open)
