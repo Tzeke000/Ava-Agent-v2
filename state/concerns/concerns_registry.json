@@ -1,9 +1,9 @@
 {
   "version": 1,
   "concerns": [],
-  "last_saved_ts": 1777400414.6469054,
+  "last_saved_ts": 1777400962.2681265,
   "registry_path": "D:\\AvaAgentv2\\state\\concerns\\concerns_registry.json",
-  "evidence_source": "runtime",
+  "evidence_source": "startup",
   "prefer_current_evidence": true,
-  "last_reconcile_ts": 1777400414.6469054
+  "last_reconcile_ts": 1777400962.2671778
 }

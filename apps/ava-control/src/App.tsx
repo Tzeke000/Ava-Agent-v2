@@ -77,6 +77,43 @@ type BrainEdge = {
   last_fired: number;
 };
 
+type BrainRenderNode = BrainNode & {
+  x?: number;
+  y?: number;
+  fx?: number | null;
+  fy?: number | null;
+};
+
+type BrainRenderEdge = BrainEdge & {
+  source: string | BrainRenderNode;
+  target: string | BrainRenderNode;
+};
+
+type BrainGraphRender = {
+  g: d3.Selection<SVGGElement, unknown, null, undefined>;
+  link: d3.Selection<SVGLineElement, BrainRenderEdge, SVGGElement, unknown>;
+  node: d3.Selection<SVGCircleElement, BrainRenderNode, SVGGElement, unknown>;
+  ring: d3.Selection<SVGCircleElement, BrainRenderNode, SVGGElement, unknown>;
+  labels: d3.Selection<SVGTextElement, BrainRenderNode, SVGGElement, unknown>;
+  nodes: BrainRenderNode[];
+  links: BrainRenderEdge[];
+};
+
+const BRAIN_NODE_TYPES: Array<{ type: string; color: string; description: string }> = [
+  { type: "person", color: "#ed64a6", description: "People Ava knows" },
+  { type: "topic", color: "#4299e1", description: "Subjects and concepts" },
+  { type: "emotion", color: "#f5c518", description: "Emotional states" },
+  { type: "memory", color: "#9f7aea", description: "Stored memories" },
+  { type: "opinion", color: "#ecc94b", description: "Ava's formed opinions" },
+  { type: "curiosity", color: "#00d4d4", description: "Things Ava wonders about" },
+  { type: "self", color: "#68d391", description: "Ava's self-concept" },
+  { type: "event", color: "#ff6b00", description: "Events that happened" },
+];
+
+function brainEdgeKey(edge: Pick<BrainEdge, "source" | "target" | "relationship">): string {
+  return `${String(edge.source)}->${String(edge.target)}::${String(edge.relationship || "")}`;
+}
+
 type FinetunePrereq = {
   ready?: boolean;
   issues?: string[];
@@ -154,6 +191,11 @@ export default function App() {
   });
   const [selectedBrainNode, setSelectedBrainNode] = useState<BrainNode | null>(null);
   const brainSvgRef = useRef<SVGSVGElement | null>(null);
+  const brainZoomTransformRef = useRef(d3.zoomIdentity);
+  const brainRenderRef = useRef<BrainGraphRender | null>(null);
+  const brainSimulationRef = useRef<d3.Simulation<BrainRenderNode, undefined> | null>(null);
+  const firedEdgesRef = useRef<Map<string, number>>(new Map());
+  const [brainStatsBar, setBrainStatsBar] = useState({ nodes: 0, edges: 0, active: 0, mostConnected: "—" });
   const [finetuneStatus, setFinetuneStatus] = useState<Record<string, unknown>>({});
   const [finetunePrep, setFinetunePrep] = useState<Record<string, unknown>>({});
   const [finetunePrereq, setFinetunePrereq] = useState<FinetunePrereq>({});
@@ -329,6 +371,11 @@ export default function App() {
   const pollBrainActive = useCallback(async () => {
     try {
       const res = await getJson<{ active_nodes?: BrainNode[]; firing_paths?: BrainEdge[] }>("/api/v1/brain/active");
+      const now = Date.now();
+      const recent = firedEdgesRef.current;
+      for (const e of Array.isArray(res.firing_paths) ? res.firing_paths : []) {
+        recent.set(brainEdgeKey(e), now);
+      }
       setBrainActive({
         active_nodes: Array.isArray(res.active_nodes) ? res.active_nodes : [],
         firing_paths: Array.isArray(res.firing_paths) ? res.firing_paths : [],
@@ -587,7 +634,6 @@ export default function App() {
           ? "deep"
           : "thinking"
         : orbVisual.pulse;
-  const deepReasoningMode = String(models?.cognitive_mode ?? "").toLowerCase().includes("deep");
   const presenceStatusMessage = backendShutdownDetected
     ? "Ava has shut down."
     : String(lastAssistantMessage || "I'm here.");
@@ -613,13 +659,48 @@ export default function App() {
 
   useEffect(() => {
     if (tab !== "brain") return;
+    const update = () => {
+      const degree = new Map<string, number>();
+      for (const e of brainGraph.edges) {
+        const source = String(e.source);
+        const target = String(e.target);
+        degree.set(source, (degree.get(source) ?? 0) + 1);
+        degree.set(target, (degree.get(target) ?? 0) + 1);
+      }
+      let mostConnected = "—";
+      let maxDegree = -1;
+      for (const n of brainGraph.nodes) {
+        const d = degree.get(String(n.id)) ?? 0;
+        if (d > maxDegree) {
+          maxDegree = d;
+          mostConnected = n.label || String(n.id);
+        }
+      }
+      setBrainStatsBar({
+        nodes: brainGraph.nodes.length,
+        edges: brainGraph.edges.length,
+        active: brainActive.active_nodes.length,
+        mostConnected,
+      });
+    };
+    update();
+    const id = window.setInterval(update, 5000);
+    return () => window.clearInterval(id);
+  }, [tab, brainGraph.nodes, brainGraph.edges, brainActive.active_nodes.length]);
+
+  useEffect(() => {
+    if (tab !== "brain") return;
     if (!brainSvgRef.current) return;
     if (!brainGraph.nodes.length) return;
 
+    brainSimulationRef.current?.stop();
+    brainRenderRef.current = null;
+    brainZoomTransformRef.current = d3.zoomIdentity;
+
     const svgEl = brainSvgRef.current;
-    let sim: d3.Simulation<any, undefined> | null = null;
+    let cancelled = false;
     const init = window.requestAnimationFrame(() => {
-      if (!svgEl) return;
+      if (cancelled) return;
       const svg = d3.select(svgEl);
       svg.selectAll("*").remove();
       const width = svgEl.clientWidth || 900;
@@ -627,106 +708,132 @@ export default function App() {
       svg.attr("viewBox", `0 0 ${width} ${height}`);
       const g = svg.append("g");
 
-    const nodes = brainGraph.nodes.map((n) => ({ ...n })) as Array<BrainNode & { x?: number; y?: number; fx?: number | null; fy?: number | null }>;
-    const links = brainGraph.edges.map((e) => ({ ...e })) as Array<BrainEdge & { source: any; target: any }>;
+      const nodes = brainGraph.nodes.map((n) => ({ ...n })) as BrainRenderNode[];
+      const links = brainGraph.edges.map((e) => ({ ...e })) as BrainRenderEdge[];
+      const zoom = d3.zoom<SVGSVGElement, unknown>().scaleExtent([0.3, 2.5]).on("zoom", (event) => {
+        brainZoomTransformRef.current = event.transform;
+        g.attr("transform", event.transform.toString());
+      });
+      svg.call(zoom);
+      g.attr("transform", brainZoomTransformRef.current.toString());
+      svg.call(zoom.transform, brainZoomTransformRef.current);
 
-    const zoom = d3.zoom<SVGSVGElement, unknown>().scaleExtent([0.3, 2.5]).on("zoom", (event) => {
-      g.attr("transform", event.transform.toString());
-    });
-    svg.call(zoom);
+      const link = g
+        .append("g")
+        .selectAll("line")
+        .data(links)
+        .enter()
+        .append("line")
+        .attr("stroke-width", 1.5)
+        .attr("stroke", (d: any) => {
+          const source = typeof d.source === "string" ? d.source : d.source.id;
+          const srcNode = nodes.find((n) => n.id === source);
+          return srcNode?.color || "#485264";
+        })
+        .attr("stroke-opacity", (d) => Math.max(0.2, Math.min(0.9, Number(d.strength || 0.2))))
+        .attr("class", "brain-link");
 
-      sim = d3
-        .forceSimulation(nodes as any)
-        .force("link", d3.forceLink(links as any).id((d: any) => d.id).distance(95))
+      const ring = g
+        .append("g")
+        .selectAll("circle")
+        .data(nodes)
+        .enter()
+        .append("circle")
+        .attr("r", (d) => 11 + Math.max(0, Math.min(22, Number(d.weight || 0) * 22)))
+        .attr("fill", "none")
+        .attr("class", "brain-node-ring")
+        .attr("stroke", (d) => d.color || "#4299e1");
+
+      const node = g
+        .append("g")
+        .selectAll("circle")
+        .data(nodes)
+        .enter()
+        .append("circle")
+        .attr("r", (d) => 8 + Math.max(0, Math.min(22, Number(d.weight || 0) * 22)))
+        .attr("fill", (d) => d.color || "#4299e1")
+        .attr("class", "brain-node")
+        .on("click", (_, d) => setSelectedBrainNode(d as BrainNode))
+        .on("dblclick", (_, d) => {
+          const id = String(d.id);
+          link.classed("dim", (ln: any) => {
+            const s = typeof ln.source === "string" ? ln.source : ln.source.id;
+            const t = typeof ln.target === "string" ? ln.target : ln.target.id;
+            return s !== id && t !== id;
+          });
+        });
+
+      const labels = g
+        .append("g")
+        .selectAll("text")
+        .data(nodes)
+        .enter()
+        .append("text")
+        .attr("fill", "#dbe6f5")
+        .attr("font-size", 8)
+        .attr("class", "brain-label")
+        .text((d) => (d.label.length > 16 ? `${d.label.slice(0, 16)}…` : d.label));
+
+      const sim = d3
+        .forceSimulation(nodes)
+        .force("link", d3.forceLink(links).id((d: any) => d.id).distance(95))
         .force("charge", d3.forceManyBody().strength(-210))
         .force("center", d3.forceCenter(width * 0.4, height * 0.5))
         .alpha(1)
-        .alphaTarget(0.08)
+        .alphaTarget(0)
         .restart();
 
-    const link = g
-      .append("g")
-      .selectAll("line")
-      .data(links)
-      .enter()
-      .append("line")
-      .attr("stroke-width", 1.5)
-      .attr("stroke", (d) => {
-        const source = typeof d.source === "string" ? d.source : d.source.id;
-        const srcNode = nodes.find((n) => n.id === source);
-        return srcNode?.color || "#485264";
-      })
-      .attr("stroke-opacity", (d) => Math.max(0.2, Math.min(0.9, Number(d.strength || 0.2))))
-      .attr("class", (d) => (Date.now() / 1000 - Number(d.last_fired || 0) < 30 ? "brain-link recent" : "brain-link"));
-
-    const node = g
-      .append("g")
-      .selectAll("circle")
-      .data(nodes)
-      .enter()
-      .append("circle")
-      .attr("r", (d) => 8 + Math.max(0, Math.min(22, Number(d.weight || 0) * 22)))
-      .attr("fill", (d) => d.color || "#4299e1")
-      .attr("class", (d, i) => {
-        const isActive = activeBrainIdSet.has(String(d.id));
-        const ambientPulse = !isActive && !deepReasoningMode && i % 19 === 0;
-        const deepPulse = deepReasoningMode && (isActive || i % 5 === 0);
-        return `brain-node${isActive ? " active" : ""}${isActive || ambientPulse || deepPulse ? " pulse" : ""}`;
-      })
-      .call(
-        d3
-          .drag<SVGCircleElement, any>()
-          .on("start", (event, d) => {
-            if (!event.active) sim?.alphaTarget(0.3).restart();
-            d.fx = d.x;
-            d.fy = d.y;
-          })
-          .on("drag", (event, d) => {
-            d.fx = event.x;
-            d.fy = event.y;
-          })
-          .on("end", (event, d) => {
-            if (!event.active) sim?.alphaTarget(0);
-            d.fx = null;
-            d.fy = null;
-          })
-      )
-      .on("click", (_, d) => setSelectedBrainNode(d as BrainNode))
-      .on("dblclick", (_, d) => {
-        const id = String(d.id);
-        link.classed("dim", (ln: any) => {
-          const s = typeof ln.source === "string" ? ln.source : ln.source.id;
-          const t = typeof ln.target === "string" ? ln.target : ln.target.id;
-          return s !== id && t !== id;
-        });
-      });
-
-    const labels = g
-      .append("g")
-      .selectAll("text")
-      .data(nodes)
-      .enter()
-      .append("text")
-      .attr("fill", "#dbe6f5")
-      .attr("font-size", 10)
-      .text((d) => (d.label.length > 12 ? `${d.label.slice(0, 12)}…` : d.label));
-
-      sim.on("tick", () => {
+      const paintPositions = () => {
         link
-          .attr("x1", (d: any) => d.source.x)
-          .attr("y1", (d: any) => d.source.y)
-          .attr("x2", (d: any) => d.target.x)
-          .attr("y2", (d: any) => d.target.y);
-        node.attr("cx", (d: any) => d.x).attr("cy", (d: any) => d.y);
-        labels.attr("x", (d: any) => d.x).attr("y", (d: any) => d.y + 24).attr("text-anchor", "middle");
+          .attr("x1", (d: any) => (typeof d.source === "string" ? 0 : (d.source.x ?? 0)))
+          .attr("y1", (d: any) => (typeof d.source === "string" ? 0 : (d.source.y ?? 0)))
+          .attr("x2", (d: any) => (typeof d.target === "string" ? 0 : (d.target.x ?? 0)))
+          .attr("y2", (d: any) => (typeof d.target === "string" ? 0 : (d.target.y ?? 0)));
+        node.attr("cx", (d) => d.x ?? 0).attr("cy", (d) => d.y ?? 0);
+        ring.attr("cx", (d) => d.x ?? 0).attr("cy", (d) => d.y ?? 0);
+        labels.attr("x", (d) => d.x ?? 0).attr("y", (d) => (d.y ?? 0) + 18).attr("text-anchor", "middle");
+      };
+
+      sim.on("tick", paintPositions);
+      sim.on("end", () => {
+        for (const n of nodes) {
+          n.fx = n.x ?? 0;
+          n.fy = n.y ?? 0;
+        }
+        sim.stop();
+        paintPositions();
       });
+
+      brainSimulationRef.current = sim;
+      brainRenderRef.current = { g, link, node, ring, labels, nodes, links };
     });
 
     return () => {
+      cancelled = true;
       window.cancelAnimationFrame(init);
-      sim?.stop();
+      brainSimulationRef.current?.stop();
     };
-  }, [brainGraph, activeBrainIdSet, deepReasoningMode, tab]);
+  }, [brainGraph, tab]);
+
+  useEffect(() => {
+    if (tab !== "brain") return;
+    const render = brainRenderRef.current;
+    if (!render) return;
+    const now = Date.now();
+    render.node
+      .classed("active", (d) => activeBrainIdSet.has(String(d.id)))
+      .classed("pulse", (d) => activeBrainIdSet.has(String(d.id)));
+    render.ring.classed("active", (d) => activeBrainIdSet.has(String(d.id)));
+
+    render.link.classed("recent", (d: any) => {
+      const source = typeof d.source === "string" ? d.source : d.source.id;
+      const target = typeof d.target === "string" ? d.target : d.target.id;
+      const key = `${String(source)}->${String(target)}::${String(d.relationship || "")}`;
+      const fromStream = firedEdgesRef.current.get(key) ?? 0;
+      const fromData = Number(d.last_fired || 0) * 1000;
+      return Math.max(fromStream, fromData) > 0 && now - Math.max(fromStream, fromData) <= 5000;
+    });
+  }, [tab, activeBrainIdSet, brainActive.firing_paths]);
 
   useEffect(() => {
     if (tab !== "brain") return;
@@ -1106,6 +1213,10 @@ export default function App() {
             <div className="op-pane op-pane-brain">
               <div className="brain-layout">
                 <div className="brain-canvas-wrap">
+                  <div className="brain-stats-bar">
+                    NODES: {brainStatsBar.nodes} EDGES: {brainStatsBar.edges} ACTIVE: {brainStatsBar.active} MOST CONNECTED:{" "}
+                    {brainStatsBar.mostConnected}
+                  </div>
                   {brainLoading && (
                     <div className="brain-loading-overlay">Loading brain graph...</div>
                   )}
@@ -1115,6 +1226,16 @@ export default function App() {
                     </div>
                   )}
                   <svg ref={brainSvgRef} className="brain-canvas" />
+                  <div className="brain-legend">
+                    <h4>NODE TYPES</h4>
+                    {BRAIN_NODE_TYPES.map((entry) => (
+                      <div key={entry.type} className="brain-legend-row">
+                        <span className="brain-legend-dot" style={{ backgroundColor: entry.color, color: entry.color }} />
+                        <span className="brain-legend-type">{entry.type}</span>
+                        <span className="brain-legend-desc">{entry.description}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
                 <aside className="brain-side-panel">
                   <h3>Brain Activity</h3>

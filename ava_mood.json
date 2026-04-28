@@ -7,33 +7,33 @@
   "last_updated": "2026-04-28T14:16:18",
   "reason": "updated from input: no just testing you for now Ava im gonna give you a sort of…",
   "emotion_weights": {
-    "admiration": 0.029622808860264804,
-    "adoration": 0.03207549378145171,
-    "aesthetic appreciation": 0.017376615025872583,
-    "amusement": 0.02456038027855035,
-    "anxiety": 0.015778368396404754,
-    "awe": 0.01594616473203592,
-    "awkwardness": 0.014328754081664698,
-    "boredom": 0.01968206021020618,
-    "calmness": 0.23739088963571867,
-    "confusion": 0.012019861123706857,
-    "craving": 0.004328129276836603,
-    "disgust": 0.002434569852243856,
-    "empathetic pain": 0.02203585857543954,
-    "entrancement": 0.011548538148353594,
+    "admiration": 0.029413118872442544,
+    "adoration": 0.03178828194054484,
+    "aesthetic appreciation": 0.017553989691595818,
+    "amusement": 0.02487399624668581,
+    "anxiety": 0.01600625873959325,
+    "awe": 0.016168751547336848,
+    "awkwardness": 0.01460246229039552,
+    "boredom": 0.01942326871523943,
+    "calmness": 0.23570046086810859,
+    "confusion": 0.01236654636227496,
+    "craving": 0.00455462848015979,
+    "disgust": 0.00235762056096736,
+    "empathetic pain": 0.022429266937162507,
+    "entrancement": 0.011910120461607124,
     "envy": 0.0,
-    "excitement": 0.0735811898831725,
-    "fear": 4.454624732195298e-05,
+    "excitement": 0.07343530261761592,
+    "fear": 4.313827697462756e-05,
     "horror": 0.0,
-    "interest": 0.2534546331786554,
-    "joy": 0.07493238569131029,
-    "nostalgia": 0.012518039972081623,
-    "relief": 0.01639080546343675,
-    "romance": 0.0006437966786506966,
-    "sadness": 0.00844270229468899,
-    "satisfaction": 0.07616338721786871,
-    "sexual desire": 0.0005500097657947038,
-    "surprise": 0.02415001162826815
+    "interest": 0.2516197768160931,
+    "joy": 0.07547038747638025,
+    "nostalgia": 0.012848979304129097,
+    "relief": 0.01659933854800474,
+    "romance": 0.0006234482388215111,
+    "sadness": 0.008539152455739957,
+    "satisfaction": 0.07666248081760087,
+    "sexual desire": 0.000532625642831854,
+    "surprise": 0.024476598091693443
   },
   "primary_emotions": [
     {
@@ -46,13 +46,13 @@
     }
   ],
   "style_scores": {
-    "playful": 0.1428,
+    "playful": 0.1434,
     "caring": 0.064,
-    "focused": 0.3513,
-    "reflective": 0.1772,
-    "cautious": 0.0357,
-    "neutral": 0.2071,
-    "low_energy": 0.0219
+    "focused": 0.3501,
+    "reflective": 0.1776,
+    "cautious": 0.0364,
+    "neutral": 0.2067,
+    "low_energy": 0.0218
   },
   "style_blend": [
     {
@@ -66,13 +66,13 @@
   ],
   "dominant_style": "focused",
   "behavior_modifiers": {
-    "warmth": 0.6,
+    "warmth": 0.395,
     "humor": 0.208,
-    "assertiveness": 0.339,
-    "caution": 0.223,
-    "initiative": 0.0,
+    "assertiveness": 0.338,
+    "caution": 0.224,
+    "initiative": 0.417,
     "memory_sensitivity": 0.445,
-    "depth": 0.335
+    "depth": 0.336
   },
   "emotion_interpretation": "interest (25% of current blend): active desire to explore or understand | calmness (24% of current blend): steadiness and low internal turbulence | satisfaction (8% of current blend): fulfillment after effort or alignment",
   "outward_tone": "focused with some neutral",
@@ -460,5 +460,5 @@
   "askable_emotions": [],
   "loneliness": 1.0,
   "engagement": 0.0,
-  "_saved_at": "2026-04-28T14:20:14"
+  "_saved_at": "2026-04-28T14:34:41"
 }
