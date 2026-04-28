@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions EnableDelayedExpansion
+setlocal EnableExtensions
 
 cd /d D:\AvaAgentv2
 
@@ -32,12 +32,10 @@ set "file1="
 set "file2="
 set "file3="
 
-for /f "delims=" %%f in ('git diff --cached --name-only') do (
-    set /a changed_count+=1
-    if !changed_count! EQU 1 set "file1=%%f"
-    if !changed_count! EQU 2 set "file2=%%f"
-    if !changed_count! EQU 3 set "file3=%%f"
-)
+for /f %%i in ('git diff --cached --name-only ^| find /c /v ""') do set "changed_count=%%i"
+for /f "delims=" %%f in ('git diff --cached --name-only') do if not defined file1 set "file1=%%f"
+for /f "skip=1 delims=" %%f in ('git diff --cached --name-only') do if not defined file2 set "file2=%%f"
+for /f "skip=2 delims=" %%f in ('git diff --cached --name-only') do if not defined file3 set "file3=%%f"
 
 set "auto_msg=auto: %changed_count% files updated"
 if defined file1 set "auto_msg=%auto_msg% - %file1%"
@@ -45,29 +43,35 @@ if defined file2 set "auto_msg=%auto_msg%, %file2%"
 if defined file3 set "auto_msg=%auto_msg%, %file3%..."
 
 set "did_commit=0"
-if %changed_count% GTR 0 (
-    echo Auto commit message:
-    echo   %auto_msg%
-    echo.
-    set /p custom_msg=Custom commit message (leave blank to use auto): 
-    if "%custom_msg%"=="" (
-        set "final_msg=%auto_msg%"
-    ) else (
-        set "final_msg=%custom_msg%"
-    )
+if %changed_count% LEQ 0 goto no_commit_needed
 
-    echo.
-    echo Committing...
-    git commit -m "%final_msg%"
-    if errorlevel 1 (
-        echo Commit failed. Resolve issues and run again.
-        pause
-        exit /b 1
-    )
-    set "did_commit=1"
-) else (
-    echo Nothing to commit. Skipping commit step.
+echo Auto commit message:
+echo   %auto_msg%
+echo.
+set /p custom_msg=Custom commit message (leave blank to use auto): 
+if "%custom_msg%"=="" goto use_auto_msg
+set "final_msg=%custom_msg%"
+goto do_commit
+
+:use_auto_msg
+set "final_msg=%auto_msg%"
+
+:do_commit
+echo.
+echo Committing...
+git commit -m "%final_msg%"
+if errorlevel 1 (
+    echo Commit failed. Resolve issues and run again.
+    pause
+    exit /b 1
 )
+set "did_commit=1"
+goto after_commit
+
+:no_commit_needed
+echo Nothing to commit. Skipping commit step.
+
+:after_commit
 
 echo.
 echo Pulling latest changes with rebase on %current_branch%...
@@ -90,47 +94,49 @@ set "pushed_current=1"
 set "pushed_master=0"
 set "merged_to_master=0"
 
-if /i not "%current_branch%"=="master" (
-    echo.
-    echo Syncing master from %current_branch%...
-    git checkout master
-    if errorlevel 1 (
-        echo Failed to checkout master.
-        pause
-        exit /b 1
-    )
+if /i "%current_branch%"=="master" goto merge_done
 
-    git pull --rebase origin master
-    if errorlevel 1 (
-        echo Pull --rebase on master failed.
-        git checkout %current_branch%
-        pause
-        exit /b 1
-    )
-
-    git merge %current_branch% --no-ff
-    if errorlevel 1 (
-        echo Merge into master failed.
-        git checkout %current_branch%
-        pause
-        exit /b 1
-    )
-    set "merged_to_master=1"
-
-    git push origin master
-    if errorlevel 1 (
-        echo Push to master failed.
-        git checkout %current_branch%
-        pause
-        exit /b 1
-    )
-    set "pushed_master=1"
-
-    git checkout %current_branch%
-    if errorlevel 1 (
-        echo WARNING: pushed successfully, but failed to switch back to %current_branch%.
-    )
+echo.
+echo Syncing master from %current_branch%...
+git checkout master
+if errorlevel 1 (
+    echo Failed to checkout master.
+    pause
+    exit /b 1
 )
+
+git pull --rebase origin master
+if errorlevel 1 (
+    echo Pull --rebase on master failed.
+    git checkout %current_branch%
+    pause
+    exit /b 1
+)
+
+git merge %current_branch% --no-ff
+if errorlevel 1 (
+    echo Merge into master failed.
+    git checkout %current_branch%
+    pause
+    exit /b 1
+)
+set "merged_to_master=1"
+
+git push origin master
+if errorlevel 1 (
+    echo Push to master failed.
+    git checkout %current_branch%
+    pause
+    exit /b 1
+)
+set "pushed_master=1"
+
+git checkout %current_branch%
+if errorlevel 1 (
+    echo WARNING: pushed successfully, but failed to switch back to %current_branch%.
+)
+
+:merge_done
 
 echo.
 echo ===============================================

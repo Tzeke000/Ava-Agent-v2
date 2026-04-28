@@ -70,6 +70,7 @@ from brain.curiosity_topics import bootstrap_from_chatlog as bootstrap_curiosity
 from brain.curiosity_topics import get_current_curiosity
 from brain.curiosity_topics import mark_resolved as mark_curiosity_resolved
 from brain.concept_graph import ConceptGraph, bootstrap_from_existing_memory, extract_concepts_from_text
+from brain.finetune_pipeline import FineTuneManager
 from brain.inner_monologue import current_thought as inner_current_thought
 from brain.inner_monologue import get_conversation_starter as inner_get_conversation_starter
 from brain.inner_monologue import start_inner_monologue
@@ -78,6 +79,15 @@ from brain.shutdown_ritual import is_shutdown_trigger, load_pickup_note, run_shu
 from brain.scene_understanding import run_scene_refresh_async
 from brain.self_model import add_question_about_self, get_self_summary, update_self_model
 from brain.desktop_agent import ToolRegistry
+from brain.deep_self import (
+    check_repair_needed,
+    deep_self_snapshot,
+    get_mind_model_summary,
+    pop_pending_repair,
+    resolve_value_conflict,
+    self_critique_async,
+    update_mind_model_async,
+)
 from brain.tts_engine import TTSEngine
 from config.ava_tuning import MODEL_ROUTING_CONFIG
 
@@ -233,6 +243,8 @@ _desktop_last_tool_result = ""
 _desktop_tool_execution_count = 0
 _desktop_tier2_pending = []
 _active_concept_nodes: list[str] = []
+_finetune_status: dict = {"status": "idle"}
+_last_repair_check_ts = 0.0
 
 
 def _update_concept_graph_from_turn(user_text: str, assistant_text: str) -> None:
@@ -257,6 +269,10 @@ def _update_concept_graph_from_turn(user_text: str, assistant_text: str) -> None
         for i in range(1, len(turn_node_ids)):
             rel = str(concepts[i].get("relationship_to_previous") or "related_to")
             cg.add_edge(turn_node_ids[i - 1], turn_node_ids[i], rel, 0.58)
+        uniq_ids = list(dict.fromkeys(turn_node_ids))
+        for i in range(len(uniq_ids)):
+            for j in range(i + 1, len(uniq_ids)):
+                cg.strengthen_edge(uniq_ids[i], uniq_ids[j])
         cg.activate_path(turn_node_ids)
         cg.prune_old_nodes(max_nodes=500)
         globals()["_active_concept_nodes"] = turn_node_ids
@@ -6276,12 +6292,25 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
     _curiosity_row = get_current_curiosity(globals()) or {}
     _curiosity_topic = str(_curiosity_row.get("topic") or "").strip()
     _self_summary = get_self_summary(globals())
+    _mind_model_summary = get_mind_model_summary(globals())
+    _pending_repair_note = pop_pending_repair(globals())
     _opinions = list_top_opinions(globals(), limit=3)
     _pickup_note_once = ""
     _pickup_note = str(globals().get("pickup_note") or "").strip()
     if _pickup_note:
         _pickup_note_once = f"[Ava's note to herself from last session: {_pickup_note}]"
         globals()["pickup_note"] = None
+    _associated_memories_line = "(none)"
+    try:
+        _cg = globals().get("_concept_graph")
+        if _cg is not None and callable(getattr(_cg, "get_related_concepts", None)):
+            _topic = _extract_simple_topic(user_input)
+            if _topic:
+                _rels = _cg.get_related_concepts(_topic, max_hops=2)[:3]
+                if _rels:
+                    _associated_memories_line = " -> ".join(str(r.get("label") or r.get("id") or "") for r in _rels if isinstance(r, dict))
+    except Exception:
+        _associated_memories_line = "(none)"
 
     prompt = f"""
 {personality}
@@ -6340,7 +6369,10 @@ INNER LIFE SNAPSHOT:
 - current_thought: {_inner_thought or "(none recent)"}
 - current_curiosity: {_curiosity_topic or "(none)"}
 - self_summary: {_self_summary}
+- zeke_mind_model: {_mind_model_summary}
 - top_opinions: {json.dumps(_opinions, ensure_ascii=False)}
+ASSOCIATED MEMORIES: {_associated_memories_line}
+pending_repair_note: {_pending_repair_note or "(none)"}
 {_pickup_note_once}
 
 AVAILABLE READ-ONLY FILES:
@@ -7003,12 +7035,24 @@ def _execute_tool_tags_from_reply(reply: str) -> tuple[str, list[str]]:
     if reg is None:
         return txt, []
     actions: list[str] = []
-    pattern = re.compile(r"\[TOOL:([a-zA-Z0-9_]+)\]")
+    pattern = re.compile(r"\[TOOL:([a-zA-Z0-9_]+)(?:\s+(\{.*?\}))?\]")
     for m in pattern.finditer(txt):
         tool_name = m.group(1).strip()
+        params: dict[str, Any] = {}
+        raw_params = m.group(2)
+        if raw_params:
+            try:
+                parsed = json.loads(raw_params)
+                if isinstance(parsed, dict):
+                    params = parsed
+            except Exception:
+                params = {}
         try:
-            result = reg.execute(tool_name, {}, globals())
+            result = reg.execute(tool_name, params, globals())
             actions.append(f"tool:{tool_name}")
+            checkin = str((result or {}).get("checkin_message") or "").strip() if isinstance(result, dict) else ""
+            if checkin:
+                txt += f"\n\n{checkin}"
             summary = json.dumps(result, ensure_ascii=False)[:260]
             txt += f"\n\n[Tool {tool_name} result] {summary}"
         except Exception as e:
@@ -7112,6 +7156,22 @@ def finalize_ava_turn(
         _update_concept_graph_from_turn(user_input, ai_reply)
     except Exception:
         pass
+    try:
+        update_mind_model_async(user_input, ai_reply[:1200], globals())
+    except Exception:
+        pass
+    try:
+        self_critique_async(ai_reply, user_input, str(actions), globals())
+    except Exception:
+        pass
+    try:
+        global _last_repair_check_ts
+        now = time.time()
+        if now - float(_last_repair_check_ts or 0.0) >= 2 * 3600:
+            _last_repair_check_ts = now
+            check_repair_needed(globals())
+    except Exception:
+        pass
     visual_out = normalize_visual_payload(visual, turn_route=turn_route)
     try:
         _fs = str(visual_out.get("face_status", ""))[:80]
@@ -7145,6 +7205,10 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
     active_person_id = active_person_id or get_active_person_id()
     _inp = (user_input or "").strip()
     globals()["_last_user_interaction_ts"] = time.time()
+    _u_low = _inp.lower()
+    globals()["_desktop_tier3_approved"] = any(
+        k in _u_low for k in ("yes do it", "go ahead", "yes, do it", "go ahead and do it")
+    )
     print(
         f"[run_ava] enter person={active_person_id} has_image={image is not None} "
         f"input_chars={len(_inp)}"
@@ -7313,6 +7377,28 @@ def run_ava(user_input: str, image=None, active_person_id: str | None = None) ->
         ai_reply, actions = process_ava_action_blocks(
             raw_reply, person_id, latest_user_input=user_input
         )
+        try:
+            conflict_trigger = any(
+                k in _u_low
+                for k in (
+                    "be honest",
+                    "honest feedback",
+                    "hard truth",
+                    "hurt my feelings",
+                    "private",
+                    "privacy",
+                    "long term",
+                    "long-term",
+                )
+            )
+            if conflict_trigger:
+                _conf = resolve_value_conflict(user_input, globals())
+                if isinstance(_conf, dict):
+                    _line = str(_conf.get("integrated_response") or "").strip()
+                    if _line:
+                        ai_reply = f"{ai_reply}\n\n(Values check: {_line})"
+        except Exception:
+            pass
         ai_reply = process_identity_actions(ai_reply)
         ai_reply = _apply_reply_guardrails(ai_reply, user_input)
         ai_reply = _apply_repetition_control(ai_reply, user_input, person_id, source="chat")
@@ -8504,10 +8590,25 @@ try:
     _concept_graph = ConceptGraph(BASE_DIR)
     globals()["_concept_graph"] = _concept_graph
     globals()["_concept_graph_bootstrap_nodes"] = int(bootstrap_from_existing_memory(_concept_graph, globals()))
+    _concept_graph.decay_unused_nodes(days_threshold=30)
 except Exception as _concept_graph_boot_e:
     globals()["_concept_graph"] = None
     globals()["_concept_graph_bootstrap_nodes"] = 0
     print(f"[concept_graph] bootstrap skipped: {_concept_graph_boot_e}")
+try:
+    _finetune_manager = FineTuneManager(BASE_DIR)
+    globals()["_finetune_manager"] = _finetune_manager
+    globals()["_finetune_status"] = _finetune_manager._read_status()
+    _finetune_manager.schedule_finetune(interval_days=7)
+except Exception as _finetune_boot_e:
+    globals()["_finetune_manager"] = None
+    globals()["_finetune_status"] = {"status": "idle", "error": str(_finetune_boot_e)}
+    print(f"[finetune] startup skipped: {_finetune_boot_e}")
+try:
+    globals()["_deep_self"] = deep_self_snapshot(globals())
+except Exception as _deep_self_boot_e:
+    globals()["_deep_self"] = {}
+    print(f"[deep_self] startup skipped: {_deep_self_boot_e}")
 try:
     update_self_model(globals())
 except Exception as _self_model_boot_e:

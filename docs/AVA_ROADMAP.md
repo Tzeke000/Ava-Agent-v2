@@ -15,6 +15,36 @@
 
 ---
 
+## Current Phase Board (April 28, 2026)
+
+| Phase | Title | Status |
+|---|---|---|
+| 1–31 | Core staged architecture (perception, memory, routing, continuity, heartbeat) | **COMPLETE** |
+| 32 | Operator HTTP + presence shell hardening | **COMPLETE** |
+| 33 | Operator drawer and tabbed control panel | **COMPLETE** |
+| 34 | Voice/presence UI consolidation | **COMPLETE** |
+| 35 | Workbench command and execution visibility in operator panel | **COMPLETE** |
+| 36 | Model routing overrides + diagnostics in operator panel | **COMPLETE** |
+| 37 | Concept graph memory + Brain graph visualization | **COMPLETE** |
+| 38 | Finetune pipeline + operator controls | **COMPLETE** |
+| 39 | Desktop autonomy tier rewrite + three-law guardrails | **IN PROGRESS** |
+| 40 | Deep self-awareness (mind model, self-critique, repair queue) | **IN PROGRESS** |
+| 41 | Full end-to-end system test and polish pass | **PLANNED** |
+| 42 | Stabilization + bug burn-down before long-run deployment | **PLANNED** |
+
+### Tools Roadmap
+
+| Track | Status | Notes |
+|---|---|---|
+| Desktop tools Tier 1 (read/search/diagnostics/web/local tools) | **COMPLETE** | Default autonomous operations inside project safety boundaries |
+| Desktop tools Tier 2 verbal check-ins | **IN PROGRESS** | "I'm going to [action] — doing it now." narration plus immediate execution |
+| Tier 3 explicit confirmation flow for external/high-impact actions | **IN PROGRESS** | Requires explicit confirmation phrase from Zeke before execution |
+| Three-laws policy enforcement in tool layer | **IN PROGRESS** | Financial/privacy/harm checks block execution regardless of user prompt style |
+| Structured tool arguments in `[TOOL:...]` reply tags | **COMPLETE** | JSON parameter payloads supported in inline tool tags |
+| Tool telemetry in operator snapshot/debug | **COMPLETE** | Last tool, result preview, and execution counts surfaced |
+
+---
+
 ## Architecture baseline — Phases 1 through 31 complete
 
 **Foundation (Phases 1–20):** Staged **perception** (quality, blur, detection, recognition, salience, continuity, identity fallback, scene summary, interpretation layer), **perception memory**, **memory scoring**, **pattern learning**, **proactive triggers**, **self-tests**, **workbench proposals**, **reflection**, **contemplation**, **`bundle_to_perception_state`** modularization (**Phase 19** — mapping consolidated in `brain/perception_state_adapter.py` instead of inline in the pipeline), and centralized knobs in **`config/ava_tuning.py`** (**Phase 20**).
