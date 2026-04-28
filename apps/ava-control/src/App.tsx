@@ -308,6 +308,43 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [poll]);
 
+  // Phase 63: WebSocket real-time transport (with REST fallback)
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let reconnectId: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      try {
+        const wsUrl = API_BASE.replace(/^http/, "ws") + "/ws";
+        ws = new WebSocket(wsUrl);
+        ws.onopen = () => { /* connected */ };
+        ws.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data as string);
+            if (msg.type === "snapshot" && msg.data) {
+              setSnap(msg.data as Snapshot);
+              setOnline(true);
+            } else if (msg.type === "delta") {
+              setSnap((prev) => prev ? { ...prev, ...Object.fromEntries(Object.entries(msg).filter(([k]) => k !== "type")) } : prev);
+            }
+          } catch { /* ignore parse errors */ }
+        };
+        ws.onerror = () => setOnline(false);
+        ws.onclose = () => {
+          ws = null;
+          if (reconnectId) clearTimeout(reconnectId);
+          reconnectId = setTimeout(connect, 5000);
+        };
+      } catch { /* WebSocket unavailable */ }
+    };
+
+    connect();
+    return () => {
+      if (reconnectId) clearTimeout(reconnectId);
+      ws?.close();
+    };
+  }, []);
+
   // Phase 55: drag-drop file input via Tauri event
   useEffect(() => {
     let unlisten: (() => void) | undefined;

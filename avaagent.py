@@ -8876,6 +8876,19 @@ except Exception as _ww_e:
     globals()["_wake_word_detector"] = None
     print(f"[wake_word] startup skipped: {_ww_e}")
 
+# Phase 62: start clap detector (backup wake activation)
+try:
+    from brain.clap_detector import ClapDetector
+    def _on_clap():
+        globals()["_stt_listen_requested"] = True
+    _clap_detector = ClapDetector(globals(), on_clap=_on_clap)
+    _clap_started = _clap_detector.start()
+    globals()["_clap_detector"] = _clap_detector if _clap_started else None
+    print(f"[clap_detect] started={_clap_started}")
+except Exception as _clap_e:
+    globals()["_clap_detector"] = None
+    print(f"[clap_detect] startup skipped: {_clap_e}")
+
 print("Ava running...")
 print(f"Base dir: {BASE_DIR}")
 print(f"Profiles dir: {PROFILES_DIR}")
