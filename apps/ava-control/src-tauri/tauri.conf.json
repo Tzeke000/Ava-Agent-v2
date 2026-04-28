@@ -12,10 +12,24 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Ava",
         "width": 1320,
         "height": 880,
         "resizable": true
+      },
+      {
+        "label": "widget",
+        "title": "Ava Widget",
+        "url": "/?widget=1",
+        "width": 150,
+        "height": 150,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "resizable": false,
+        "skipTaskbar": true,
+        "visible": false
       }
     ],
     "security": {

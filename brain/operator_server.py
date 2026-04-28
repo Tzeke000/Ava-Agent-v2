@@ -1196,6 +1196,32 @@ def create_app():
             return PlainTextResponse(f"(unavailable: {err})", status_code=404)
         return PlainTextResponse(text)
 
+    @app.get("/api/v1/widget/position")
+    def widget_position_get() -> dict[str, Any]:
+        try:
+            import json
+            from pathlib import Path
+            p = Path(_g().get("BASE_DIR") or ".") / "state" / "widget_position.json"
+            if p.is_file():
+                return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+        return {"x": 100, "y": 100}
+
+    @app.post("/api/v1/widget/position")
+    async def widget_position_set(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+        try:
+            import json
+            from pathlib import Path
+            base = Path(_g().get("BASE_DIR") or ".")
+            p = base / "state" / "widget_position.json"
+            pos = {"x": int(body.get("x") or 100), "y": int(body.get("y") or 100)}
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(pos, indent=2), encoding="utf-8")
+            return {"ok": True, **pos}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
     @app.post("/api/v1/tools/reload")
     def tools_reload() -> dict[str, Any]:
         try:
