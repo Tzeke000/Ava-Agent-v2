@@ -509,6 +509,15 @@ def _run_heartbeat_tick(
         if mode == HeartbeatMode.LEARNING_REVIEW:
             st.meta["last_learning_review_wall"] = now
 
+    # Phase 58: autonomous leisure check
+    try:
+        from brain.leisure import autonomous_leisure_check
+        _leisure_result = autonomous_leisure_check(g)
+        if _leisure_result:
+            print(_leisure_result)
+    except Exception:
+        pass
+
     # Phase 45: weekly concept graph decay
     _WEEK_SECONDS = 7 * 24 * 3600
     _last_decay = float(st.meta.get("last_concept_decay_wall") or 0)

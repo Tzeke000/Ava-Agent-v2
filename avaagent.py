@@ -8863,6 +8863,19 @@ except Exception:
     globals()["tts_engine_name"] = "none"
 globals()["tts_enabled"] = False
 
+# Phase 57: start wake word detector
+try:
+    from brain.wake_word import WakeWordDetector
+    def _on_wake_word():
+        globals()["_stt_listen_requested"] = True
+    _wake_detector = WakeWordDetector(globals(), on_wake=_on_wake_word, base_dir=BASE_DIR)
+    _wake_detector.start()
+    globals()["_wake_word_detector"] = _wake_detector
+    print(f"[wake_word] detector started backend={_wake_detector._backend}")
+except Exception as _ww_e:
+    globals()["_wake_word_detector"] = None
+    print(f"[wake_word] startup skipped: {_ww_e}")
+
 print("Ava running...")
 print(f"Base dir: {BASE_DIR}")
 print(f"Profiles dir: {PROFILES_DIR}")
