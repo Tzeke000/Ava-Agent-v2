@@ -777,10 +777,11 @@ def _build_workbench_result_from_host(host: dict[str, Any]):
 
 
 def create_app():
-    from fastapi import Body, FastAPI
+    from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse, PlainTextResponse
     from pydantic import BaseModel
+    import asyncio as _asyncio
 
     app = FastAPI(title="Ava Operator API", version="0.1")
 
@@ -1255,6 +1256,38 @@ def create_app():
             return {"ok": True, **pos}
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
+
+    # Phase 63: WebSocket real-time transport
+    _ws_clients: list[WebSocket] = []
+
+    @app.websocket("/ws")
+    async def websocket_endpoint(ws: WebSocket) -> None:
+        await ws.accept()
+        _ws_clients.append(ws)
+        try:
+            # Send full snapshot immediately on connect
+            snap = build_snapshot(_g())
+            await ws.send_json({"type": "snapshot", "data": snap})
+            # Keep connection alive; push deltas every 1s
+            while True:
+                await _asyncio.sleep(1.0)
+                try:
+                    delta = {
+                        "type": "delta",
+                        "ribbon": build_snapshot(_g()).get("ribbon"),
+                        "tts": build_snapshot(_g()).get("tts"),
+                        "widget": build_snapshot(_g()).get("widget"),
+                    }
+                    await ws.send_json(delta)
+                except Exception:
+                    break
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            pass
+        finally:
+            if ws in _ws_clients:
+                _ws_clients.remove(ws)
 
     @app.post("/api/v1/tools/reload")
     def tools_reload() -> dict[str, Any]:
