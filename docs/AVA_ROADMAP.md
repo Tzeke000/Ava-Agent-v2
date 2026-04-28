@@ -1,5 +1,5 @@
 # Ava Agent v2 — Development Roadmap
-**Last updated:** April 27, 2026  
+**Last updated:** April 28, 2026  
 **Repo:** `Tzeke000/Ava-Agent-v2` (public)  
 **Based on:** Full repo audit + roadmap planning session
 
@@ -21,16 +21,39 @@
 |---|---|---|
 | 1–31 | Core staged architecture (perception, memory, routing, continuity, heartbeat) | **COMPLETE** |
 | 32 | Operator HTTP + presence shell hardening | **COMPLETE** |
-| 33 | Operator drawer and tabbed control panel | **COMPLETE** |
-| 34 | Voice/presence UI consolidation | **COMPLETE** |
-| 35 | Workbench command and execution visibility in operator panel | **COMPLETE** |
-| 36 | Model routing overrides + diagnostics in operator panel | **COMPLETE** |
-| 37 | Concept graph memory + Brain graph visualization | **COMPLETE** |
-| 38 | Finetune pipeline + operator controls | **COMPLETE** |
-| 39 | Desktop autonomy tier rewrite + three-law guardrails | **IN PROGRESS** |
-| 40 | Deep self-awareness (mind model, self-critique, repair queue) | **IN PROGRESS** |
-| 41 | Full end-to-end system test and polish pass | **PLANNED** |
-| 42 | Stabilization + bug burn-down before long-run deployment | **PLANNED** |
+| 33 | Shutdown ritual + desktop agent foundation | **COMPLETE** |
+| 33b | Shutdown-overlay polish and desktop continuity glue | **COMPLETE** |
+| 34 | MeloTTS scaffold + pyttsx3 fallback | **COMPLETE** |
+| 35 | Fury HistoryManager context overhaul | **COMPLETE** |
+| 36 | Social chat routing fix (`mistral:7b`) | **COMPLETE** |
+| 37 | Emotional orb UI with 27 emotions | **COMPLETE** |
+| 38 | Fine-tuning pipeline (75 examples, `ava-personal:latest`) | **COMPLETE** |
+| 39 | LLaVA scene understanding scaffold | **COMPLETE** |
+| 40 | Deep self-awareness (theory of mind, self-critique, repair behaviors) | **COMPLETE** |
+| 41 | Tools foundation (`web_search`, `file_manager`, diagnostics) | **COMPLETE** |
+| 42 | Visual memory scaffold (cluster-fk inspired) | **COMPLETE** |
+| 43 | Voice pipeline (pyttsx3 Zira + STT scaffold + sounddevice) | **COMPLETE** |
+| 44 | Switch Ava to `ava-personal:latest` as primary brain | **PLANNED** |
+| 45 | Concept graph decay + associative recall in prompts | **PLANNED** |
+| 46 | Emil integration planning | **PLANNED** |
+| 47 | WebSocket transport replacing HTTP polling | **PLANNED** |
+| 48 | Ava proposes next phases autonomously | **PLANNED** |
+| 49 | MeloTTS female voice upgrade (post-Zira) | **PLANNED** |
+| 50 | Clap detection for hands-free activation | **PLANNED** |
+
+### App Milestones (completed)
+
+- Tauri desktop app with sci-fi presence view.
+- Three.js energy orb with 5 layers and 27 emotion morphs.
+- Color + shape morphing per emotion (teardrop / double / elongated variants).
+- Voice tab as default, with chat tab orb beneath camera.
+- Brain tab with D3 force graph, legend, stats bar, and zoom-glitch fix.
+- Finetune tab with live status and log feed.
+- Input mute button integrated into presence flow.
+- Graceful shutdown with goodbye overlay and process close handoff.
+- Concept graph now reporting 500 nodes / 1593 edges, with Zeke most connected.
+- `ava-personal:latest` fine-tuned model available for routing.
+- Microsoft Zira female voice active for pyttsx3.
 
 ### Tools Roadmap
 
