@@ -148,6 +148,20 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_concept_graph"] = _concept_graph
         g["_concept_graph_bootstrap_nodes"] = 0
 
+        _tmp_path = BASE_DIR / "state" / "concept_graph.json.tmp"
+        if _tmp_path.is_file():
+            # Another process left the .tmp locked — skip bootstrap this run
+            # to avoid WinError 5 / 32. The graph loaded fine from the .json file.
+            try:
+                _tmp_path.unlink()
+                print("[concept_graph] stale .tmp removed, bootstrap will run")
+            except OSError:
+                print("[concept_graph] .tmp still locked — skipping bootstrap this run")
+                _bg("ava-cg-bootstrap", lambda: None)  # no-op placeholder
+                _concept_graph.decay_unused_nodes(days_threshold=30)
+                # Skip the real bootstrap block below
+                raise RuntimeError("tmp_locked")
+
         def _bg_concept_bootstrap():
             try:
                 _cg_boot = bootstrap_from_existing_memory(_concept_graph, g)
