@@ -416,23 +416,32 @@ def tick_multi_person_awareness(g: dict[str, Any]) -> dict[str, Any]:
     """
     Called from heartbeat. Checks current recognized face and updates who is at the machine.
     Returns current_person block for snapshot.
+
+    Prefers the InsightFace cache (`_recognized_person_id` / `_recognized_confidence`
+    populated by background_ticks ~5 times/sec). Falls back to face_recognition
+    if InsightFace isn't running.
     """
     try:
         from pathlib import Path as _Path
-        from brain.face_recognizer import get_recognizer
         from brain.frame_store import read_live_frame_with_meta
 
         base_dir = _Path(g.get("BASE_DIR") or ".")
-        rec = get_recognizer(base_dir)
-        if not rec.available:
-            return _empty_person_block(g)
 
-        meta = read_live_frame_with_meta()
-        frame = meta.frame
-        if frame is None:
-            return _empty_person_block(g)
-
-        person_id, confidence = rec.get_best_match(frame)
+        # Fast path: InsightFace already analysed a recent frame.
+        insight = g.get("_insight_face")
+        if insight is not None and getattr(insight, "available", False):
+            person_id = str(g.get("_recognized_person_id") or "unknown")
+            confidence = float(g.get("_recognized_confidence") or 0.0)
+        else:
+            from brain.face_recognizer import get_recognizer
+            rec = get_recognizer(base_dir)
+            if not rec.available:
+                return _empty_person_block(g)
+            meta = read_live_frame_with_meta()
+            frame = meta.frame
+            if frame is None:
+                return _empty_person_block(g)
+            person_id, confidence = rec.get_best_match(frame)
         g["_face_recognizer_last_person_id"] = person_id
         g["_face_recognizer_last_confidence"] = confidence
 

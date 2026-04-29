@@ -60,17 +60,53 @@ def _video_frame_capture_thread(g: dict[str, Any]) -> None:
         print("[video_capture] camera not available")
         return
     print("[video_capture] camera opened, streaming at 15fps")
+
+    # InsightFace runs on every Nth frame (heavy: 30-50ms per call on GPU).
+    # Annotator draws overlays from the cached _face_results every frame.
+    _frame_idx = 0
+    _insight_every_n = 3  # ~5fps face detection at 15fps capture
+
     while True:
         try:
             ret, frame = cap.read()
             if ret and frame is not None:
-                # Update shared frame buffer so /api/v1/camera/live_frame always
-                # serves fresh frames without needing its own VideoCapture.
+                _frame_idx += 1
+
+                # Run InsightFace on a subset of frames; cache results in g.
+                insight = g.get("_insight_face")
+                if insight is not None and getattr(insight, "available", False):
+                    if _frame_idx % _insight_every_n == 0:
+                        try:
+                            face_results = insight.analyze_frame(frame)
+                            g["_face_results"] = face_results
+                            if face_results:
+                                # Pick the highest-confidence face as "the person"
+                                best = max(face_results, key=lambda r: float(r.get("confidence") or 0.0))
+                                g["_recognized_person_id"] = str(best.get("person_id") or "unknown")
+                                g["_recognized_confidence"] = float(best.get("confidence") or 0.0)
+                                g["_recognized_age"] = best.get("age", 0)
+                                g["_recognized_gender"] = best.get("gender", "?")
+                            else:
+                                g["_recognized_person_id"] = "unknown"
+                                g["_recognized_confidence"] = 0.0
+                        except Exception as _ie:
+                            print(f"[video_capture] insight analyze error: {_ie}")
+
+                # Annotate the frame with whatever face_results we currently have.
+                annotated = frame
+                try:
+                    from brain.camera_annotator import annotate_frame as _annotate
+                    annotated = _annotate(frame, g.get("_face_results"), g)
+                except Exception as _ae:
+                    print(f"[video_capture] annotate error: {_ae}")
+
+                # Push annotated frame so the UI sees the overlay live.
                 try:
                     from brain.frame_store import push_frame as _push_frame
-                    _push_frame(frame)
+                    _push_frame(annotated)
                 except Exception:
                     pass
+
                 vm = g.get("_video_memory")
                 et = g.get("_expression_detector")
                 ez = g.get("_eye_tracker")
@@ -89,6 +125,8 @@ def _video_frame_capture_thread(g: dict[str, Any]) -> None:
                     except Exception:
                         pass
                 if vm:
+                    # Write the *raw* (unannotated) frame to video memory so
+                    # episodic recall isn't polluted with overlays.
                     vm.add_frame(frame, expression=expression, gaze=gaze)
             time.sleep(_VIDEO_INTERVAL)
         except Exception as e:

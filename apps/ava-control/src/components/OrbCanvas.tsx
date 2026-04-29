@@ -12,6 +12,8 @@ interface OrbProps {
   shapeOverride?: string;
   /** Live speaking amplitude 0-1 (read from snap.tts.tts_amplitude). */
   amplitude?: number;
+  /** Energy 0-1 from snap.mood.raw_mood.energy — drives breathing rate. */
+  energy?: number;
 }
 
 const EMOTION_CONFIG: Record<string, {
@@ -93,7 +95,7 @@ const STATE_TINT = {
   offline: new THREE.Color("#404858"),
 };
 
-function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude = 0 }: OrbProps) {
+function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude = 0, energy = 0.5 }: OrbProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const disposeRef = useRef<()=>void>(()=>{});
 
@@ -103,10 +105,12 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
   const amplitudeRef = useRef<number>(amplitude);
   const emotionRef = useRef<string>(emotion);
   const shapeOverrideRef = useRef<string | undefined>(shapeOverride);
+  const energyRef = useRef<number>(energy);
   stateRef.current = state;
   amplitudeRef.current = amplitude;
   emotionRef.current = emotion;
   shapeOverrideRef.current = shapeOverride;
+  energyRef.current = energy;
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -124,10 +128,14 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
     const camera = new THREE.PerspectiveCamera(70,1,0.01,100);
     camera.position.z = 2.8;
 
+    // rootGroup holds all orb sub-groups so we can apply breathing scale +
+    // gentle drift in one place without affecting per-frame morph maths.
+    const rootGroup = new THREE.Group();
+    scene.add(rootGroup);
     const innerGroup = new THREE.Group();
     const outerGroup = new THREE.Group();
     const streamGroup = new THREE.Group();
-    scene.add(innerGroup,outerGroup,streamGroup);
+    rootGroup.add(innerGroup,outerGroup,streamGroup);
 
     // Core
     const coreGeo = new THREE.SphereGeometry(0.15,32,32);
@@ -200,10 +208,10 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
     const haloMat = new THREE.SpriteMaterial({ map:haloTex, transparent:true, opacity:0.2, blending:THREE.AdditiveBlending, depthWrite:false });
     const halo = new THREE.Sprite(haloMat);
     halo.scale.set(3.5,3.5,1);
-    scene.add(halo);
+    rootGroup.add(halo);
 
     const pLight = new THREE.PointLight(new THREE.Color(cfgInit.color),2.0,5);
-    scene.add(pLight);
+    rootGroup.add(pLight);
 
     const clock = new THREE.Clock();
     let fid = 0;
@@ -308,9 +316,25 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
       const liveState = stateRef.current;
       const liveAmp = amplitudeRef.current;
       const liveEmotion = emotionRef.current;
+      const liveEnergy = Math.max(0, Math.min(1, energyRef.current));
       const c=getCfg(liveEmotion);
       const s=spd(liveState);
       const r=s*0.001;
+
+      // ── Breathing (always-on) ─────────────────────────────────────────────
+      // Period shrinks with energy (0 → 3.5s, 1 → 2.0s).
+      const breathPeriod = 3.5 - liveEnergy * 1.5;
+      const breath = 1 + Math.sin((t / breathPeriod) * Math.PI * 2) * 0.03;
+
+      // ── Drift (always-on) ─────────────────────────────────────────────────
+      // Two superimposed sines on each axis so the motion never repeats cleanly.
+      // Amplitude is in scene units (camera at z=2.8); these translate to ~6-12
+      // pixels at the canvas size, matching the user's spec of ~8/6 px.
+      const driftScale = 0.012;  // tuned so the orb wanders within the frame
+      const dx = (Math.sin(t * 0.30) * 8 + Math.sin(t * 0.70) * 4) * driftScale;
+      const dy = (Math.cos(t * 0.40) * 6 + Math.cos(t * 0.11) * 3) * driftScale;
+      rootGroup.position.set(dx, dy, 0);
+      rootGroup.scale.setScalar(breath);
 
       // Rotation rates — thinking/listening/speaking each rotate differently.
       let rotMul = 1.0;
@@ -431,7 +455,8 @@ const OrbCanvas = memo(OrbCanvasInner, (prev, next) => (
   prev.state === next.state &&
   (prev.size ?? 320) === (next.size ?? 320) &&
   prev.shapeOverride === next.shapeOverride &&
-  Math.abs((prev.amplitude ?? 0) - (next.amplitude ?? 0)) < 0.03
+  Math.abs((prev.amplitude ?? 0) - (next.amplitude ?? 0)) < 0.03 &&
+  Math.abs((prev.energy ?? 0.5) - (next.energy ?? 0.5)) < 0.05
 ));
 
 export default OrbCanvas;
