@@ -263,17 +263,14 @@ def run_ava(
         _g["reply_path_selected"] = "fast" if use_fast_path else "deep"
         _g["reply_path_reason"] = f"classify_reply_depth_{_depth}"
 
-        # ── Step: prompt building (with 10s timeout) ──────────────────────────
+        # ── Step: prompt building (with 30s timeout) ──────────────────────────
         print(f"[run_ava] step: build prompt path={'fast' if use_fast_path else 'deep'}")
-        _build_fn = (
-            lambda: build_prompt_fast(user_input, image=image, active_person_id=active_person_id)
-            if use_fast_path
-            else lambda: build_prompt(user_input, image=image, active_person_id=active_person_id)
-        )
+        if use_fast_path:
+            _prompt_callable = lambda: build_prompt_fast(user_input, image=image, active_person_id=active_person_id)
+        else:
+            _prompt_callable = lambda: build_prompt(user_input, image=image, active_person_id=active_person_id)
         _prompt_result = _with_timeout(
-            (lambda: build_prompt_fast(user_input, image=image, active_person_id=active_person_id))
-            if use_fast_path
-            else (lambda: build_prompt(user_input, image=image, active_person_id=active_person_id)),
+            _prompt_callable,
             timeout=30.0,  # prompt building can take time for deep path
             fallback=None,
             label="build_prompt",
