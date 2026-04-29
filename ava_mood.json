@@ -1,81 +1,81 @@
 {
   "current_mood": "interest",
-  "energy": 0.55,
-  "warmth": 0.6000000000000001,
-  "sass": 0.26,
-  "focus": 0.86,
+  "energy": 0.5255095469257564,
+  "warmth": 0.5732831421008251,
+  "sass": 0.24842269491035754,
+  "focus": 0.8217058370111825,
   "last_updated": "2026-04-28T14:16:18",
   "reason": "updated from input: no just testing you for now Ava im gonna give you a sort of…",
   "emotion_weights": {
-    "admiration": 0.029413118872442544,
-    "adoration": 0.03178828194054484,
-    "aesthetic appreciation": 0.017553989691595818,
-    "amusement": 0.02487399624668581,
-    "anxiety": 0.01600625873959325,
-    "awe": 0.016168751547336848,
-    "awkwardness": 0.01460246229039552,
-    "boredom": 0.01942326871523943,
-    "calmness": 0.23570046086810859,
-    "confusion": 0.01236654636227496,
-    "craving": 0.00455462848015979,
-    "disgust": 0.00235762056096736,
-    "empathetic pain": 0.022429266937162507,
-    "entrancement": 0.011910120461607124,
+    "admiration": 0.007488314898846431,
+    "adoration": 0.0075999981637657945,
+    "aesthetic appreciation": 0.006930683179237511,
+    "amusement": 0.01032751527936443,
+    "anxiety": 0.006857906851473832,
+    "awe": 0.006865547475201287,
+    "awkwardness": 0.006791898511737443,
+    "boredom": 0.07983729974219443,
+    "calmness": 0.7849180784193142,
+    "confusion": 0.006686762828932627,
+    "craving": 0.003266800416705962,
+    "disgust": 0.00011085839335664488,
+    "empathetic pain": 0.010212560919051906,
+    "entrancement": 0.006665301087856853,
     "envy": 0.0,
-    "excitement": 0.07343530261761592,
-    "fear": 4.313827697462756e-05,
+    "excitement": 0.0,
+    "fear": 2.0284180401018173e-06,
     "horror": 0.0,
-    "interest": 0.2516197768160931,
-    "joy": 0.07547038747638025,
-    "nostalgia": 0.012848979304129097,
-    "relief": 0.01659933854800474,
-    "romance": 0.0006234482388215111,
-    "sadness": 0.008539152455739957,
-    "satisfaction": 0.07666248081760087,
-    "sexual desire": 0.000532625642831854,
-    "surprise": 0.024476598091693443
+    "interest": 0.0,
+    "joy": 0.0,
+    "nostalgia": 0.0067094474550008385,
+    "relief": 0.006885794237502475,
+    "romance": 2.9315349230083115e-05,
+    "sadness": 0.003454157930267264,
+    "satisfaction": 0.028025856590726803,
+    "sexual desire": 2.5044752324632885e-05,
+    "surprise": 0.010308829099868579
   },
   "primary_emotions": [
     {
-      "name": "interest",
-      "percent": 52
+      "name": "calmness",
+      "percent": 91
     },
     {
-      "name": "calmness",
-      "percent": 48
+      "name": "boredom",
+      "percent": 9
     }
   ],
   "style_scores": {
-    "playful": 0.1434,
-    "caring": 0.064,
-    "focused": 0.3501,
-    "reflective": 0.1776,
-    "cautious": 0.0364,
-    "neutral": 0.2067,
-    "low_energy": 0.0218
+    "playful": 0.0098,
+    "caring": 0.0111,
+    "focused": 0.2865,
+    "reflective": 0.1961,
+    "cautious": 0.0135,
+    "neutral": 0.4223,
+    "low_energy": 0.0608
   },
   "style_blend": [
     {
-      "name": "focused",
-      "percent": 63
+      "name": "neutral",
+      "percent": 60
     },
     {
-      "name": "neutral",
-      "percent": 37
+      "name": "focused",
+      "percent": 40
     }
   ],
-  "dominant_style": "focused",
+  "dominant_style": "neutral",
   "behavior_modifiers": {
-    "warmth": 0.395,
-    "humor": 0.208,
-    "assertiveness": 0.338,
-    "caution": 0.224,
-    "initiative": 0.417,
-    "memory_sensitivity": 0.445,
-    "depth": 0.336
+    "warmth": 0.361,
+    "humor": 0.104,
+    "assertiveness": 0.323,
+    "caution": 0.21,
+    "initiative": 0.284,
+    "memory_sensitivity": 0.424,
+    "depth": 0.335
   },
-  "emotion_interpretation": "interest (25% of current blend): active desire to explore or understand | calmness (24% of current blend): steadiness and low internal turbulence | satisfaction (8% of current blend): fulfillment after effort or alignment",
-  "outward_tone": "focused with some neutral",
+  "emotion_interpretation": "calmness (78% of current blend): steadiness and low internal turbulence | boredom (8% of current blend): lack of stimulation or meaningful engagement | satisfaction (3% of current blend): fulfillment after effort or alignment",
+  "outward_tone": "neutral with some focused",
   "rich_emotions": [
     {
       "name": "interest",
@@ -458,7 +458,7 @@
   ],
   "speakable_emotions": [],
   "askable_emotions": [],
-  "loneliness": 1.0,
+  "loneliness": 0.955471903501375,
   "engagement": 0.0,
-  "_saved_at": "2026-04-28T14:34:41"
+  "_saved_at": "2026-04-28T22:58:07"
 }

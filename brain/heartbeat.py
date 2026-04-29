@@ -528,6 +528,45 @@ def _run_heartbeat_tick(
     except Exception:
         pass
 
+    # Attention monitoring — eye tracker checks every 30 seconds
+    _ATTENTION_INTERVAL = 30.0
+    _last_attention = float(st.meta.get("last_attention_check_wall") or 0)
+    if (now - _last_attention) >= _ATTENTION_INTERVAL:
+        try:
+            from brain.eye_tracker import get_eye_tracker
+            from brain.frame_store import read_live_frame_with_meta, LIVE_CACHE_MAX_AGE_SEC
+            _et = get_eye_tracker()
+            if _et is not None and _et.available:
+                _meta = read_live_frame_with_meta(max_age=LIVE_CACHE_MAX_AGE_SEC)
+                _frame = _meta.frame
+                if _frame is not None:
+                    _attn = _et.get_attention_state(_frame)
+                    _gaze_region = _et.get_gaze_region(_frame)
+                    g["_attention_state"] = _attn
+                    g["_gaze_region"] = _gaze_region
+                    g["_looking_at_screen"] = _et.is_looking_at_screen(_frame)
+                    # Track away duration
+                    if _attn in ("away", "absent"):
+                        if not g.get("_user_away"):
+                            g["_user_away"] = True
+                            g["_user_away_since"] = now
+                    else:
+                        if g.get("_user_away"):
+                            _was_away = now - float(g.get("_user_away_since") or now)
+                            g["_user_away"] = False
+                            g["_user_away_since"] = 0.0
+                            g["_user_return_after_seconds"] = round(_was_away, 0)
+            # Auto clip tick — video memory rotation
+            _vm = g.get("_video_memory")
+            if _vm is not None:
+                _last_clip_tick = float(st.meta.get("last_video_clip_tick_wall") or 0)
+                if (now - _last_clip_tick) >= 60.0:
+                    _vm.auto_clip_tick(g)
+                    st.meta["last_video_clip_tick_wall"] = now
+            st.meta["last_attention_check_wall"] = now
+        except Exception:
+            pass
+
     # Phase 71: long-horizon plan tick (via dual brain if available)
     _PLAN_TICK_INTERVAL = 120.0
     _last_plan_tick = float(st.meta.get("last_plan_tick_wall") or 0)

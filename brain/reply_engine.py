@@ -52,6 +52,24 @@ def run_ava(
         k in _u_low for k in ("yes do it", "go ahead", "yes, do it", "go ahead and do it")
     )
 
+    # Gaze-to-screen: detect when user is pointing at something with their eyes
+    try:
+        _gaze_triggers = ("look at", "see that", "that thing", "over there",
+                          "right there", "this one", "that one")
+        if any(t in _u_low for t in _gaze_triggers):
+            from brain.eye_tracker import get_eye_tracker
+            _et = get_eye_tracker()
+            if _et is not None and _et.available:
+                import threading as _gaze_thread
+                def _async_gaze():
+                    try:
+                        _av.camera_manager.capture_gaze_target(_g)
+                    except Exception:
+                        pass
+                _gaze_thread.Thread(target=_async_gaze, daemon=True, name="ava-gaze-capture").start()
+    except Exception:
+        pass
+
     # Dual-brain: mark foreground busy (pauses Stream B) and harvest live thought
     _db = None
     try:

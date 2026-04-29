@@ -88,6 +88,30 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_dual_brain"] = None
         print(f"[dual_brain] startup skipped: {e}")
 
+    print("[startup] step: eye tracker")
+    try:
+        from brain.eye_tracker import bootstrap_eye_tracker
+        bootstrap_eye_tracker(g)
+    except Exception as e:
+        g["_eye_tracker"] = None
+        print(f"[eye_tracker] startup skipped: {e}")
+
+    print("[startup] step: expression detector")
+    try:
+        from brain.expression_detector import bootstrap_expression_detector
+        bootstrap_expression_detector(g)
+    except Exception as e:
+        g["_expression_detector"] = None
+        print(f"[expression_detector] startup skipped: {e}")
+
+    print("[startup] step: video memory")
+    try:
+        from brain.video_memory import bootstrap_video_memory
+        bootstrap_video_memory(g)
+    except Exception as e:
+        g["_video_memory"] = None
+        print(f"[video_memory] startup skipped: {e}")
+
     print("[startup] step: heartbeat bootstrap")
     try:
         from brain.heartbeat import bootstrap_heartbeat_runtime
