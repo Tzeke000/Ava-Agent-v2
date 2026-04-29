@@ -247,9 +247,9 @@ class VoiceLoop:
             except Exception as e:
                 print(f"[voice_loop] wake detector error: {e!r}")
 
-        # ── VOICE MOOD ANALYSIS (best-effort) ─────────────────────────────────
+        # ── VOICE MOOD ANALYSIS (best-effort, reuses STT audio) ───────────────
         try:
-            self._analyze_voice_mood()
+            self._analyze_voice_mood_from_result(result)
         except Exception as e:
             print(f"[voice_loop] voice mood error: {e!r}")
 
@@ -301,31 +301,32 @@ class VoiceLoop:
 
     # ── helpers ───────────────────────────────────────────────────────────────
 
-    def _analyze_voice_mood(self) -> None:
-        """Capture a brief audio sample and run voice_mood_detector. We sample
-        independently of STT (which already returned) because the STT pipeline
-        doesn't expose the raw audio array. This is best-effort — failures are
-        silent and never block the main path."""
+    def _analyze_voice_mood_from_result(self, stt_result: dict | None) -> None:
+        """Run voice_mood_detector on the audio array STT already captured.
+
+        Avoids the 1.5s extra recording the previous implementation did. If the
+        STT result doesn't include the audio (older API or fallback path), we
+        just skip — no fresh recording, no added latency. Best-effort.
+        """
         det = self._g.get("_voice_mood_detector")
         if det is None or not getattr(det, "available", False):
             return
-        try:
-            import numpy as np  # type: ignore
-            import sounddevice as sd  # type: ignore
-        except Exception:
+        if not isinstance(stt_result, dict):
+            return
+        audio = stt_result.get("audio_array")
+        sr = int(stt_result.get("sample_rate") or 16000)
+        if audio is None:
             return
         try:
-            sr = 16000
-            seconds = 1.5
-            audio = sd.rec(int(sr * seconds), samplerate=sr, channels=1, dtype="float32")
-            sd.wait()
-            audio = np.squeeze(audio, axis=1) if audio.ndim > 1 else audio
             mood = det.analyze(audio, sr=sr)
             mood["ts"] = time.time()
             self._g["_voice_mood"] = mood
-            print(f"[voice_mood] {mood.get('label')} energy={mood.get('energy')} q={mood.get('is_question')}")
+            print(
+                f"[voice_mood] {mood.get('label')} energy={mood.get('energy')} "
+                f"q={mood.get('is_question')} (reused STT audio)"
+            )
         except Exception as e:
-            print(f"[voice_mood] sample error: {e!r}")
+            print(f"[voice_mood] analyze error: {e!r}")
 
     def _speak(self, clean: str) -> bool:
         worker = self._g.get("_tts_worker")

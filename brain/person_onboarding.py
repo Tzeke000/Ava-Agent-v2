@@ -217,6 +217,20 @@ class OnboardingFlow:
             self.photo_qualities[stage] = avg_q
             print(f"[onboarding] {stage} photos={len(saved)} avg_quality={avg_q:.2f}")
 
+            # Push embeddings into InsightFace immediately so recognition starts
+            # working as soon as the first photo lands — no restart needed.
+            engine = g.get("_insight_face")
+            if engine is not None and getattr(engine, "available", False):
+                added = 0
+                for f in frames:
+                    try:
+                        if engine.add_face(self.person_id, f):
+                            added += 1
+                    except Exception as _afe:
+                        print(f"[onboarding] insight_face add_face error: {_afe}")
+                if added:
+                    print(f"[onboarding] insight_face: added {added} embeddings for {self.person_id}")
+
             # Move to next photo stage or confirm
             idx = PHOTO_STAGE_ORDER.index(stage)
             if idx < len(PHOTO_STAGE_ORDER) - 1:
@@ -423,10 +437,21 @@ def run_onboarding_step(user_input: str, g: dict[str, Any]) -> Optional[tuple[st
     if done:
         g["_onboarding_flow"] = None
         g["_onboarding_stage"] = "complete"
-        # Notify face recognizer to update embeddings
+        base = Path(g.get("BASE_DIR") or ".")
+        # Refresh InsightFace from the faces/ dir so any photos that didn't get
+        # add_face() during the per-stage call (older flows / failed adds) are
+        # picked up.
+        try:
+            engine = g.get("_insight_face")
+            if engine is not None and getattr(engine, "available", False):
+                engine.update_known_faces(base / "faces")
+                print(f"[onboarding] insight_face: known_count={engine.known_count()} after refresh")
+        except Exception as _e:
+            print(f"[onboarding] insight_face refresh error: {_e}")
+        # Legacy face_recognition lib fallback (still used when InsightFace is unavailable).
         try:
             from brain.face_recognizer import get_recognizer
-            rec = get_recognizer(Path(g.get("BASE_DIR") or "."))
+            rec = get_recognizer(base)
             rec.update_known_faces()
         except Exception:
             pass

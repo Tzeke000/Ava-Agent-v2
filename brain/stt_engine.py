@@ -176,6 +176,14 @@ class STTEngine:
         result = self._transcribe_array(audio, sample_rate)
         result["duration_seconds"] = duration
         result["speech_detected"] = True
+        # Expose the raw audio array + sample rate so callers (voice_mood_detector)
+        # can reuse it without re-recording. Returned as numpy float32 — callers
+        # should not mutate.
+        try:
+            result["audio_array"] = audio
+            result["sample_rate"] = sample_rate
+        except Exception:
+            pass
         return result
 
     def _transcribe_array(self, audio, sample_rate: int = 16000) -> dict:
