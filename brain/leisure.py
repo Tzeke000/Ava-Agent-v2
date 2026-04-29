@@ -30,6 +30,7 @@ ACTIVITIES = [
     "play_dino_game",
     "self_reflection",
     "work_on_plan",
+    "consolidate_memory",
 ]
 
 
@@ -177,6 +178,14 @@ def do_leisure_activity(g: dict[str, Any], base: Path) -> str:
                 notes = "No active plans — considering starting one."
         except Exception as e:
             notes = f"plan work failed: {e!r}"
+    elif chosen == "consolidate_memory":
+        try:
+            from brain.memory_consolidation import consolidate
+            r = consolidate(g)
+            themes = ", ".join((r.get("steps") or {}).get("episode_review", {}).get("themes", [])[:3])
+            notes = f"Memory consolidation complete. Themes this week: {themes or 'none yet'}."
+        except Exception as e:
+            notes = f"consolidation failed: {e!r}"
     else:
         notes = f"Activity: {chosen}"
 

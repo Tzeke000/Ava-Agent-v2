@@ -550,6 +550,15 @@ def _run_heartbeat_tick(
         except Exception:
             pass
 
+    # Phase 85: weekly memory consolidation
+    try:
+        from brain.memory_consolidation import should_consolidate, consolidate
+        if should_consolidate(g):
+            print("[heartbeat] running weekly memory consolidation...")
+            consolidate(g)
+    except Exception:
+        pass
+
     # Phase 45: weekly concept graph decay
     _WEEK_SECONDS = 7 * 24 * 3600
     _last_decay = float(st.meta.get("last_concept_decay_wall") or 0)
