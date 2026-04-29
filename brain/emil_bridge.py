@@ -116,6 +116,14 @@ class EmilBridge:
         """Send a message to Emil and get his response."""
         if not self._cfg().get("enabled", True):
             return {"ok": False, "reason": "disabled"}
+        # Phase 95: privacy scan before sending
+        try:
+            from brain.privacy_guardian import scan_outbound
+            safe, reason = scan_outbound(str(message), {})
+            if not safe:
+                return {"ok": False, "reason": f"Privacy guardian blocked: {reason}"}
+        except Exception:
+            pass
         try:
             import urllib.request
             payload = json.dumps({
