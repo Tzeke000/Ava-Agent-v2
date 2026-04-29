@@ -447,9 +447,14 @@ export default function App() {
     let timeoutId: number;
     const fetchFrame = async () => {
       try {
-        const r = await getJson<{ ok: boolean; b64?: string }>("/api/v1/camera/live_frame");
-        if (active && r.ok && r.b64) {
-          setLiveFrameSrc(`data:image/jpeg;base64,${r.b64}`);
+        const r = await getJson<{ ok: boolean; b64?: string; age_sec?: number }>("/api/v1/camera/live_frame");
+        if (active) {
+          if (r.ok && r.b64) {
+            setLiveFrameSrc(`data:image/jpeg;base64,${r.b64}`);
+          } else {
+            // Stale frame or camera unavailable — clear so placeholder shows
+            setLiveFrameSrc(null);
+          }
         }
       } catch { /* ignore */ }
       if (active) timeoutId = window.setTimeout(fetchFrame, 200);
