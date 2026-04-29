@@ -302,6 +302,7 @@ export default function App() {
   const prevOnlineRef = useRef<boolean | null>(null);
   const appStartedAtRef = useRef(Date.now());
   const connectStartRef = useRef(Date.now());
+  const pollFailureCountRef = useRef(0);
   const sttPollRef = useRef<number | null>(null);
 
   const pushEvent = useCallback((message: string) => {
@@ -373,15 +374,22 @@ export default function App() {
       const s = await getJson<Snapshot>("/api/v1/snapshot");
       setSnap(s);
       setLastSnapshotRaw(s);
+      pollFailureCountRef.current = 0;
       setOnline(true);
       setConnecting(false);
       setBackendShutdownDetected(false);
       setLastUpdated(typeof s.ts === "number" ? s.ts * 1000 : Date.now());
     } catch (e) {
+      pollFailureCountRef.current += 1;
       const elapsedMs = Date.now() - connectStartRef.current;
       const stillConnecting = elapsedMs < 120_000;
-      if (!stillConnecting) {
-        // 120s timeout — give up waiting, show error
+      if (stillConnecting) {
+        // In connecting window — stay completely silent, keep retrying
+        return;
+      }
+      // Past connecting window: require 3 consecutive failures before going offline.
+      // This prevents a single slow/failed poll from causing an offline flash.
+      if (pollFailureCountRef.current >= 3) {
         setConnecting(false);
         if (prevOnlineRef.current === true || shutdownInProgress || shutdownDone) {
           setBackendShutdownDetected(true);
@@ -390,9 +398,6 @@ export default function App() {
         setSnap(null);
         setLastSnapshotRaw(null);
         setPollErr(e instanceof Error ? e.message : String(e));
-      } else {
-        // Still in connecting window — stay silent, keep retrying
-        setOnline(false);
       }
     }
   }, []);
@@ -428,7 +433,7 @@ export default function App() {
 
   useEffect(() => {
     void poll();
-    const id = window.setInterval(() => void poll(), 3000);
+    const id = window.setInterval(() => void poll(), 5000);
     return () => window.clearInterval(id);
   }, [poll]);
 
