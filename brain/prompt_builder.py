@@ -286,8 +286,13 @@ def build_prompt(
     except Exception:
         pass
 
+    # Connectivity notice for deep path
+    _deep_conn_notice = str(_g.get("_connectivity_notice") or "").strip()
+    if _deep_conn_notice:
+        _g["_connectivity_notice"] = ""
+
     prompt = f"""
-{personality}
+{_deep_conn_notice + chr(10) if _deep_conn_notice else ""}{personality}
 
 {self_narrative_block}
 
@@ -567,6 +572,12 @@ Respond as Ava — concise and natural unless they explicitly ask for depth or t
             prompt = prompt + f"\n{_ambient_hint}"
     except Exception:
         pass
+
+    # Connectivity notice injection
+    _conn_notice = str(_g.get("_connectivity_notice") or "").strip()
+    if _conn_notice:
+        prompt = f"{_conn_notice}\n\n" + prompt
+        _g["_connectivity_notice"] = ""
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),

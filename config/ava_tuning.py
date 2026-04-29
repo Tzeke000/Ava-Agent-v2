@@ -458,6 +458,7 @@ class ModelCapabilityProfileDef:
     """
     Declarative capability profile for a model name (tendencies 0..1; lower ``fallback_priority`` = better last-resort).
     Intentional modes list which cognitive routes this model is a good match for.
+    requires_internet=True: model only usable when connectivity monitor reports online.
     """
 
     model_name: str
@@ -468,6 +469,8 @@ class ModelCapabilityProfileDef:
     summarization_suitability: float = 0.5
     fallback_priority: int = 100
     vision_capable: bool = False
+    requires_internet: bool = False
+    vram_required_gb: float = 0.0
     src: str = "config"
 
 
@@ -564,6 +567,76 @@ DEFAULT_MODEL_CAPABILITY_PROFILES: tuple[ModelCapabilityProfileDef, ...] = (
         coding_suitability=0.90,
         summarization_suitability=0.88,
         fallback_priority=20,
+    ),
+    # ── Cloud models (requires_internet=True) ────────────────────────────────
+    ModelCapabilityProfileDef(
+        model_name="kimi-k2.6:cloud",
+        cognitive_modes=("deep_reasoning_mode", "coding_repair_mode"),
+        latency_tendency=0.70,
+        reasoning_strength=0.95,
+        coding_suitability=0.92,
+        summarization_suitability=0.90,
+        fallback_priority=2,
+        requires_internet=True,
+        src="ollama_cloud",
+    ),
+    ModelCapabilityProfileDef(
+        model_name="qwen3.5:cloud",
+        cognitive_modes=("deep_reasoning_mode", "coding_repair_mode", "memory_maintenance_mode"),
+        latency_tendency=0.65,
+        reasoning_strength=0.93,
+        coding_suitability=0.90,
+        summarization_suitability=0.88,
+        fallback_priority=2,
+        vision_capable=True,
+        requires_internet=True,
+        src="ollama_cloud",
+    ),
+    ModelCapabilityProfileDef(
+        model_name="glm-5.1:cloud",
+        cognitive_modes=("deep_reasoning_mode", "coding_repair_mode"),
+        latency_tendency=0.60,
+        reasoning_strength=0.90,
+        coding_suitability=0.88,
+        summarization_suitability=0.85,
+        fallback_priority=3,
+        requires_internet=True,
+        src="ollama_cloud",
+    ),
+    ModelCapabilityProfileDef(
+        model_name="minimax-m2.7:cloud",
+        cognitive_modes=("social_chat_mode", "memory_maintenance_mode", "fallback_safe_mode"),
+        latency_tendency=0.50,
+        reasoning_strength=0.85,
+        coding_suitability=0.85,
+        summarization_suitability=0.88,
+        fallback_priority=3,
+        requires_internet=True,
+        src="ollama_cloud",
+    ),
+    # ── Local models (may not be downloaded yet) ─────────────────────────────
+    ModelCapabilityProfileDef(
+        model_name="gemma4",
+        cognitive_modes=("deep_reasoning_mode", "coding_repair_mode"),
+        latency_tendency=0.40,
+        reasoning_strength=0.88,
+        coding_suitability=0.85,
+        summarization_suitability=0.85,
+        fallback_priority=11,
+        vram_required_gb=16.0,
+        src="config",
+    ),
+    ModelCapabilityProfileDef(
+        model_name="qwen3.5",
+        cognitive_modes=("deep_reasoning_mode", "coding_repair_mode", "memory_maintenance_mode"),
+        latency_tendency=0.45,
+        reasoning_strength=0.92,
+        coding_suitability=0.90,
+        summarization_suitability=0.88,
+        fallback_priority=10,
+        vision_capable=True,
+        vram_required_gb=11.0,
+        src="config",
     ),
 )
 

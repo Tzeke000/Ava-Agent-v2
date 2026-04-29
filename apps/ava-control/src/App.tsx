@@ -17,6 +17,7 @@ const TABS = [
   { id: "memory" as const, label: "Memory" },
   { id: "tools" as const, label: "Tools" },
   { id: "models" as const, label: "Models / Brains" },
+  { id: "creative" as const, label: "Creative" },
   { id: "finetune" as const, label: "Finetune" },
   { id: "workbench" as const, label: "Workbench" },
   { id: "plans" as const, label: "Plans" },
@@ -272,6 +273,20 @@ export default function App() {
   const [backendShutdownDetected, setBackendShutdownDetected] = useState(false);
   const [operatorOpen, setOperatorOpen] = useState(false);
   const [cameraOverlayOpen, setCameraOverlayOpen] = useState(false);
+
+  // Connectivity state
+  const [connOnline, setConnOnline] = useState(false);
+  const [connQuality, setConnQuality] = useState<string>("offline");
+  const [connCloudAvailable, setConnCloudAvailable] = useState(false);
+
+  // Creative / image generation state
+  const [imagePrompt, setImagePrompt] = useState("");
+  const [imageStyle, setImageStyle] = useState("");
+  const [imageBusy, setImageBusy] = useState(false);
+  const [imageResult, setImageResult] = useState<string | null>(null);
+  const [imageList, setImageList] = useState<Record<string, unknown>[]>([]);
+  const [imageListBusy, setImageListBusy] = useState(false);
+  const [comfyuiOnline, setComfyuiOnline] = useState(false);
 
   // Phase 79: onboarding overlay
   const [onboardingActive, setOnboardingActive] = useState(false);
@@ -542,6 +557,33 @@ export default function App() {
       }
     };
   }, []);
+
+  // Sync connectivity from snapshot
+  useEffect(() => {
+    if (!snap) return;
+    const conn = asRecord(snap.connectivity);
+    if (!conn) return;
+    setConnOnline(Boolean(conn.online));
+    setConnQuality(typeof conn.quality === "string" ? conn.quality : "offline");
+    setConnCloudAvailable(Boolean(conn.cloud_models_available));
+  }, [snap]);
+
+  // Creative tab: load image list
+  useEffect(() => {
+    if (tab !== "creative") return;
+    setImageListBusy(true);
+    Promise.all([
+      getJson("/api/v1/images/list"),
+      getJson("/api/v1/connectivity"),
+    ]).then(([imgList, conn]) => {
+      const il = imgList as Record<string, unknown>;
+      setImageList((il.images as Record<string, unknown>[]) ?? []);
+      const c = conn as Record<string, unknown>;
+      setComfyuiOnline(false); // will be set by separate check
+      setConnOnline(Boolean(c.online));
+      setConnCloudAvailable(Boolean(c.cloud_reachable));
+    }).catch(() => {}).finally(() => setImageListBusy(false));
+  }, [tab]);
 
   // Phase 79: sync onboarding state from snapshot
   useEffect(() => {
@@ -881,7 +923,13 @@ export default function App() {
     String(perception?.face_status ?? "").trim() || String(ribbon?.nuance_tone ?? "").trim() || "Neutral / steady";
   const primaryEmotion = String(mood?.primary_emotion ?? "calmness").toLowerCase();
   const orbVisual = EMOTION_VISUALS[primaryEmotion] ?? EMOTION_VISUALS.calmness;
-  const effectiveOrbColor = backendShutdownDetected ? "#6b7280" : orbVisual.color;
+  // Connectivity-aware orb color: dims and cools when offline
+  const connOffline = !connOnline && online; // backend up but no internet
+  const effectiveOrbColor = backendShutdownDetected
+    ? "#6b7280"
+    : connOffline
+      ? shadeHex(orbVisual.color, 0.72)  // 10% dimmer when internet offline
+      : orbVisual.color;
   const styleGlow = Number(style?.orb_glow_intensity ?? 0.8);
   const orbMidColor = shadeHex(effectiveOrbColor, 1.08);
   const orbDarkColor = shadeHex(effectiveOrbColor, 0.52);
@@ -1307,6 +1355,28 @@ export default function App() {
             <span style={{ color: "#00d4d4" }}>Processing…</span>
           </div>
         )}
+        {/* Connectivity status bar */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "4px 12px", fontSize: "0.72rem",
+          background: "rgba(0,0,0,0.3)", borderRadius: 6, marginBottom: 4,
+        }}>
+          <span style={{
+            width: 8, height: 8, borderRadius: "50%", display: "inline-block",
+            background: !online ? "#6b7280" : connOnline ? "#4ade80" : "#f59e0b",
+            boxShadow: connOnline && online ? "0 0 6px #4ade80" : "none",
+            flexShrink: 0,
+          }} />
+          <span style={{ color: !online ? "#6b7280" : connOnline ? "#4ade80" : "#f59e0b", fontFamily: "monospace" }}>
+            {!online ? "AVA OFFLINE" : connOnline ? (connCloudAvailable ? "Cloud active" : "Local only") : "Local only"}
+          </span>
+          {connOnline && connQuality === "online_fast" && (
+            <span style={{ color: "#4a5568", marginLeft: 4 }}>fast</span>
+          )}
+          {connOnline && connQuality === "online_slow" && (
+            <span style={{ color: "#d69e2e", marginLeft: 4 }}>slow</span>
+          )}
+        </div>
         <div className="presence-hud-row">
           <div className="presence-hud" style={{ color: effectiveOrbColor }}>
             EMOTION: {primaryEmotion}
@@ -1324,6 +1394,14 @@ export default function App() {
               size={320}
               amplitude={ttsAmplitude}
             />
+            {/* Offline overlay text */}
+            {connOffline && (
+              <div style={{
+                position: "absolute", bottom: 12, left: "50%", transform: "translateX(-50%)",
+                color: "rgba(156,163,175,0.5)", fontSize: "0.6rem", fontFamily: "monospace",
+                letterSpacing: "0.15em", pointerEvents: "none", userSelect: "none",
+              }}>LOCAL</div>
+            )}
           </div>
         </div>
         <div className="presence-orb-line" aria-hidden="true" />
@@ -1853,7 +1931,7 @@ export default function App() {
             <div className="op-pane">
               <h1 className="op-h1">Models / Brains</h1>
               <p className="op-lead">
-                Discovery + routing from snapshot; switch uses <code>POST /api/v1/routing/override</code>.
+                Discovery + routing. Cloud models available when internet connected.
               </p>
               {!online ? (
                 <p className="op-muted">Not connected.</p>
@@ -1865,9 +1943,44 @@ export default function App() {
                         { label: "Selected model", value: models?.selected_model },
                         { label: "Fallback", value: models?.fallback_model },
                         { label: "Reason", value: models?.routing_reason },
+                        { label: "Internet", value: connOnline ? `online (${connQuality})` : "offline — cloud disabled" },
                         { label: "Override (host)", value: models?.override_model },
                       ]}
                     />
+                  </Section>
+                  <Section title="Local Models">
+                    <div style={{ fontSize: "0.85rem", color: "#9ca3af" }}>
+                      {modelTags.filter(m => !m.includes(":cloud")).map(m => (
+                        <div key={m} style={{
+                          display: "flex", alignItems: "center", gap: 8, padding: "4px 0",
+                          borderBottom: "1px solid #1e293b",
+                        }}>
+                          <span style={{
+                            width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                            background: models?.selected_model === m ? "#4ade80" : "#2d3748",
+                          }} />
+                          <span style={{ color: models?.selected_model === m ? "#e2e8f0" : "#9ca3af" }}>{m}</span>
+                        </div>
+                      ))}
+                      {modelTags.filter(m => !m.includes(":cloud")).length === 0 && (
+                        <p className="op-muted">No local models discovered.</p>
+                      )}
+                    </div>
+                  </Section>
+                  <Section title={`Cloud Models ${connOnline ? "(available)" : "(offline — locked)"}`}>
+                    {["kimi-k2.6:cloud", "qwen3.5:cloud", "glm-5.1:cloud", "minimax-m2.7:cloud"].map(m => (
+                      <div key={m} style={{
+                        display: "flex", alignItems: "center", gap: 8, padding: "4px 0",
+                        borderBottom: "1px solid #1e293b", opacity: connOnline ? 1 : 0.4,
+                      }}>
+                        <span style={{
+                          width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                          background: !connOnline ? "#374151" : models?.selected_model === m ? "#4ade80" : "#1a6cf5",
+                        }} />
+                        <span style={{ color: connOnline ? "#93c5fd" : "#4b5563", fontSize: "0.85rem" }}>{m}</span>
+                        {!connOnline && <span style={{ color: "#374151", fontSize: "0.7rem" }}>🔒 offline</span>}
+                      </div>
+                    ))}
                   </Section>
                   <Section title="Switch model">
                     <label className="op-label">Model tag</label>
@@ -1895,11 +2008,99 @@ export default function App() {
                     </button>
                     {routeMsg ? <p className="op-note">{routeMsg}</p> : null}
                   </Section>
-                  <Section title="Available tags (snapshot)">
-                    <p className="op-muted">{modelTags.length ? modelTags.join(", ") : "None listed"}</p>
-                  </Section>
                 </>
               )}
+            </div>
+          )}
+
+          {tab === "creative" && (
+            <div className="op-pane">
+              <h1 className="op-h1">Creative</h1>
+              <p className="op-lead">Image generation via ComfyUI (local FLUX) or Pollinations.ai (cloud).</p>
+              <Section title="Generation Status">
+                <Kv items={[
+                  { label: "ComfyUI :8188", value: comfyuiOnline ? "online" : "not detected" },
+                  { label: "Cloud (Pollinations)", value: connOnline ? "available" : "offline" },
+                  { label: "Last image", value: String(asRecord(snap)?.latest_image ?? "none") },
+                ]} />
+              </Section>
+              <Section title="Generate Image">
+                <label className="op-label">Prompt</label>
+                <input
+                  className="op-input"
+                  value={imagePrompt}
+                  onChange={(e) => setImagePrompt(e.target.value)}
+                  placeholder="a cat in a forest, cinematic lighting"
+                />
+                <label className="op-label">Style (optional)</label>
+                <input
+                  className="op-input"
+                  value={imageStyle}
+                  onChange={(e) => setImageStyle(e.target.value)}
+                  placeholder="oil painting, watercolor, cyberpunk…"
+                />
+                <button
+                  type="button" className="op-btn" disabled={imageBusy || !imagePrompt.trim()}
+                  onClick={() => {
+                    if (!imagePrompt.trim()) return;
+                    setImageBusy(true); setImageResult(null);
+                    postJson("/api/v1/images/generate", { prompt: imagePrompt, style: imageStyle })
+                      .then((d) => {
+                        const r = d as Record<string, unknown>;
+                        if (r.ok && typeof r.path === "string") {
+                          setImageResult(r.path);
+                          // Refresh list
+                          getJson("/api/v1/images/list").then((il) => {
+                            setImageList(((il as Record<string, unknown>).images as Record<string, unknown>[]) ?? []);
+                          }).catch(() => {});
+                        }
+                      })
+                      .catch(() => {})
+                      .finally(() => setImageBusy(false));
+                  }}
+                >
+                  {imageBusy ? "Generating…" : "Generate"}
+                </button>
+                {imageResult && (
+                  <p style={{ color: "#4ade80", fontSize: "0.82rem", marginTop: 6 }}>
+                    Saved: {imageResult.split("/").pop()}
+                  </p>
+                )}
+              </Section>
+              <Section title="Image Gallery">
+                {imageListBusy ? <p className="op-muted">Loading…</p> : (
+                  imageList.length === 0 ? (
+                    <p className="op-muted">No images generated yet.</p>
+                  ) : (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {imageList.map((img, i) => {
+                        const im = img as Record<string, unknown>;
+                        return (
+                          <div key={i} style={{
+                            border: "1px solid #1e293b", borderRadius: 8, padding: 6,
+                            background: "#0d1117", fontSize: "0.72rem", color: "#6b7280",
+                            maxWidth: 160,
+                          }}>
+                            <div style={{ fontFamily: "monospace", wordBreak: "break-all" }}>
+                              {String(im.filename ?? "")}
+                            </div>
+                            <div>{String(im.size_kb ?? "")} KB</div>
+                            <button
+                              type="button"
+                              style={{ marginTop: 4, fontSize: "0.7rem", color: "#ef4444", background: "none", border: "none", cursor: "pointer", padding: 0 }}
+                              onClick={() => {
+                                fetch(`${API_BASE}/api/v1/images/${String(im.filename ?? "")}`, { method: "DELETE" })
+                                  .then(() => setImageList(prev => prev.filter((_, j) => j !== i)))
+                                  .catch(() => {});
+                              }}
+                            >Delete</button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
+                )}
+              </Section>
             </div>
           )}
 

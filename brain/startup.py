@@ -48,6 +48,26 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_visual_memory_summary"] = {"cluster_count": 0, "named_clusters": 0, "most_seen": ""}
         print(f"[visual_memory] startup skipped: {e}")
 
+    # Connectivity monitor (must run before heartbeat/routing)
+    try:
+        from brain.connectivity import bootstrap_connectivity
+        bootstrap_connectivity(g)
+    except Exception as e:
+        g["_is_online"] = False
+        g["_connection_quality"] = "offline"
+        g["_ollama_cloud_reachable"] = False
+        g["_connectivity_changed"] = False
+        print(f"[connectivity] bootstrap skipped: {e}")
+
+    # Image generator
+    try:
+        from tools.creative.image_generator import ImageGenerator
+        g["_image_generator"] = ImageGenerator(g)
+        print("[image_gen] ImageGenerator initialized")
+    except Exception as e:
+        g["_image_generator"] = None
+        print(f"[image_gen] startup skipped: {e}")
+
     # Heartbeat bootstrap
     try:
         from brain.heartbeat import bootstrap_heartbeat_runtime

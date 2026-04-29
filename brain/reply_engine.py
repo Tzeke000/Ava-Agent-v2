@@ -55,6 +55,20 @@ def run_ava(
     )
 
     try:
+        # Connectivity change notification — inject into context so Ava can acknowledge naturally
+        _conn_changed = bool(_g.get("_connectivity_changed"))
+        if _conn_changed:
+            _conn_to = str(_g.get("_connectivity_changed_to") or "")
+            _g["_connectivity_changed"] = False
+            if _conn_to == "online":
+                _g["_connectivity_notice"] = (
+                    "SYSTEM: Internet connection restored. Cloud models now available."
+                )
+            else:
+                _g["_connectivity_notice"] = (
+                    "SYSTEM: Internet connection lost. Switching to local models only."
+                )
+
         # Phases 79-80: onboarding and profile refresh trigger detection
         try:
             from brain.person_onboarding import (
