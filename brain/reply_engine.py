@@ -1,0 +1,278 @@
+"""
+brain/reply_engine.py — Main Ava response pipeline.
+
+run_ava extracted from avaagent.py. Handles routing, model selection,
+reply guards, tool execution, and delegates to turn_handler for finalization.
+"""
+from __future__ import annotations
+
+import time
+from pathlib import Path
+from typing import Any
+
+_RUN_AVA_TUNING_SOURCE_LOGGED = False
+
+
+def run_ava(
+    user_input: str, image: Any = None, active_person_id: str | None = None
+) -> tuple[str, dict, dict, list[str], dict]:
+    global _RUN_AVA_TUNING_SOURCE_LOGGED
+    import avaagent as _av
+    _g = vars(_av)
+
+    from brain.prompt_builder import build_prompt, build_prompt_fast
+    from brain.turn_handler import finalize_ava_turn
+    from langchain_ollama import ChatOllama
+    from brain.turn_visual import default_visual_payload
+    from brain.output_guard import scrub_visible_reply
+    from brain.selfstate import is_selfstate_query, build_selfstate_reply
+    from brain.shutdown_ritual import is_shutdown_trigger, run_shutdown_ritual
+
+    llm = _av.llm
+    workspace = _av.workspace
+    LLM_MODEL = _av.LLM_MODEL
+    BASE_DIR = _av.BASE_DIR
+    OWNER_PERSON_ID = _av.OWNER_PERSON_ID
+
+    if not _RUN_AVA_TUNING_SOURCE_LOGGED:
+        _RUN_AVA_TUNING_SOURCE_LOGGED = True
+        print(
+            "[run_ava] tuning layer: config/ava_tuning.py "
+            "(summarize_tuning_config() for a full snapshot)"
+        )
+
+    active_person_id = active_person_id or _av.get_active_person_id()
+    _inp = (user_input or "").strip()
+    _g["_last_user_interaction_ts"] = time.time()
+    _u_low = _inp.lower()
+    _g["_desktop_tier3_approved"] = any(
+        k in _u_low for k in ("yes do it", "go ahead", "yes, do it", "go ahead and do it")
+    )
+    print(
+        f"[run_ava] enter person={active_person_id} has_image={image is not None} "
+        f"input_chars={len(_inp)}"
+    )
+
+    try:
+        try:
+            from brain.concern_reconciliation import mark_concern_user_dismissed
+            _redir = _av._user_redirected_topic(user_input)
+            if _redir == "camera":
+                mark_concern_user_dismissed("camera_stale", _g)
+                mark_concern_user_dismissed("recognition_uncertain", _g)
+            elif _redir in ("memory", "general"):
+                mark_concern_user_dismissed("maintenance_workbench", _g)
+        except Exception:
+            pass
+
+        active_profile = _av.load_profile_by_id(active_person_id)
+
+        if is_shutdown_trigger(user_input):
+            ritual_goodbye = scrub_visible_reply(run_shutdown_ritual(_g))
+            return finalize_ava_turn(
+                user_input, ritual_goodbye, {}, active_profile, [], turn_route="shutdown_ritual"
+            )
+
+        if _av._is_thinking_or_topic_prompt(user_input):
+            from brain.inner_monologue import current_thought as inner_current_thought, get_conversation_starter as inner_get_conversation_starter
+            from brain.curiosity_topics import get_current_curiosity
+            thought = inner_current_thought(BASE_DIR)
+            starter = inner_get_conversation_starter(
+                BASE_DIR,
+                idle_seconds=time.time() - float(_g.get("_last_user_interaction_ts") or time.time()),
+            )
+            cur = get_current_curiosity(_g)
+            topic_line = str((cur or {}).get("topic") or "").strip()
+            reply = thought or starter or (
+                f"I have been wondering about {topic_line}." if topic_line else "I have been reflecting on our recent conversations."
+            )
+            return finalize_ava_turn(
+                user_input, scrub_visible_reply(reply), {}, active_profile, [], turn_route="inner_life_prompt"
+            )
+
+        from brain.persona_switcher import should_deflect, get_blocked_reply, get_deflect_reply
+        from brain.trust_manager import is_blocked
+        if is_blocked(active_profile):
+            reply = get_blocked_reply()
+            vs = default_visual_payload(
+                face_status="Not evaluated (blocked)", recognition_status="—",
+                expression_status="—", memory_preview="", turn_route="blocked",
+                visual_truth_trusted=False, vision_status="blocked_policy",
+            )
+            print(f"[run_ava] exit route=blocked reply_chars={len(reply)} (no finalize)")
+            return reply, vs, active_profile, [], {}
+
+        if should_deflect(active_profile, user_input):
+            reply = get_deflect_reply(active_profile, user_input)
+            vs = default_visual_payload(
+                face_status="Not evaluated (deflect)", recognition_status="—",
+                expression_status="—", memory_preview="", turn_route="deflect",
+                visual_truth_trusted=False, vision_status="deflect",
+            )
+            print(f"[run_ava] exit route=deflect reply_chars={len(reply)} (no finalize)")
+            return reply, vs, active_profile, [], {}
+
+        if is_selfstate_query(user_input):
+            active_goal_txt = ""
+            try:
+                gs = _av.load_goal_system()
+                ag = gs.get("active_goal")
+                if isinstance(ag, dict):
+                    active_goal_txt = str(ag.get("name") or ag.get("title") or "").strip()[:200]
+                elif ag:
+                    active_goal_txt = str(ag)[:200]
+            except Exception:
+                pass
+            narrative = _av._load_self_narrative_snippet()
+            reply = scrub_visible_reply(
+                build_selfstate_reply(
+                    _g, user_input, image, active_profile,
+                    active_goal=active_goal_txt or None,
+                    narrative_snippet=narrative,
+                )
+            )
+            return finalize_ava_turn(user_input, reply, {}, active_profile, [], turn_route="selfstate")
+
+        if _av.is_camera_identity_intent(user_input) or _av.is_camera_visual_query(user_input):
+            ai_reply, visual, active_profile, actions = _av.handle_camera_identity_turn(
+                user_input, image, active_person_id=active_person_id
+            )
+            ai_reply = _av._apply_reply_guardrails(ai_reply, user_input)
+            ai_reply = _av._apply_repetition_control(ai_reply, user_input, active_profile["person_id"], source="chat")
+            return finalize_ava_turn(user_input, ai_reply, visual, active_profile, actions, turn_route="camera_identity")
+
+        _depth = _av.classify_reply_depth(user_input, _g)
+        if _depth == "fast":
+            _g["reply_path_selected"] = "fast"
+            _g["reply_path_reason"] = "classify_reply_depth_fast"
+        else:
+            _g["reply_path_selected"] = "deep"
+            _g["reply_path_reason"] = "classify_reply_depth_deep"
+        use_fast_path = _depth == "fast"
+        if use_fast_path:
+            messages, visual, active_profile = build_prompt_fast(user_input, image=image, active_person_id=active_person_id)
+            print("[run_ava] llm_invoke start path=fast")
+        else:
+            messages, visual, active_profile = build_prompt(user_input, image=image, active_person_id=active_person_id)
+            print("[run_ava] llm_invoke start path=deep")
+
+        try:
+            _invoke_llm = llm
+            try:
+                _ws_st = workspace.state
+                _perc_r = getattr(_ws_st, "perception", None) if _ws_st is not None else None
+                _route_model = ""
+                if _perc_r is not None:
+                    _route_model = str(getattr(_perc_r, "routing_selected_model", "") or "").strip()
+                if use_fast_path:
+                    if _route_model and _route_model != LLM_MODEL:
+                        _invoke_llm = ChatOllama(model=_route_model, temperature=0.45)
+                        print(f"[run_ava] fast_path_routed_model={_route_model}")
+                    else:
+                        _fast_model = _av._pick_fast_model_fallback()
+                        if _fast_model:
+                            _invoke_llm = ChatOllama(model=_fast_model, temperature=0.45)
+                            print(f"[run_ava] fast_path_model={_fast_model}")
+                else:
+                    _deep_model = _av._pick_deep_model_fallback()
+                    if _deep_model:
+                        _invoke_llm = ChatOllama(model=_deep_model, temperature=0.55)
+                        print(f"[run_ava] deep_path_model={_deep_model}")
+                    elif _route_model and _route_model != LLM_MODEL:
+                        _invoke_llm = ChatOllama(model=_route_model, temperature=0.6)
+                        print(f"[run_ava] phase25_routing_model={_route_model}")
+            except Exception:
+                pass
+            result = _invoke_llm.invoke(messages)
+            raw_reply = getattr(result, "content", str(result)).strip()
+            if not raw_reply:
+                raw_reply = "I'm here."
+            print(f"[run_ava] llm_invoke ok reply_raw_chars={len(raw_reply)}")
+            # Phase 44: self-evaluation
+            try:
+                from brain.model_evaluator import get_evaluator
+                _used_model = str(getattr(_invoke_llm, "model", "") or "")
+                if "ava-personal" in _used_model:
+                    get_evaluator(Path(BASE_DIR)).submit_for_evaluation(user_input, raw_reply, _used_model)
+            except Exception:
+                pass
+        except Exception as e:
+            raw_reply = f"I hit an internal error: {e}"
+            print(f"[run_ava] llm_invoke failed: {e!r}")
+
+        person_id = active_profile["person_id"]
+        ai_reply, actions = _av.process_ava_action_blocks(raw_reply, person_id, latest_user_input=user_input)
+
+        try:
+            conflict_trigger = any(
+                k in _u_low
+                for k in ("be honest", "honest feedback", "hard truth", "hurt my feelings", "private", "privacy", "long term", "long-term")
+            )
+            if conflict_trigger:
+                from brain.deep_self import resolve_value_conflict
+                _conf = resolve_value_conflict(user_input, _g)
+                if isinstance(_conf, dict):
+                    _line = str(_conf.get("integrated_response") or "").strip()
+                    if _line:
+                        ai_reply = f"{ai_reply}\n\n(Values check: {_line})"
+        except Exception:
+            pass
+
+        from brain.identity_loader import process_identity_actions
+        ai_reply = process_identity_actions(ai_reply)
+        ai_reply = _av._apply_reply_guardrails(ai_reply, user_input)
+        ai_reply = _av._apply_repetition_control(ai_reply, user_input, person_id, source="chat")
+        ai_reply = _av._scrub_internal_leakage(ai_reply)
+        ai_reply = scrub_visible_reply(ai_reply)
+        ai_reply, tool_actions = _av._execute_tool_tags_from_reply(ai_reply)
+        if tool_actions:
+            actions = list(actions or []) + tool_actions
+
+        try:
+            from brain.curiosity_topics import add_topic as add_curiosity_topic, mark_resolved as mark_curiosity_resolved
+            from brain.opinions import get_opinion, form_opinion
+            _t = _av._extract_simple_topic(user_input)
+            if _t:
+                add_curiosity_topic(_t, user_input[:220], _g)
+                _op = get_opinion(_t, _g)
+                if _op is None:
+                    form_opinion(_t, user_input[:300], _g)
+                if "answered" in user_input.lower() or "resolved" in user_input.lower():
+                    mark_curiosity_resolved(_t, _g)
+        except Exception:
+            pass
+
+        _vroute = isinstance(visual, dict) and visual.get("turn_route")
+        print(
+            f"[run_ava] exit route={_vroute or 'llm'} via finalize actions={len(actions)} "
+            f"path={'fast' if use_fast_path else 'deep'}"
+        )
+        return finalize_ava_turn(
+            user_input, ai_reply, visual, active_profile, actions, turn_route=_vroute or "llm"
+        )
+
+    except Exception as e:
+        import traceback
+        print(f"[run_ava] exception (fallback turn): {e!r}\n{traceback.format_exc()}")
+        try:
+            ap = _av.load_profile_by_id(active_person_id)
+        except Exception:
+            try:
+                _av.ensure_owner_profile()
+                ap = _av.load_profile_by_id(OWNER_PERSON_ID)
+            except Exception:
+                ap = {
+                    "person_id": active_person_id, "name": active_person_id,
+                    "relationship_to_zeke": "unknown", "allowed_to_use_computer": False,
+                    "relationship_score": 0.3, "notes": [], "likes": [], "ava_impressions": [],
+                }
+        vs = default_visual_payload(
+            face_status="Pipeline error — vision not applied", recognition_status="—",
+            expression_status="—", memory_preview="", turn_route="error",
+            visual_truth_trusted=False, vision_status="error",
+        )
+        vs["error_detail"] = str(e)[:500]
+        vs["error_type"] = type(e).__name__
+        fallback = "Something went wrong on my side; I'm still here. Could you try that again?"
+        print(f"[run_ava] exit route=error reply=fallback (no finalize)")
+        return fallback, vs, ap, ["run_ava_error"], {"error": str(e), "error_type": type(e).__name__}

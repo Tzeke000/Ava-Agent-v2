@@ -1,0 +1,288 @@
+"""
+brain/startup.py — Ava startup initialization sequence.
+
+Extracted from avaagent.py. Call run_startup(globals()) from avaagent.py
+after all module-level definitions are done.
+
+g is avaagent's globals() dict — all avaagent functions and constants
+are accessible through it. We write initialized objects back into g so
+avaagent's global namespace sees them.
+"""
+from __future__ import annotations
+
+import json
+import time
+from pathlib import Path
+from typing import Any
+
+
+def run_startup(g: dict[str, Any]) -> None:
+    """Initialize all Ava subsystems. g = globals() from avaagent.py."""
+    BASE_DIR: Path = g["BASE_DIR"]
+    STATE_DIR: Path = g["STATE_DIR"]
+    MOOD_PATH: Path = g["MOOD_PATH"]
+    OWNER_PERSON_ID: str = g["OWNER_PERSON_ID"]
+    DEEPFACE_AVAILABLE: bool = g["DEEPFACE_AVAILABLE"]
+
+    # Core identity + profile setup
+    g["ensure_owner_profile"]()
+    g["ensure_identity_files"]()
+
+    # Tool registry
+    try:
+        _tool_registry = g["ToolRegistry"]()
+        g["_tool_registry"] = _tool_registry
+        g["_desktop_tool_registry"] = _tool_registry
+    except Exception as e:
+        g["_tool_registry"] = None
+        g["_desktop_tool_registry"] = None
+        print(f"[tool_registry] startup skipped: {e}")
+
+    # Visual memory
+    try:
+        _vm = g["VisualMemory"](BASE_DIR)
+        g["_visual_memory"] = _vm
+        g["_visual_memory_summary"] = _vm.get_cluster_summary()
+    except Exception as e:
+        g["_visual_memory"] = None
+        g["_visual_memory_summary"] = {"cluster_count": 0, "named_clusters": 0, "most_seen": ""}
+        print(f"[visual_memory] startup skipped: {e}")
+
+    # Heartbeat bootstrap
+    try:
+        from brain.heartbeat import bootstrap_heartbeat_runtime
+        bootstrap_heartbeat_runtime(g)
+    except Exception as e:
+        print(f"[heartbeat] bootstrap skipped: {e}")
+
+    # Runtime presence / startup resume
+    try:
+        from brain.runtime_presence import bootstrap_startup_resume
+        bootstrap_startup_resume(g)
+    except Exception as e:
+        print(f"[startup_resume] skipped: {e}")
+
+    # Concern reconciliation
+    try:
+        from brain.concern_reconciliation import run_startup_concern_reconciliation
+        run_startup_concern_reconciliation(g)
+    except Exception as e:
+        print(f"[concern_reconciliation] startup skipped: {e}")
+
+    # Curiosity bootstrap
+    try:
+        g["bootstrap_curiosity_topics"](g)
+    except Exception as e:
+        print(f"[curiosity_topics] bootstrap skipped: {e}")
+
+    # Concept graph
+    try:
+        from brain.concept_graph import ConceptGraph, bootstrap_from_existing_memory
+        _concept_graph = ConceptGraph(BASE_DIR)
+        g["_concept_graph"] = _concept_graph
+        _cg_boot = bootstrap_from_existing_memory(_concept_graph, g)
+        if isinstance(_cg_boot, dict):
+            g["_concept_graph_bootstrap_nodes"] = int(_cg_boot.get("nodes_created") or 0)
+        else:
+            g["_concept_graph_bootstrap_nodes"] = int(_cg_boot or 0)
+        _concept_graph.decay_unused_nodes(days_threshold=30)
+    except Exception as e:
+        g["_concept_graph"] = None
+        g["_concept_graph_bootstrap_nodes"] = 0
+        print(f"[concept_graph] bootstrap skipped: {e}")
+
+    # Fine-tune pipeline
+    try:
+        from brain.finetune_pipeline import FineTuneManager
+        _finetune_manager = FineTuneManager(BASE_DIR)
+        g["_finetune_manager"] = _finetune_manager
+        g["_finetune_status"] = _finetune_manager._read_status()
+        _finetune_manager.schedule_finetune(interval_days=7)
+    except Exception as e:
+        g["_finetune_manager"] = None
+        g["_finetune_status"] = {"status": "idle", "error": str(e)}
+        print(f"[finetune] startup skipped: {e}")
+
+    # Deep self snapshot
+    try:
+        from brain.deep_self import deep_self_snapshot
+        g["_deep_self"] = deep_self_snapshot(g)
+    except Exception as e:
+        g["_deep_self"] = {}
+        print(f"[deep_self] startup skipped: {e}")
+
+    # Self model weekly update
+    try:
+        g["update_self_model"](g)
+    except Exception as e:
+        print(f"[self_model] weekly update skipped: {e}")
+
+    # Inner monologue
+    try:
+        from brain.inner_monologue import start_inner_monologue
+        start_inner_monologue(g)
+    except Exception as e:
+        print(f"[inner_monologue] startup skipped: {e}")
+
+    # History manager
+    try:
+        from brain.history_manager import AvaHistoryManager
+        g["history_manager"] = AvaHistoryManager(BASE_DIR, target_context_length=8000)
+    except Exception as e:
+        g["history_manager"] = None
+        print(f"[history_manager] startup skipped: {e}")
+
+    # Pickup note
+    try:
+        from brain.shutdown_ritual import load_pickup_note
+        g["pickup_note"] = load_pickup_note()
+    except Exception as e:
+        g["pickup_note"] = None
+        print(f"[shutdown_ritual] pickup note load skipped: {e}")
+
+    # Profiles seed + identity
+    g["seed_default_profiles"]()
+    from brain.identity_loader import load_ava_identity
+    g["_AVA_IDENTITY_BLOCK"] = load_ava_identity()
+    g["ensure_emotion_reference_file"]()
+    from brain.health_runtime import print_startup_selftest
+    print_startup_selftest(g)
+    g["_write_ava_pid_file"]()
+
+    # Self narrative
+    from brain.beliefs import SELF_NARRATIVE_PATH, save_self_narrative, load_self_narrative
+    if not SELF_NARRATIVE_PATH.exists():
+        save_self_narrative(load_self_narrative())
+        print("[beliefs] self-narrative initialized")
+    else:
+        load_self_narrative()
+        print("[beliefs] self-narrative loaded")
+
+    # Goal system + vectorstore + memory decay + life rhythm
+    g["load_goal_system"]()
+    g["init_vectorstore"]()
+    try:
+        from brain.memory import decay_tick
+        decay_tick(g)
+        print("[memory] decay tick complete")
+    except Exception as e:
+        print(f"[memory] decay tick failed: {e}")
+    try:
+        g["_schedule_life_rhythm_on_startup"]()
+    except Exception as e:
+        print(f"[life_rhythm] schedule failed: {e}")
+
+    # Health check
+    try:
+        from brain.health import run_system_health_check
+        _health_state = run_system_health_check(g, kind="startup")
+        print(f"Health: {_health_state.get('startup_summary', 'UNKNOWN')}")
+    except Exception as e:
+        print(f"[health] startup check failed: {e}")
+
+    # Face model
+    g["load_face_labels"]()
+    if DEEPFACE_AVAILABLE:
+        print("[face] DeepFace ready")
+    else:
+        print("[face] DeepFace unavailable - skipping face model load")
+
+    # Mood initialization
+    if not MOOD_PATH.exists():
+        g["save_mood"](g["enrich_mood_state"](g["default_mood"]()))
+    else:
+        g["save_mood"](g["load_mood"]())
+
+    # Phase 65: mood carryover with decay
+    try:
+        _co_path = STATE_DIR / "mood_carryover.json"
+        if _co_path.is_file():
+            _co = json.loads(_co_path.read_text(encoding="utf-8"))
+            _co_mood = _co.get("mood") or {}
+            _co_ts = float(_co.get("shutdown_ts") or 0)
+            _absent_hours = (time.time() - _co_ts) / 3600 if _co_ts > 0 else 999
+            if _absent_hours < 72 and isinstance(_co_mood, dict):
+                _decay = max(0.0, 1.0 - 0.20 * _absent_hours)
+                if _absent_hours > 8:
+                    _decay = max(0.30, _decay)
+                _base_mood = g["load_mood"]()
+                for _k, _v in _co_mood.items():
+                    if isinstance(_v, float):
+                        _co_mood[_k] = _v * _decay
+                _base_mood.update({k: v for k, v in _co_mood.items() if k in _base_mood and isinstance(v, float)})
+                g["save_mood"](g["enrich_mood_state"](_base_mood))
+                print(f"[mood_carryover] applied decay={_decay:.2f} absent_hours={_absent_hours:.1f}")
+    except Exception as e:
+        print(f"[mood_carryover] skipped: {e}")
+
+    # State file initialization
+    ACTIVE_PERSON_PATH: Path = g["ACTIVE_PERSON_PATH"]
+    SELF_MODEL_PATH: Path = g["SELF_MODEL_PATH"]
+    INITIATIVE_STATE_PATH: Path = g["INITIATIVE_STATE_PATH"]
+    SESSION_STATE_PATH: Path = g["SESSION_STATE_PATH"]
+    EXPRESSION_STATE_PATH: Path = g["EXPRESSION_STATE_PATH"]
+
+    if not ACTIVE_PERSON_PATH.exists():
+        g["save_active_person_state"](OWNER_PERSON_ID, source="startup")
+    if not SELF_MODEL_PATH.exists():
+        g["save_self_model"](g["default_self_model"]())
+    if not INITIATIVE_STATE_PATH.exists():
+        g["save_initiative_state"](g["default_initiative_state"]())
+    if not SESSION_STATE_PATH.exists():
+        g["save_session_state"]({
+            "total_message_count": 0,
+            "session_start_at": g["now_iso"](),
+            "last_session_end_at": "",
+        })
+    else:
+        _boot_sess = g["load_session_state"]()
+        _boot_sess["session_start_at"] = g["now_iso"]()
+        g["save_session_state"](_boot_sess)
+    if not EXPRESSION_STATE_PATH.exists():
+        g["save_expression_state"](g["default_expression_state"]())
+
+    # TTS engine
+    try:
+        from brain.tts_engine import TTSEngine
+        _tts = TTSEngine()
+        g["tts_engine"] = _tts if _tts.is_available() else None
+        g["tts_engine_name"] = _tts.engine_name() if _tts.is_available() else "none"
+    except Exception:
+        g["tts_engine"] = None
+        g["tts_engine_name"] = "none"
+    g["tts_enabled"] = False
+
+    # Phase 57: wake word detector
+    try:
+        from brain.wake_word import WakeWordDetector
+        def _on_wake_word() -> None:
+            g["_stt_listen_requested"] = True
+        _wake_detector = WakeWordDetector(g, on_wake=_on_wake_word, base_dir=BASE_DIR)
+        _wake_detector.start()
+        g["_wake_word_detector"] = _wake_detector
+        print(f"[wake_word] detector started backend={_wake_detector._backend}")
+    except Exception as e:
+        g["_wake_word_detector"] = None
+        print(f"[wake_word] startup skipped: {e}")
+
+    # Phase 62: clap detector
+    try:
+        from brain.clap_detector import ClapDetector
+        def _on_clap() -> None:
+            g["_stt_listen_requested"] = True
+        _clap_detector = ClapDetector(g, on_clap=_on_clap)
+        _clap_started = _clap_detector.start()
+        g["_clap_detector"] = _clap_detector if _clap_started else None
+        print(f"[clap_detect] started={_clap_started}")
+    except Exception as e:
+        g["_clap_detector"] = None
+        print(f"[clap_detect] startup skipped: {e}")
+
+    print("Ava running...")
+    print(f"Base dir: {BASE_DIR}")
+    print(f"Profiles dir: {g['PROFILES_DIR']}")
+    print(f"Memory dir: {g['MEMORY_DIR']}")
+    print(f"Self reflection dir: {g['SELF_REFLECTION_DIR']}")
+    print(f"Workbench dir: {g['WORKBENCH_DIR']}")
+    print(f"Emotion reference: {g['EMOTION_REFERENCE_PATH']}")
+    print(f"Active person: {g['get_active_person_id']()}")
