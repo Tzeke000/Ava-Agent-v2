@@ -302,6 +302,13 @@ export default function App() {
   const [onboardingStageCount, setOnboardingStageCount] = useState(13);
   const PHOTO_STAGES_UI = ["photo_front", "photo_left", "photo_right", "photo_up", "photo_down"];
   const [liveFrameSrc, setLiveFrameSrc] = useState<string | null>(null);
+  // Fast TTS amplitude poll — drives the orb's real-time speech reaction.
+  // Pulled separately from the slow snapshot poll so the orb pulses with each
+  // syllable instead of every 5 seconds.
+  const [liveTtsAmp, setLiveTtsAmp] = useState<number>(0);
+  const [liveTtsSpeaking, setLiveTtsSpeaking] = useState<boolean>(false);
+  const liveTtsSpeakingRef = useRef<boolean>(false);
+  liveTtsSpeakingRef.current = liveTtsSpeaking;
   const prevOnlineRef = useRef<boolean | null>(null);
   const appStartedAtRef = useRef(Date.now());
   const connectStartRef = useRef(Date.now());
@@ -459,6 +466,34 @@ export default function App() {
     const id = window.setInterval(() => void poll(), 5000);
     return () => window.clearInterval(id);
   }, [poll]);
+
+  // Live TTS amplitude — polls /api/v1/tts/state at 100ms while online so the
+  // orb reacts to the actual audio Kokoro is producing in real time.
+  useEffect(() => {
+    if (!online) {
+      setLiveTtsAmp(0);
+      setLiveTtsSpeaking(false);
+      return;
+    }
+    let active = true;
+    let timeoutId: number;
+    const tick = async () => {
+      try {
+        const r = await getJson<{ ok: boolean; speaking?: boolean; amplitude?: number }>("/api/v1/tts/state");
+        if (active && r) {
+          setLiveTtsAmp(Number(r.amplitude ?? 0));
+          setLiveTtsSpeaking(Boolean(r.speaking));
+        }
+      } catch { /* ignore */ }
+      if (active) {
+        // Poll fast (100ms) while speaking, slower (500ms) when idle.
+        const next = liveTtsSpeakingRef.current ? 100 : 500;
+        timeoutId = window.setTimeout(tick, next);
+      }
+    };
+    timeoutId = window.setTimeout(tick, 0);
+    return () => { active = false; window.clearTimeout(timeoutId); };
+  }, [online]);
 
   // Live camera feed — polls /api/v1/camera/live_frame at ~5fps. Always running,
   // not gated by active tab, so any view that displays the camera always has a
@@ -1088,8 +1123,10 @@ export default function App() {
   const lastAssistantMessage = [...chatHist]
     .reverse()
     .find((m) => String(m.role ?? "") === "assistant")?.content ?? "";
-  const ttsSpeaking = Boolean(tts?.tts_speaking);
-  const ttsAmplitude = Number(tts?.tts_amplitude ?? 0);
+  // Combine the slow-snapshot tts.tts_speaking with the fast 100ms live poll
+  // so the orb reacts immediately when Kokoro starts/stops audio.
+  const ttsSpeaking = Boolean(tts?.tts_speaking) || liveTtsSpeaking;
+  const ttsAmplitude = Math.max(Number(tts?.tts_amplitude ?? 0), liveTtsAmp);
   // Phase 74: voice_loop state drives orb when active
   const voiceLoopState = String((snap as Record<string, unknown>)?.voice_loop
     ? ((snap as Record<string, unknown>).voice_loop as Record<string, unknown>)?.state ?? "passive"

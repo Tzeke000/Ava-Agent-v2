@@ -1,14 +1,16 @@
 import { memo, useEffect, useRef } from "react";
 import * as THREE from "three";
 
+type OrbState = "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "offline" | "listening";
+
 interface OrbProps {
   emotion: string;
   emotionColor: string;
-  state: "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "offline" | "listening";
+  state: OrbState;
   size?: number;
   /** Phase 49: override shape for pointer morph */
   shapeOverride?: string;
-  /** Phase 50: speaking amplitude 0-1 for particle pulse */
+  /** Live speaking amplitude 0-1 (read from snap.tts.tts_amplitude). */
   amplitude?: number;
 }
 
@@ -52,7 +54,7 @@ const EMOTION_CONFIG: Record<string, {
   confusion:    { color:"#9f7aea",lightColor:"#d0a0ff",darkColor:"#402870",shape:"scattered",  coreScale:0.9, particleSpread:1.1, connectionDensity:0.2, gravityY:0,    tiltX:0,    pulseSpeed:4.0, pulseAmplitude:0.15 },
   contentment:  { color:"#68d391",lightColor:"#a0ffc0",darkColor:"#206030",shape:"sphere",     coreScale:1.0, particleSpread:1.0, connectionDensity:0.35,gravityY:0,    tiltX:0,    pulseSpeed:1.2, pulseAmplitude:0.05 },
   sympathy:     { color:"#38a169",lightColor:"#70e0a0",darkColor:"#185030",shape:"sphere",     coreScale:1.0, particleSpread:1.0, connectionDensity:0.5, gravityY:0,    tiltX:0.1,  pulseSpeed:1.5, pulseAmplitude:0.06 },
-  // Phase 56 compound emotion states — derived from emotion combinations
+  // Phase 56 compound emotion states
   logical:      { color:"#4299e1",lightColor:"#90d0ff",darkColor:"#183870",shape:"cube",       coreScale:1.0, particleSpread:1.0, connectionDensity:0.7, gravityY:0,    tiltX:0,    pulseSpeed:0.8, pulseAmplitude:0.03 },
   analyzing:    { color:"#00d4d4",lightColor:"#80ffff",darkColor:"#007070",shape:"prism",      coreScale:1.1, particleSpread:1.0, connectionDensity:0.6, gravityY:0,    tiltX:0.5,  pulseSpeed:1.2, pulseAmplitude:0.05 },
   neutral:      { color:"#a0aec0",lightColor:"#d0d8e8",darkColor:"#404858",shape:"cylinder",   coreScale:1.0, particleSpread:1.0, connectionDensity:0.3, gravityY:0,    tiltX:0,    pulseSpeed:1.0, pulseAmplitude:0.04 },
@@ -81,15 +83,36 @@ function createGlowTex(color: string): THREE.Texture {
   return new THREE.CanvasTexture(c);
 }
 
+// State-overlay colors. We blend the emotion color toward these by an
+// override-strength factor so the orb still reads as "Ava in mood X" but
+// also clearly signals what she's doing right now.
+const STATE_TINT = {
+  thinking: new THREE.Color("#7a5dfc"),  // electric blue/purple
+  listening: new THREE.Color("#3ee68f"), // calm green
+  speaking: new THREE.Color("#ffb060"),  // warm amber
+  offline: new THREE.Color("#404858"),
+};
+
 function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude = 0 }: OrbProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const disposeRef = useRef<()=>void>(()=>{});
+
+  // Live refs — update on every render so the animation loop reads the latest
+  // value without remounting the whole Three.js scene.
+  const stateRef = useRef<OrbState>(state);
+  const amplitudeRef = useRef<number>(amplitude);
+  const emotionRef = useRef<string>(emotion);
+  const shapeOverrideRef = useRef<string | undefined>(shapeOverride);
+  stateRef.current = state;
+  amplitudeRef.current = amplitude;
+  emotionRef.current = emotion;
+  shapeOverrideRef.current = shapeOverride;
 
   useEffect(() => {
     if (!mountRef.current) return;
     disposeRef.current();
     const container = mountRef.current;
-    const cfg = { ...getCfg(emotion), ...(shapeOverride ? { shape: shapeOverride } : {}) };
+    const cfgInit = { ...getCfg(emotion), ...(shapeOverride ? { shape: shapeOverride } : {}) };
 
     const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
     renderer.setSize(size,size);
@@ -108,12 +131,12 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
 
     // Core
     const coreGeo = new THREE.SphereGeometry(0.15,32,32);
-    const coreMat = new THREE.MeshBasicMaterial({ color:new THREE.Color(cfg.lightColor), transparent:true, opacity:0.95, blending:THREE.AdditiveBlending, depthWrite:false });
+    const coreMat = new THREE.MeshBasicMaterial({ color:new THREE.Color(cfgInit.lightColor), transparent:true, opacity:0.95, blending:THREE.AdditiveBlending, depthWrite:false });
     const core = new THREE.Mesh(coreGeo,coreMat);
     innerGroup.add(core);
 
     const igGeo = new THREE.SphereGeometry(0.3,16,16);
-    const igMat = new THREE.MeshBasicMaterial({ color:new THREE.Color(cfg.color), transparent:true, opacity:0.3, blending:THREE.AdditiveBlending, depthWrite:false });
+    const igMat = new THREE.MeshBasicMaterial({ color:new THREE.Color(cfgInit.color), transparent:true, opacity:0.3, blending:THREE.AdditiveBlending, depthWrite:false });
     const innerGlow = new THREE.Mesh(igGeo,igMat);
     innerGroup.add(innerGlow);
 
@@ -132,7 +155,7 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
       const curve = new THREE.CatmullRomCurve3(cp);
       for(let j=0;j<=60;j++) pts.push(curve.getPoint(j/60));
       const geo = new THREE.BufferGeometry().setFromPoints(pts);
-      const mat = new THREE.LineBasicMaterial({ color:new THREE.Color(i<8?cfg.lightColor:cfg.color), transparent:true, opacity:0.4+Math.random()*0.4, blending:THREE.AdditiveBlending, depthWrite:false });
+      const mat = new THREE.LineBasicMaterial({ color:new THREE.Color(i<8?cfgInit.lightColor:cfgInit.color), transparent:true, opacity:0.4+Math.random()*0.4, blending:THREE.AdditiveBlending, depthWrite:false });
       const line = new THREE.Line(geo,mat);
       line.rotation.set(Math.random()*Math.PI*2,Math.random()*Math.PI*2,Math.random()*Math.PI*2);
       streamGroup.add(line); streams.push(line); streamPhases.push(Math.random()*Math.PI*2);
@@ -144,9 +167,9 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
     const orig = new Float32Array(N*3);
     const vel = new Float32Array(N*3);
     const pcol = new Float32Array(N*3);
-    const baseC = new THREE.Color(cfg.color);
-    const lightC = new THREE.Color(cfg.lightColor);
-    const darkC = new THREE.Color(cfg.darkColor);
+    const baseC = new THREE.Color(cfgInit.color);
+    const lightC = new THREE.Color(cfgInit.lightColor);
+    const darkC = new THREE.Color(cfgInit.darkColor);
 
     for(let i=0;i<N;i++){
       const tier = Math.random();
@@ -169,92 +192,105 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
 
     // Shell
     const shellGeo = new THREE.SphereGeometry(1.0,16,12);
-    const shellMat = new THREE.MeshBasicMaterial({ color:new THREE.Color(cfg.darkColor), wireframe:true, transparent:true, opacity:0.08, blending:THREE.AdditiveBlending, depthWrite:false });
+    const shellMat = new THREE.MeshBasicMaterial({ color:new THREE.Color(cfgInit.darkColor), wireframe:true, transparent:true, opacity:0.08, blending:THREE.AdditiveBlending, depthWrite:false });
     outerGroup.add(new THREE.Mesh(shellGeo,shellMat));
 
     // Halo
-    const haloTex = createGlowTex(cfg.color);
+    const haloTex = createGlowTex(cfgInit.color);
     const haloMat = new THREE.SpriteMaterial({ map:haloTex, transparent:true, opacity:0.2, blending:THREE.AdditiveBlending, depthWrite:false });
     const halo = new THREE.Sprite(haloMat);
     halo.scale.set(3.5,3.5,1);
     scene.add(halo);
 
-    const pLight = new THREE.PointLight(new THREE.Color(cfg.color),2.0,5);
+    const pLight = new THREE.PointLight(new THREE.Color(cfgInit.color),2.0,5);
     scene.add(pLight);
 
     const clock = new THREE.Clock();
     let fid = 0;
 
-    function morph(t: number) {
-      const c = getCfg(emotion);
+    // Reusable color scratch — avoid allocating per frame.
+    const _coreScratch = new THREE.Color();
+    const _glowScratch = new THREE.Color();
+    const _lightScratch = new THREE.Color();
+
+    function morph(t: number, currentState: OrbState, currentAmp: number) {
+      const c = getCfg(emotionRef.current);
       const sp = c.particleSpread, gy = c.gravityY, tx = c.tiltX;
+      const shape = shapeOverrideRef.current || c.shape;
       const pa = pGeo.attributes.position as THREE.BufferAttribute;
+
+      // Per-state amplitude/scale envelopes — read live each frame.
+      const speakingScale = currentState === "speaking" ? (1 + currentAmp * 0.35) : 1;
+      const listeningInBreath = currentState === "listening" ? (0.92 + Math.sin(t * 1.3) * 0.04) : 1;
+      const thinkingScale = currentState === "thinking" || currentState === "deep" ? (0.96 + Math.sin(t * 6) * 0.04) : 1;
+
       for(let i=0;i<N;i++){
         const ox=orig[i*3], oy=orig[i*3+1], oz=orig[i*3+2];
         const dist=Math.sqrt(ox*ox+oy*oy+oz*oz);
         let mx=ox*sp, my=oy*sp, mz=oz*sp;
-        if(c.shape==="teardrop"){ my-=Math.max(0,-oy)*0.4; my+=gy*dist*0.5; }
-        else if(c.shape==="elongated"){ my*=1.4; my+=gy*0.3; }
-        else if(c.shape==="compressed"){ my*=0.7; }
-        else if(c.shape==="contracted"){ mx*=0.6; my*=0.6; mz*=0.6; }
-        else if(c.shape==="scattered"){ const f=1+Math.sin(t*0.5+dist*3)*0.15; mx*=f; my*=f; mz*=f; }
-        else if(c.shape==="double"){ if(oy>0){mx+=0.15;my+=0.1;}else{mx-=0.15;my-=0.05;} }
-        else if(c.shape==="spiral"){ const a=t*0.3+dist*2; const nx=mx*Math.cos(a)-mz*Math.sin(a); mz=mx*Math.sin(a)+mz*Math.cos(a); mx=nx; }
-        else if(c.shape==="pointer"){
+        if(shape==="teardrop"){ my-=Math.max(0,-oy)*0.4; my+=gy*dist*0.5; }
+        else if(shape==="elongated"){ my*=1.4; my+=gy*0.3; }
+        else if(shape==="compressed"){ my*=0.7; }
+        else if(shape==="contracted"){ mx*=0.6; my*=0.6; mz*=0.6; }
+        else if(shape==="scattered"){ const f=1+Math.sin(t*0.5+dist*3)*0.15; mx*=f; my*=f; mz*=f; }
+        else if(shape==="double"){ if(oy>0){mx+=0.15;my+=0.1;}else{mx-=0.15;my-=0.05;} }
+        else if(shape==="spiral"){ const a=t*0.3+dist*2; const nx=mx*Math.cos(a)-mz*Math.sin(a); mz=mx*Math.sin(a)+mz*Math.cos(a); mx=nx; }
+        else if(shape==="pointer"){
           if(oy>0){ my*=2.2; mx*=Math.max(0.1, 1.0-oy*1.2); mz*=Math.max(0.1, 1.0-oy*1.2); }
           else{ mx*=0.5; my*=0.4; mz*=0.5; }
         }
-        // Phase 56 new shapes
-        else if(c.shape==="cube"){
-          // Snap to cubic lattice positions
+        else if(shape==="cube"){
           mx = Math.sign(mx)*(Math.abs(mx)<0.5?Math.abs(mx):Math.abs(mx)*0.9+0.1*Math.sign(mx));
           my = Math.sign(my)*(Math.abs(my)<0.5?Math.abs(my):Math.abs(my)*0.9+0.1*Math.sign(my));
           mz = Math.sign(mz)*(Math.abs(mz)<0.5?Math.abs(mz):Math.abs(mz)*0.9+0.1*Math.sign(mz));
         }
-        else if(c.shape==="prism"){
-          // Triangular prism: collapse to 3 faces, rotate
+        else if(shape==="prism"){
           const ang = Math.floor(Math.atan2(ox,oz)/(Math.PI*2/3))*Math.PI*2/3;
           const r2 = Math.sqrt(ox*ox+oz*oz); mx=r2*Math.sin(ang+t*0.5)*sp; mz=r2*Math.cos(ang+t*0.5)*sp;
         }
-        else if(c.shape==="cylinder"){
-          // Upright column: uniform radius, full height
+        else if(shape==="cylinder"){
           const r3 = Math.sqrt(ox*ox+oz*oz); mx=r3*Math.cos(Math.atan2(oz,ox))*sp; mz=r3*Math.sin(Math.atan2(oz,ox))*sp;
         }
-        else if(c.shape==="infinity"){
-          // Figure-8 loop in XY plane
+        else if(shape==="infinity"){
           const u = Math.atan2(oy,ox); mx=sp*Math.cos(u)/(1+Math.sin(u)*Math.sin(u)); my=sp*Math.sin(u)*Math.cos(u)/(1+Math.sin(u)*Math.sin(u)); mz*=0.3;
         }
-        else if(c.shape==="double_helix"){
-          // DNA spiral: two interlocked helices
+        else if(shape==="double_helix"){
           const strand = i%2===0?1:-1; const ang2=t*0.5+dist*4+strand*Math.PI; mx=0.5*Math.cos(ang2)*sp; mz=0.5*Math.sin(ang2)*sp;
         }
-        else if(c.shape==="burst"){
-          // Explode outward then reform
+        else if(shape==="burst"){
           const phase = (Math.sin(t*1.5)*0.5+0.5); const scale = 1+phase*1.5; mx*=scale; my*=scale; mz*=scale;
         }
-        else if(c.shape==="contracted_tremor"){
-          // Tiny sphere that shakes
+        else if(shape==="contracted_tremor"){
           mx*=0.4; my*=0.4; mz*=0.4;
           mx+=Math.sin(t*15+i*0.3)*0.05; my+=Math.cos(t*17+i*0.5)*0.05;
         }
-        else if(c.shape==="rising"){
-          // Elongated upward with upward particle drift
+        else if(shape==="rising"){
           my*=1.6; my+=gy*0.5; mx*=0.7; mz*=0.7;
         }
         my+=gy*0.2;
         mz+=tx*oy*0.3;
         mx+=vel[i*3]*30; my+=vel[i*3+1]*30; mz+=vel[i*3+2]*30;
 
-        // Phase 50: amplitude-driven pulse wave when speaking
-        if(amplitude > 0.05 && state==="speaking"){
-          const wave = Math.sin(t * (4 + amplitude * 8) + dist * 6) * amplitude * 0.35;
+        // ── Voice-state overlays ────────────────────────────────────────────
+        if(currentState==="speaking"){
+          // Amplitude-driven outward burst wave per-particle
+          const wave = Math.sin(t * (4 + currentAmp * 8) + dist * 6) * currentAmp * 0.35;
           const wScale = 1 + wave;
-          mx *= wScale; my *= wScale; mz *= wScale;
-        }
-        // Phase 50: listening state — particles spiral inward
-        if(state==="listening"){
-          const inward = 0.85 + Math.sin(t * 1.5 + dist * 4) * 0.1;
-          mx *= inward; my *= inward; mz *= inward;
+          mx *= wScale * speakingScale;
+          my *= wScale * speakingScale;
+          mz *= wScale * speakingScale;
+        } else if(currentState==="listening"){
+          // Particles drift inward toward center, gentle breathing scale.
+          const inward = 0.85 + Math.sin(t * 1.5 + dist * 4) * 0.06;
+          mx *= inward * listeningInBreath;
+          my *= inward * listeningInBreath;
+          mz *= inward * listeningInBreath;
+        } else if(currentState==="thinking" || currentState==="deep"){
+          // Faster orbital motion + tight rapid pulse
+          const fast = 1 + Math.sin(t * 8 + dist * 5) * 0.04;
+          mx *= fast * thinkingScale;
+          my *= fast * thinkingScale;
+          mz *= fast * thinkingScale;
         }
 
         pa.setXYZ(i,mx,my,mz);
@@ -262,24 +298,87 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
       pa.needsUpdate=true;
     }
 
-    function spd() {
-      return {thinking:2.5,deep:5.0,speaking:1.8,bored:0.3,excited:7.0,offline:0.1,idle:1.0,listening:0.8}[state]||1.0;
+    function spd(s: OrbState) {
+      return ({thinking:2.5,deep:5.0,speaking:1.8,bored:0.3,excited:7.0,offline:0.1,idle:1.0,listening:0.8} as Record<string, number>)[s] || 1.0;
     }
 
     function animate(){
       fid=requestAnimationFrame(animate);
       const t=clock.getElapsedTime();
-      const s=spd();
-      const c=getCfg(emotion);
+      const liveState = stateRef.current;
+      const liveAmp = amplitudeRef.current;
+      const liveEmotion = emotionRef.current;
+      const c=getCfg(liveEmotion);
+      const s=spd(liveState);
       const r=s*0.001;
-      innerGroup.rotation.y+=r; innerGroup.rotation.x+=r*0.4;
-      outerGroup.rotation.y-=r*0.7; outerGroup.rotation.z+=r*0.3;
-      streamGroup.rotation.y+=r*1.2; streamGroup.rotation.x-=r*0.5;
-      const pulse=1+Math.sin(t*c.pulseSpeed)*c.pulseAmplitude;
-      core.scale.setScalar(pulse*c.coreScale);
-      innerGlow.scale.setScalar(pulse*c.coreScale*0.9);
-      pLight.intensity=1.5+Math.sin(t*c.pulseSpeed)*0.5;
-      morph(t);
+
+      // Rotation rates — thinking/listening/speaking each rotate differently.
+      let rotMul = 1.0;
+      if (liveState === "thinking" || liveState === "deep") rotMul = 2.5;
+      else if (liveState === "speaking") rotMul = 1.0 + liveAmp * 1.5;
+      else if (liveState === "listening") rotMul = 0.55;
+      innerGroup.rotation.y += r * rotMul;
+      innerGroup.rotation.x += r * 0.4 * rotMul;
+      outerGroup.rotation.y -= r * 0.7 * rotMul;
+      outerGroup.rotation.z += r * 0.3 * rotMul;
+      streamGroup.rotation.y += r * 1.2 * rotMul;
+      streamGroup.rotation.x -= r * 0.5 * rotMul;
+
+      // Pulse — thinking pulses fast (2Hz), speaking pulses with amplitude.
+      let pulseSpeed = c.pulseSpeed;
+      let pulseAmp = c.pulseAmplitude;
+      if (liveState === "thinking" || liveState === "deep") {
+        pulseSpeed = 12.5;  // fast 2Hz
+        pulseAmp = 0.18;
+      } else if (liveState === "speaking") {
+        pulseSpeed = 6 + liveAmp * 6;
+        pulseAmp = 0.06 + liveAmp * 0.30;
+      } else if (liveState === "listening") {
+        pulseSpeed = 1.0;  // slow breathing
+        pulseAmp = 0.08;
+      }
+      const pulse = 1 + Math.sin(t * pulseSpeed) * pulseAmp;
+      const stateScaleMul = liveState === "speaking" ? (1 + liveAmp * 0.25)
+        : liveState === "listening" ? (0.95 + Math.sin(t * 1.3) * 0.04)
+        : 1;
+      core.scale.setScalar(pulse * c.coreScale * stateScaleMul);
+      innerGlow.scale.setScalar(pulse * c.coreScale * 0.9 * stateScaleMul);
+      pLight.intensity = 1.5 + Math.sin(t * pulseSpeed) * 0.5;
+
+      // ── Color overlays per state ──────────────────────────────────────────
+      // Blend the emotion's light/base color toward the state tint.
+      const baseLight = new THREE.Color(c.lightColor);
+      const baseBase = new THREE.Color(c.color);
+      _coreScratch.copy(baseLight);
+      _glowScratch.copy(baseBase);
+      _lightScratch.copy(baseBase);
+
+      if (liveState === "thinking" || liveState === "deep") {
+        _coreScratch.lerp(STATE_TINT.thinking, 0.55);
+        _glowScratch.lerp(STATE_TINT.thinking, 0.45);
+        _lightScratch.lerp(STATE_TINT.thinking, 0.45);
+      } else if (liveState === "speaking") {
+        // Color temperature shifts warmer with amplitude.
+        const warmFactor = Math.min(0.6, 0.20 + liveAmp * 0.6);
+        _coreScratch.lerp(STATE_TINT.speaking, warmFactor);
+        _glowScratch.lerp(STATE_TINT.speaking, warmFactor * 0.7);
+        _lightScratch.lerp(STATE_TINT.speaking, warmFactor * 0.6);
+      } else if (liveState === "listening") {
+        _coreScratch.lerp(STATE_TINT.listening, 0.30);
+        _glowScratch.lerp(STATE_TINT.listening, 0.25);
+        _lightScratch.lerp(STATE_TINT.listening, 0.25);
+      } else if (liveState === "offline") {
+        _coreScratch.lerp(STATE_TINT.offline, 0.6);
+        _glowScratch.lerp(STATE_TINT.offline, 0.6);
+        _lightScratch.lerp(STATE_TINT.offline, 0.6);
+      }
+
+      coreMat.color.copy(_coreScratch);
+      igMat.color.copy(_glowScratch);
+      pLight.color.copy(_lightScratch);
+
+      morph(t, liveState, liveAmp);
+
       for(let i=0;i<N;i++){
         vel[i*3]+=(Math.random()-.5)*0.00002; vel[i*3+1]+=(Math.random()-.5)*0.00002; vel[i*3+2]+=(Math.random()-.5)*0.00002;
         vel[i*3]*=0.99; vel[i*3+1]*=0.99; vel[i*3+2]*=0.99;
@@ -289,10 +388,14 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
         mat.opacity=Math.sin(t*s*2+streamPhases[i])>0.7?0.9:0.2+Math.sin(t*s+streamPhases[i])*0.2;
         l.rotation.y+=r*0.5*Math.sin(streamPhases[i]);
       });
-      halo.scale.set(3.5+Math.sin(t*0.7)*0.3,3.5+Math.sin(t*0.7)*0.3,1);
-      haloMat.opacity=0.15+Math.sin(t*0.5)*0.05;
-      if(state==="offline"){ coreMat.opacity=Math.max(0,coreMat.opacity-0.002); pMat.opacity=Math.max(0,pMat.opacity-0.001); }
-      if(emotion==="confusion") innerGroup.rotation.z+=Math.sin(t*3)*0.005;
+      const haloAmpBoost = liveState === "speaking" ? liveAmp * 0.5 : 0;
+      halo.scale.set(3.5+Math.sin(t*0.7)*0.3 + haloAmpBoost, 3.5+Math.sin(t*0.7)*0.3 + haloAmpBoost, 1);
+      haloMat.opacity = liveState === "offline"
+        ? 0.06
+        : 0.15 + Math.sin(t*0.5)*0.05 + (liveState === "speaking" ? liveAmp * 0.15 : 0);
+      if(liveState==="offline"){ coreMat.opacity=Math.max(0.20,coreMat.opacity-0.001); pMat.opacity=Math.max(0.30,pMat.opacity-0.0005); }
+      else { coreMat.opacity = 0.95; pMat.opacity = 0.85; }
+      if(liveEmotion==="confusion") innerGroup.rotation.z+=Math.sin(t*3)*0.005;
       renderer.render(scene,camera);
     }
     animate();
@@ -308,24 +411,27 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
     };
 
     return () => disposeRef.current();
-  }, [emotion, state, size]);
+    // Mount per emotion/size — state and amplitude are read via refs so they
+    // update live without remounting the scene.
+  }, [emotion, size]);
 
   return (
     <div ref={mountRef} style={{ width:size, height:size, display:"flex", alignItems:"center", justifyContent:"center", background:"transparent", overflow:"visible", flexShrink:0 }} />
   );
 }
 
-// React.memo with shallow prop equality. The Three.js scene is expensive to
-// initialize, and the snapshot poll causes the parent App to re-render every
-// 5s — but as long as emotion/state/size/shapeOverride/amplitude are unchanged
-// we want to skip re-rendering this component entirely.
+// React.memo: bail out only on micro-changes. Allow re-render on state OR
+// amplitude change so the inner component re-runs and refreshes its refs;
+// the useEffect deps (`[emotion, size]`) ensure the Three.js scene only
+// rebuilds on emotion/size changes — state and amplitude updates feed the
+// animation loop via refs without remounting.
 const OrbCanvas = memo(OrbCanvasInner, (prev, next) => (
   prev.emotion === next.emotion &&
   prev.emotionColor === next.emotionColor &&
   prev.state === next.state &&
   (prev.size ?? 320) === (next.size ?? 320) &&
   prev.shapeOverride === next.shapeOverride &&
-  Math.abs((prev.amplitude ?? 0) - (next.amplitude ?? 0)) < 0.05
+  Math.abs((prev.amplitude ?? 0) - (next.amplitude ?? 0)) < 0.03
 ));
 
 export default OrbCanvas;
