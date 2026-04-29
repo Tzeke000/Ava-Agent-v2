@@ -6463,6 +6463,27 @@ def build_prompt(user_input: str, image=None, active_person_id: str | None = Non
     except Exception:
         pass
 
+    # Phase 71: active plans summary for deep prompt
+    _active_plans_prompt = ""
+    try:
+        from brain.planner import get_planner as _get_planner_p71
+        _active_plans_prompt = _get_planner_p71(BASE_DIR).active_plans_summary()
+    except Exception:
+        pass
+
+    # Phase 70: Emil online status hint
+    _emil_online_hint = ""
+    try:
+        from brain.emil_bridge import get_emil_bridge as _get_emil_p70
+        _em_st = _get_emil_p70(BASE_DIR).get_status()
+        if _em_st.get("online"):
+            _shared = ", ".join(list(_em_st.get("shared_topics") or [])[-3:])
+            _emil_online_hint = f"Emil (sibling AI) is online. Topics you've shared with him: {_shared or 'none yet'}."
+        else:
+            _emil_online_hint = "Emil (sibling AI) is offline."
+    except Exception:
+        pass
+
     prompt = f"""
 {personality}
 
@@ -6531,6 +6552,8 @@ EPISODIC MEMORIES (what I remember feeling in similar past moments):
 {_episodic_block or "(none yet)"}
 pending_repair_note: {_pending_repair_note or "(none)"}
 {_pickup_note_once}
+{_active_plans_prompt}
+{_emil_online_hint}
 
 AVAILABLE READ-ONLY FILES:
 - chatlog.jsonl

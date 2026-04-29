@@ -29,6 +29,7 @@ ACTIVITIES = [
     "read_documentation",
     "play_dino_game",
     "self_reflection",
+    "work_on_plan",
 ]
 
 
@@ -164,6 +165,18 @@ def do_leisure_activity(g: dict[str, Any], base: Path) -> str:
         notes = "Read Ava documentation (placeholder — will open docs/ files in future)."
     elif chosen == "play_dino_game":
         notes = "Opened dino game (placeholder — Phase 59 wires full game loop)."
+    elif chosen == "work_on_plan":
+        try:
+            from brain.planner import get_planner
+            planner = get_planner(base)
+            active = planner.get_active_plans()
+            if active:
+                result = planner.execute_next_step(str(active[0].get("id") or ""))
+                notes = f"Worked on plan '{str(active[0].get('goal') or '')[:60]}': {str(result.get('result') or 'step done')[:120]}"
+            else:
+                notes = "No active plans — considering starting one."
+        except Exception as e:
+            notes = f"plan work failed: {e!r}"
     else:
         notes = f"Activity: {chosen}"
 
