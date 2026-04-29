@@ -15,6 +15,8 @@ positive ID is the only tunable, defaults to 0.45 cosine similarity.
 """
 from __future__ import annotations
 
+import os
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Optional
@@ -24,6 +26,42 @@ _SIMILARITY_THRESHOLD = 0.45  # cosine sim ≥ this → positive ID
 
 _SINGLETON: Optional["InsightFaceEngine"] = None
 _SINGLETON_LOCK = threading.Lock()
+
+
+def _add_cuda_paths() -> list[str]:
+    """Make CUDA DLLs from pip packages discoverable to onnxruntime.
+
+    Pip-installed nvidia-* wheels drop DLLs under
+    site-packages/nvidia/<lib>/bin/ but don't add them to PATH or DLL search
+    paths. Without this, onnxruntime fails to load the CUDA EP and silently
+    falls back to CPU (logging a "Error loading … which depends on … which
+    is missing" message at import time).
+
+    We register every nvidia/*/bin directory we find with os.add_dll_directory
+    AND prepend to PATH for completeness. Returns the directories actually
+    added so callers can log them.
+    """
+    site_packages = Path(sys.executable).parent / "Lib" / "site-packages"
+    nv_root = site_packages / "nvidia"
+    if not nv_root.is_dir():
+        return []
+    added: list[str] = []
+    for sub in sorted(nv_root.iterdir()):
+        if not sub.is_dir():
+            continue
+        bin_dir = sub / "bin"
+        if not bin_dir.is_dir():
+            continue
+        try:
+            os.add_dll_directory(str(bin_dir))  # Python 3.8+ Windows DLL search
+        except Exception:
+            pass
+        # Prepend to PATH too — some downstream loaders still consult PATH.
+        existing = os.environ.get("PATH", "")
+        if str(bin_dir) not in existing.split(os.pathsep):
+            os.environ["PATH"] = str(bin_dir) + os.pathsep + existing
+        added.append(f"nvidia/{sub.name}/bin")
+    return added
 
 
 class InsightFaceEngine:
@@ -39,6 +77,14 @@ class InsightFaceEngine:
     # ── lifecycle ──────────────────────────────────────────────────────────────
 
     def initialize(self, faces_dir: Path) -> bool:
+        # Make pip-installed CUDA DLLs discoverable to onnxruntime BEFORE the
+        # ORT import. ORT's DLL search happens inside its native module init,
+        # so the dirs must be registered first or CUDAExecutionProvider will
+        # silently fall back to CPU.
+        added = _add_cuda_paths()
+        if added:
+            print(f"[insight_face] CUDA paths added: {', '.join(added)}")
+
         try:
             import onnxruntime as ort  # type: ignore
             from insightface.app import FaceAnalysis  # type: ignore
@@ -72,7 +118,22 @@ class InsightFaceEngine:
                 return False
 
         self._app = app
-        self._provider = ordered[0]
+        # Read actually-applied provider from one of the loaded sessions so the
+        # log reflects reality (ORT silently falls back if a CUDA DLL is
+        # missing — without this, the log would lie).
+        actual_provider = ordered[0]
+        try:
+            for model_name in ("detection", "recognition"):
+                model = app.models.get(model_name) if hasattr(app, "models") else None
+                sess = getattr(model, "session", None) if model else None
+                if sess is not None:
+                    eps = list(sess.get_providers())
+                    if eps:
+                        actual_provider = eps[0]
+                        break
+        except Exception:
+            pass
+        self._provider = actual_provider
         self._load_faces(faces_dir)
         self._available = True
         print(f"[insight_face] ready provider={self._provider} known_people={len(self._known)}")
