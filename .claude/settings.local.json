@@ -27,7 +27,26 @@
       "Bash(py -3.11 -m py_compile config/ava_tuning.py)",
       "Bash(py -3.11 -m py_compile brain/emil_bridge.py)",
       "Bash(py -3.11 -m py_compile brain/planner.py)",
-      "Bash(py -3.11 -m py_compile brain/leisure.py)"
+      "Bash(py -3.11 -m py_compile brain/leisure.py)",
+      "Bash(python -c \"print\\('lines'\\)\")",
+      "Bash(py -3.11 -m py_compile \"D:/AvaAgentv2/brain/leisure.py\")",
+      "Bash(py -3.11 -m py_compile \"D:/AvaAgentv2/brain/wake_word.py\")",
+      "Bash(py -3.11 -m py_compile \"D:/AvaAgentv2/brain/clap_detector.py\")",
+      "Bash(py -3.11 -m py_compile \"D:/AvaAgentv2/avaagent.py\")",
+      "Bash(py -3.11 -m py_compile \"D:/AvaAgentv2/brain/planner.py\")",
+      "Bash(py -3.11 -m py_compile \"D:/AvaAgentv2/brain/emil_bridge.py\")",
+      "Bash(py -3.11 -m py_compile \"D:/AvaAgentv2/brain/operator_server.py\")",
+      "Bash(py -3.11 -m py_compile \"D:/AvaAgentv2/brain/heartbeat.py\")",
+      "Bash(py -3.11 -m py_compile \"D:/AvaAgentv2/brain/deep_self.py\")",
+      "Bash(py -3.11 -m py_compile \"D:/AvaAgentv2/brain/goal_system_v2.py\")",
+      "Bash(py -3.11 -m py_compile \"D:/AvaAgentv2/brain/relationship_arc.py\")",
+      "Bash(py -3.11 -m py_compile brain/session.py)",
+      "Bash(py -3.11 -m py_compile brain/startup.py)",
+      "Bash(py -3.11 -m py_compile brain/gradio_ui.py)",
+      "Bash(py -3.11 -m py_compile brain/prompt_builder.py)",
+      "Bash(py -3.11 -m py_compile brain/turn_handler.py)",
+      "Bash(py -3.11 -m py_compile brain/reply_engine.py)",
+      "Bash(py -3.11 -c ' *)"
     ]
   }
 }
