@@ -21,6 +21,8 @@ const TABS = [
   { id: "workbench" as const, label: "Workbench" },
   { id: "plans" as const, label: "Plans" },
   { id: "journal" as const, label: "Journal" },
+  { id: "learning" as const, label: "Learning" },
+  { id: "people" as const, label: "People" },
   { id: "emil" as const, label: "Emil" },
   { id: "proposals" as const, label: "Proposals" },
   { id: "identity" as const, label: "Identity" },
@@ -234,6 +236,16 @@ export default function App() {
   const [journalBusy, setJournalBusy] = useState(false);
   const [journalTotal, setJournalTotal] = useState(0);
   const [journalSharedCount, setJournalSharedCount] = useState(0);
+
+  // Phase 94: learning tab state
+  const [learningLog, setLearningLog] = useState<Record<string, unknown>[] | null>(null);
+  const [learningGaps, setLearningGaps] = useState<string[]>([]);
+  const [learningWeekSummary, setLearningWeekSummary] = useState<string>("");
+  const [learningBusy, setLearningBusy] = useState(false);
+
+  // Phase 94: people tab state
+  const [profiles, setProfiles] = useState<Record<string, unknown>[] | null>(null);
+  const [peopleBusy, setPeopleBusy] = useState(false);
 
   const [emilStatus, setEmilStatus] = useState<Record<string, unknown> | null>(null);
   const [emilSendMsg, setEmilSendMsg] = useState("");
@@ -468,6 +480,29 @@ export default function App() {
       })
       .catch(() => {})
       .finally(() => setJournalBusy(false));
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab !== "learning") return;
+    setLearningBusy(true);
+    Promise.all([
+      getJson("/api/v1/learning/log"),
+      getJson("/api/v1/learning/gaps"),
+      getJson("/api/v1/learning/week"),
+    ]).then(([log, gaps, week]) => {
+      setLearningLog((log as Record<string, unknown>).entries as Record<string, unknown>[]);
+      setLearningGaps((gaps as Record<string, unknown>).gaps as string[] ?? []);
+      setLearningWeekSummary(String((week as Record<string, unknown>).summary ?? ""));
+    }).catch(() => {}).finally(() => setLearningBusy(false));
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab !== "people") return;
+    setPeopleBusy(true);
+    getJson("/api/v1/profiles/list")
+      .then((d) => setProfiles((d as Record<string, unknown>).profiles as Record<string, unknown>[]))
+      .catch(() => {})
+      .finally(() => setPeopleBusy(false));
   }, [tab]);
 
   useEffect(() => {
@@ -2130,6 +2165,110 @@ export default function App() {
                     )}
                   </Section>
                 </>
+              )}
+            </div>
+          )}
+
+          {tab === "learning" && (
+            <div className="op-pane">
+              <h1 className="op-h1">Learning</h1>
+              <p className="op-lead">What Ava has learned, from where, and what she's still curious about.</p>
+              {learningBusy ? <p className="op-muted">Loading…</p> : (
+                <>
+                  <Section title="This Week">
+                    <p style={{ color: "#e2e8f0", fontSize: "0.85rem", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                      {learningWeekSummary || "No learnings recorded yet."}
+                    </p>
+                  </Section>
+                  <Section title="Knowledge Gaps">
+                    {learningGaps.length === 0 ? <p className="op-muted">No gaps identified.</p> : (
+                      <ul style={{ color: "#9ca3af", fontSize: "0.85rem", paddingLeft: "1.2rem" }}>
+                        {learningGaps.map((g, i) => <li key={i}>{g}</li>)}
+                      </ul>
+                    )}
+                  </Section>
+                  <Section title="Recent Learnings">
+                    {(learningLog ?? []).length === 0 ? <p className="op-muted">Nothing yet.</p> : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {[...(learningLog ?? [])].reverse().slice(0, 20).map((e, i) => {
+                          const entry = e as Record<string, unknown>;
+                          return (
+                            <div key={i} style={{
+                              background: "#0d1117", border: "1px solid #1e293b",
+                              borderRadius: 8, padding: "0.6rem", fontSize: "0.82rem",
+                            }}>
+                              <div style={{ color: "#4a90d9", marginBottom: 3 }}>
+                                {String(entry.date ?? "")} · {String(entry.topic ?? "")} · <em>{String(entry.source ?? "")}</em>
+                                <span style={{ color: "#4ade80", marginLeft: 8 }}>
+                                  {Math.round(Number(entry.confidence ?? 0) * 100)}% confidence
+                                </span>
+                              </div>
+                              <p style={{ color: "#9ca3af", margin: 0 }}>{String(entry.knowledge ?? "")}</p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </Section>
+                </>
+              )}
+            </div>
+          )}
+
+          {tab === "people" && (
+            <div className="op-pane">
+              <h1 className="op-h1">People</h1>
+              <p className="op-lead">Everyone Ava knows. Recognition confidence and profile status.</p>
+              <Section title="Current at Machine">
+                <Kv items={[
+                  { label: "Person", value: String(asRecord(snap?.current_person)?.display_name ?? "Unknown") },
+                  { label: "Confidence", value: `${Math.round(Number(asRecord(snap?.current_person)?.confidence ?? 0) * 100)}%` },
+                  { label: "Time at machine", value: `${Math.round(Number(asRecord(snap?.current_person)?.time_at_machine ?? 0))}s` },
+                  { label: "Is Zeke", value: Boolean(asRecord(snap?.current_person)?.is_zeke) ? "yes" : "no" },
+                ]} />
+              </Section>
+              <Section title="Start Onboarding">
+                <button type="button" className="op-btn" onClick={() => {
+                  postJson("/api/v1/onboarding/start", {})
+                    .then((d) => {
+                      const r = d as Record<string, unknown>;
+                      if (typeof r.reply === "string") setOnboardingReply(r.reply);
+                      setOnboardingActive(true);
+                    })
+                    .catch(() => {});
+                }}>Start New Onboarding</button>
+              </Section>
+              {peopleBusy ? <p className="op-muted">Loading…</p> : (
+                <Section title="Known Profiles">
+                  {(profiles ?? []).length === 0 ? <p className="op-muted">No profiles.</p> : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {(profiles ?? []).map((p, i) => {
+                        const prof = p as Record<string, unknown>;
+                        return (
+                          <div key={i} style={{
+                            background: "#0d1117", border: "1px solid #1e293b",
+                            borderRadius: 8, padding: "0.75rem", fontSize: "0.85rem",
+                          }}>
+                            <div style={{ color: "#e2e8f0", fontWeight: 600 }}>{String(prof.name ?? prof.person_id ?? "")}</div>
+                            <div style={{ color: "#4a5568", fontSize: "0.75rem" }}>
+                              {String(prof.person_id ?? "")} · {String(prof.relationship_to_zeke ?? "")}
+                              {Boolean(prof.onboarding_complete) && <span style={{ color: "#4ade80", marginLeft: 8 }}>onboarded</span>}
+                            </div>
+                            <button type="button" style={{
+                              marginTop: 6, fontSize: "0.75rem", background: "#1e293b",
+                              border: "1px solid #2d3748", borderRadius: 6, padding: "0.2rem 0.6rem",
+                              color: "#9ca3af", cursor: "pointer",
+                            }} onClick={() => {
+                              postJson(`/api/v1/profile/${String(prof.person_id ?? "")}/refresh`, {})
+                                .then(() => setPeopleBusy(false))
+                                .catch(() => {});
+                            }}>Refresh Profile</button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Section>
               )}
             </div>
           )}
