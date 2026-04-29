@@ -317,14 +317,19 @@ def run_startup(g: dict[str, Any]) -> None:
     g["load_face_labels"]()
 
     # InsightFace GPU engine (additive — face_recognizer remains the fallback).
-    # Init in a background thread because buffalo_l weights download can take
-    # 30-60s on first run and we don't want to block startup.
-    print("[startup] step: insight_face GPU engine (background)")
+    # Init in a background thread because:
+    #   - buffalo_l weights download is ~280MB on first run
+    #   - cudnn EXHAUSTIVE algorithm search can take ~80s on first init,
+    #     after which results are cached on disk and re-init is fast.
+    print("[startup] step: insight_face GPU engine (background — first-run cudnn warmup ~60-90s, cached after)")
     try:
         def _bg_insight_face():
             try:
                 from brain.insight_face_engine import bootstrap_insight_face
-                bootstrap_insight_face(g)
+                engine = bootstrap_insight_face(g)
+                # Verification print so the user sees end-to-end success.
+                ok = engine is not None and getattr(engine, "available", False)
+                print(f"[startup] insight_face: ready={ok} provider={engine.provider() if ok else 'none'}")
             except Exception as e:
                 print(f"[insight_face] background init error: {e!r}")
         _bg("ava-insight-face-init", _bg_insight_face)

@@ -1,6 +1,6 @@
 # AVA HANDOFF
-**Last updated:** April 29, 2026
-**Session scope:** Post-Phase-100 stabilization + upgrade pass — Gradio removal, dual-brain inference, eye tracking, voice-loop hardening, dev hot-reload, cloud models, image generation, widget polish, fast-path simple Q&A, TTS thread safety.
+**Last updated:** April 29, 2026 (audit pass — pre-launch)
+**Latest commit on master:** see `git log --oneline -1`
 
 ---
 
@@ -13,9 +13,9 @@ Ava Agent v2 is a local-first desktop AI companion running on:
 - **Tauri v2** + **React 18** + **Three.js** desktop app (`apps/ava-control`)
 - **No Gradio** — Tauri is the only UI. Port 5876 is the only HTTP control plane.
 
-She has emotions, memory, vision (live camera + eye tracking + expression detection), voice (always-on STT + TTS), concept graph, episodic memory, dual-brain parallel inference, self-modification proposals, trust system, and a self-aware identity system.
+She has emotions, memory, vision (live camera + InsightFace + eye tracking + expression calibration), voice (Kokoro neural TTS + Whisper base STT + always-on voice loop with attentive state), concept graph, episodic memory, dual-brain parallel inference, self-modification proposals, trust system, and a self-aware identity system.
 
-All 100 phases are complete. This session focused on stability fixes and the "upgrade pass" features layered on top.
+All 100 phases complete. Recent passes have layered InsightFace + Kokoro + 3D brain graph + smart wake word + attentive voice state + per-person expression calibration on top.
 
 ---
 
@@ -38,10 +38,14 @@ cd apps\ava-control && npm run tauri:build
 py -3.11 -m py_compile <file.py>
 
 # Push to GitHub
-git add -A && git commit -m "message" && git push origin master
+git add -A && git commit -m "..." && git push origin master
 ```
 
-`start_ava_dev.bat` starts `avaagent.py` minimized, waits for `:5876`, starts the watchdog, then runs `npm run tauri:dev`. Any `.tsx`/`.ts`/`.css` change refreshes instantly via Vite HMR. Only Rust / `tauri.conf.json` changes require a full `tauri:build`.
+**First-run notes:**
+- InsightFace `buffalo_l` weights (~280MB) download on first init.
+- ORT cudnn EXHAUSTIVE algorithm search runs ~60–90s on first init, then caches to disk; subsequent inits are fast.
+- Kokoro `hexgrad/Kokoro-82M` weights and spaCy `en_core_web_sm` download on first TTS use.
+- All three are background-thread loads — main startup reaches operator HTTP in <10s.
 
 ---
 
@@ -51,148 +55,148 @@ git add -A && git commit -m "message" && git push origin master
 |---|---|
 | Primary conversational | `ava-personal:latest` (fine-tuned) |
 | Foreground stream (dual-brain) | `ava-personal:latest` |
-| Background stream (dual-brain) | `qwen2.5:14b` / `kimi-k2.6:cloud` |
+| Background stream (dual-brain) | `qwen2.5:14b` / `kimi-k2.6:cloud` (when online) |
 | Deep reasoning | `qwen2.5:14b` |
 | Maintenance/evaluation | `mistral:7b` |
 | Embeddings | `nomic-embed-text` |
-| Cloud (when online) | `kimi-k2.6:cloud`, `qwen3.5:cloud`, `glm-5.1:cloud`, `minimax-m2.7:cloud` (via `ollama_cloud` src) |
+| Cloud (when online) | `kimi-k2.6:cloud`, `qwen3.5:cloud`, `glm-5.1:cloud`, `minimax-m2.7:cloud` |
 
-`brain/connectivity.py` polls `1.1.1.1`/`8.8.8.8` on a 30s cache. When offline, cloud models are filtered out of routing (`requires_internet=True`). Routing prefers cloud for deep_reasoning_mode when online.
+`brain/connectivity.py` polls `1.1.1.1` / `8.8.8.8` on a 30s cache. Cloud models are filtered out of routing when offline.
+
+**Ollama lock**: `brain/ollama_lock.py` provides a process-wide RLock around every Ollama invocation. Stream A and Stream B can't fight for the GPU. Stream B also calls `dual_brain.pause_background_now(30s)` on every turn entry so Zeke's request goes through cleanly.
+
+---
+
+## Voice Stack
+
+### TTS — Kokoro neural (CPU/GPU)
+- `brain/tts_worker.py` runs Kokoro on a dedicated thread.
+- Voices: 28 total. Default `af_heart`. Per-emotion mapping picks `af_bella` (high intensity expressive), `af_nicole` (soft / sad), `af_sky` (bright). Speed 0.7–1.3 scaled toward neutral by intensity.
+- Falls back to pyttsx3 + Zira if Kokoro can't init.
+- Live amplitude: RMS computed in 50ms windows during playback, exposed via `get_live_amplitude()` and `/api/v1/tts/state`.
+
+### STT — Whisper base
+- `brain/stt_engine.py` loads `WhisperModel("base")` on `cuda+float16` if available, falls back to `cpu+int8`.
+- `beam_size=5`, `language="en"`, `vad_filter=True`.
+- VAD threshold 0.008 RMS, min speech 0.3s, default silence 2.5s.
+- `listen_session()` returns `audio_array` and `sample_rate` so voice_mood_detector can reuse it (no extra recording).
+
+### Voice loop — passive / attentive / listening / thinking / speaking
+- `brain/voice_loop.py` state machine.
+- After speaking, drops into **attentive** for 60s: mic polls every 0.8s; speech > 1s treated as direct address (no wake word).
+- Wake word (passive only): `brain/wake_detector.py` regex DIRECT vs INDIRECT classifier; ambiguous → `brain/wake_learner.py` asks for clarification (5-min cooldown) and records the answer.
+- After STT, runs `brain/voice_mood_detector.py` on the audio array (reused, not re-recorded).
+- Word-count-aware silence: <3 words → 4s additional listening; ≥10 words → 1.5s end.
+
+### Voice mood
+- librosa-based pitch / energy / tempo / question detection.
+- Result `{label, energy, speed, is_question, avg_pitch}` stored in `g["_voice_mood"]` with `ts`.
+- `prompt_builder.py` injects `VOICE TONE: {label}` into both fast and deep paths when fresh (<60s).
+
+---
+
+## Vision Stack
+
+### Face recognition — InsightFace (GPU)
+- `brain/insight_face_engine.py` loads buffalo_l: RetinaFace + ArcFace + 106-pt landmarks + age/gender + 3D head pose.
+- Provider: `CUDAExecutionProvider`. Pip-installed CUDA libs (`nvidia-cublas-cu12`, `nvidia-cufft-cu12`, `nvidia-curand-cu12`, `nvidia-cusolver-cu12`, `nvidia-cusparse-cu12`, `nvidia-cudnn-cu12`, `nvidia-cuda-runtime-cu12`, `nvidia-cuda-nvrtc-cu12`, `nvidia-nvjitlink-cu12`) are auto-registered with `os.add_dll_directory` before ORT import.
+- Inference ~41ms/frame at runtime on RTX 5060.
+- `background_ticks._video_frame_capture_thread` runs InsightFace every 3rd frame (~5fps), pushes annotated frame to `frame_store`.
+
+### Camera annotator — `brain/camera_annotator.py`
+- Bounding box (green known / yellow unknown).
+- 106 landmarks (key points larger).
+- Head pose arrows from nose tip (green up / red right / blue forward).
+- Age + gender label.
+- Attention state at bottom-left (default "focused").
+
+### Per-person expression calibration — `brain/expression_calibrator.py`
+- EMA baseline of `eyebrow_ratio` and `mouth_corner_offset` per person, α=0.001.
+- 300 samples → calibrated. Persists to `state/expression_baseline_{person_id}.json`.
+- `detect_expression(person_id, landmarks)` returns deviation-from-baseline label: `surprised`, `frowning`, `smiling`, `neutral`. Solves the "naturally elevated eyebrows are read as surprised" problem.
+
+### Eye tracking — MediaPipe (still used)
+- `brain/eye_tracker.py` for iris / gaze. Requires `protobuf 3.20.x` (downgraded from the 7.x InsightFace pulls).
+
+### Expression detector (legacy, fallback)
+- `brain/expression_detector.py` MediaPipe-based 468-pt detector. Still imported by some helper paths (`avaagent.analyze_expression`, `brain/camera.py`, `tools/system/eye_tracking_tool.py`). Useful when InsightFace is unavailable.
 
 ---
 
 ## Bootstrap Philosophy (CRITICAL — never violate)
 
-**NEVER choose Ava's personal preferences for her.** Every system involving preferences, style, or identity must build a discovery mechanism — Ava forms that aspect of herself through experience. Goals, hobbies, communication style, expression mappings, voice rate/volume, multitasking pattern, trust thresholds — all emerge from experience, not hardcoded defaults.
+**NEVER choose Ava's personal preferences for her.** Every system involving preferences, style, or identity must build a discovery mechanism — Ava forms that aspect of herself through experience. Goals, hobbies, communication style, expression mappings, voice rate/volume, multitasking pattern, trust thresholds, and now per-person expression baselines + learned wake patterns all emerge from experience.
 
 ---
 
 ## Never Edit
-
 - `ava_core/IDENTITY.md`
 - `ava_core/SOUL.md`
 - `ava_core/USER.md`
 
 ---
 
-## Post-Phase-100 Work (Apr 28–29, 2026)
+## How to Run Onboarding
 
-Listed newest first. Commit hashes are short SHAs.
+Onboarding is the only way Ava learns to recognize a new person. Trigger it by saying or typing:
 
-### Latest (Apr 29) — Voice loop, orb thinking, brain stability, camera
+> "hey Ava, profile me"
+> "Ava, profile me"
 
-| Commit | What |
-|---|---|
-| `7534621` | run_ava timeout protection on every step; orb thinking pulse driven by `_ava_thinking` flag in `reply_engine.py`; always-on voice loop; clap-detector sensitivity raised; brain tab stops re-initializing D3 on every poll; live-camera shown across all tabs |
-| `dc645d1` | Clap detector tuning: 5× ambient multiplier, 0.15 floor, 3s cooldown; voice_loop full per-step logging |
-| `1975dff` | Live camera on Vision/Brain/Chat tabs; D3 brain reinit gated (only on major node-count change); `OrbCanvas` memo'd to prevent thrash |
-| `02c9f1f` | Widget transparent background — CSS override + `backgroundColor` in `tauri.conf.json` |
-| `59eaca9` | Buffered-only live frames (no synchronous capture in HTTP path); 90s `run_ava` timeout; 5s tick timeout; voice-loop diagnostics |
-| `4ea87e8` | New tools: `widget_move_tool.py`, `app_launcher.py`, `browser_tool.py` |
-| `44bb51f` | Widget Tauri capabilities file (`apps/ava-control/src-tauri/capabilities/default.json`); minimize-detection polling; removed wrong blur fallback |
-| `97409de` | STT engine bootstrapped for voice loop; live camera feed published from background thread (not blocking HTTP) |
-| `5183e78` | Online flicker fix — 3-failure threshold + silent connecting window + 5s poll interval |
-| `aa01b5b` | `face_recognizer` thread-safe singleton (was crashing under concurrent calls); diagnostic prints on all exit paths |
-| `242ecb9` | Keepalive stability; app connection retry logic; self_model timestamp crash fixed |
-| `ae1b1fd` | Cleanup: removed DeepFace, dead imports, residual Gradio remnants; selftest fixed |
-| `ac550e7` | **Removed Gradio entirely.** WebSocket flicker fix, double-startup fix, new `start_ava_dev.bat` hot-reload mode |
-| `34da8ea` | Live camera in Vision tab; `concept_graph` save mkdirs parents; `live_frame` HTTP endpoint |
-| `5d1a180` | Camera capture persistent connection (no per-frame open/close); noisy logs suppressed; global crash handler installed |
-| `f951489` | Comprehensive bug audit + repair pass across `avaagent`, `dual_brain`, `eye_tracker`, `concept_graph`, `operator_server`, `reply_engine`, `startup` |
+13 stages: `greeting → photo_front → photo_left → photo_right → photo_up → photo_down → confirm_photos → name_capture → pronouns → favorite_color → relationship → one_thing → complete`.
 
-### Earlier post-handoff features (Apr 28)
+For each photo stage, Ava waits for "ready", then captures 3 frames from the camera. Photos saved to `faces/{person_id}/{stage}_{n}.jpg`.
 
-| Commit | What |
-|---|---|
-| `d187c80` | `run_ava` hang timeout protection; widget orb visibility; cloud model priority |
-| `bb6b4f7` | `concept_graph.json.tmp` WinError 5 fix — process lock, skip-if-locked save, stale `.tmp` cleanup on startup |
-| `5b22890` | MediaPipe iris landmark indices corrected (left 468–472, right 473–477) |
-| `5b466b6` | **NEW:** Eye tracking (`brain/eye_tracker.py`), gaze estimation, expression detection (`brain/expression_detector.py`), video memory (`brain/video_memory.py`), `tools/system/eye_tracking_tool.py` |
-| `42f95cd` | Startup hang fix — `concept_graph` bootstrap, `self_model` update, vectorstore init, `milestone_100` all moved to background daemon threads; main thread reaches operator server in <10s; progress logging added |
-| `2382d8f` | `concept_graph` tmp file lock on Windows; `brain_graph` 0-nodes-in-snapshot fix |
-| `57d178b` | **NEW: Dual-brain parallel inference** (`brain/dual_brain.py`) — foreground (`ava-personal:latest`) + background (`qwen2.5:14b` / `kimi-k2.6:cloud`) streams, live thinking, seamless handoff. UI shows live thought stream |
-| `4274ac7` | **NEW:** Cloud models in routing, connectivity monitor (`brain/connectivity.py`), image generation (`tools/creative/image_generator.py` — local FLUX or cloud), routing expansion in `config/ava_tuning.py` |
-
-### Uncommitted (currently on disk, in progress)
-
-- **`brain/tts_worker.py`** (NEW, untracked) — dedicated daemon thread that owns the pyttsx3 engine. pyttsx3 on Windows uses SAPI5 via COM and the COM apartment is single-threaded; calling `runAndWait()` from voice_loop's daemon thread silently hangs. `TTSWorker` initializes pyttsx3 inside its own thread and drains a queue of `(text, done_event)` tuples so all `.say()` / `.runAndWait()` calls happen on one consistent thread.
-- **`brain/tts_engine.py`** (modified, uncommitted) — `_init_engine` now defers to `TTSWorker.get_tts_worker()`; `_speak_pyttsx3` routes through the worker instead of calling pyttsx3 directly. `speaking` property asks the worker.
-- **`brain/reply_engine.py`** (modified, uncommitted) — **Simple-question fast path.** `_is_simple_question()` matches greetings / mood checks ("hey ava", "how are you", etc.) under 15 words. Bypasses workspace.tick, episodic search, concept graph, vector retrieval, privacy scan, dual-brain. Builds a minimal prompt (identity + mood + last 2 turns) and invokes `ava-personal:latest` directly. Target: sub-5-second response. Currently still slow (see Known Issues).
+**InsightFace integration** (post-audit): each captured frame is pushed into `engine.add_face(person_id, frame)` immediately, so recognition starts working within seconds — no restart needed. After the final stage, `engine.update_known_faces(faces/)` does a full reload to pick up anything missed. The legacy face_recognition lib also gets refreshed for fallback.
 
 ---
 
-## Architecture (Current Brain Modules)
+## Wiring Verification (audit-confirmed)
 
-`brain/` is the bulk of Ava's runtime. Modules added since the last handoff:
-
-| Module | Role |
-|---|---|
-| `brain/dual_brain.py` | Foreground + background parallel inference, live thought stream |
-| `brain/connectivity.py` | Online/offline monitor with cached check, jsonl log |
-| `brain/eye_tracker.py` | MediaPipe iris tracking, gaze estimation |
-| `brain/expression_detector.py` | Per-frame facial expression classification |
-| `brain/video_memory.py` | Persistent episodic visual memory |
-| `brain/frame_store.py` | Buffered live-frame publisher (background thread → HTTP) |
-| `brain/background_ticks.py` | Heartbeat-driven background work |
-| `brain/proactive_triggers.py` | Conditions that should kick off proactive talk (NOT yet wired to reply path) |
-| `brain/tts_worker.py` | Single-threaded pyttsx3 owner (untracked, in progress) |
-
-Notable existing modules still load-bearing: `prompt_builder.py`, `reply_engine.py`, `operator_server.py`, `voice_loop.py`, `clap_detector.py`, `wake_word.py`, `face_recognizer.py`, `episodic_memory.py`, `concept_graph.py`, `dual_brain.py`, `heartbeat.py`, `startup.py`.
-
----
-
-## Tools (Current Inventory)
-
-`tools/system/`: `accessibility_tool`, `app_launcher` (NEW), `browser_tool` (NEW), `computer_control`, `connectivity_tool` (NEW), `eye_tracking_tool` (NEW), `file_drop_tool`, `file_manager`, `notification_tool`, `pointer_tool`, `process_manager`, `restart_tool`, `screenshot_tool`, `stats_tool`, `widget_move_tool` (NEW)
-
-`tools/creative/`: `image_generator` (NEW — local FLUX or cloud, registers `generate_image` + `show_image`)
-
-`tools/games/`: dino, minecraft (`ava_bot.js`, `companion_tool`, `world_memory`)
-
-`tools/ava/`: `self_modification_tool`, `style_tool`, `tool_builder`
-
-`tools/ava_built/`: empty (Ava writes new tools here at runtime via `tool_builder.build_tool()`)
-
-`tools/web/`: `web_search`, `web_fetch`
+| System | Status | Where |
+|---|---|---|
+| InsightFace init | wired | `startup.py` background thread + status print |
+| InsightFace per-frame | wired | `background_ticks._video_frame_capture_thread` every 3rd frame |
+| Camera annotator | wired | annotates `_face_results` cache, pushes to `frame_store` |
+| Expression calibrator | wired | per-frame `cal.calibrate_baseline + detect_expression` |
+| Onboarding → InsightFace | wired | `add_face` per-stage + `update_known_faces` on completion |
+| Voice loop attentive | wired | post-speak, 60s window, faster mic poll |
+| Wake detector | wired | classifies every transcript in passive |
+| Wake learner | wired | borderline conf → ask clarification |
+| Voice mood (reuses STT audio) | wired | `_analyze_voice_mood_from_result(stt_result)` |
+| Voice mood prompt injection | wired | both fast and deep paths in `prompt_builder.py` |
+| Question engine | wired | heartbeat tick — speaks via tts_worker, mark_asked |
+| Proactive triggers | wired | heartbeat + face-detection greeting |
+| Ollama lock | wired | reply_engine fast + main, dual_brain live_thought + critique + creative |
+| Stream B pause on turn | wired | `pause_background_now(30)` at run_ava entry |
+| Chat history persistence | wired | `state/chat_history.jsonl` append in turn_handler |
+| Clipboard monitor | wired | `background_ticks._clipboard_monitor_loop` 2s |
+| TTS worker → main + widget orb | wired | `_tts_worker` singleton, live amplitude |
+| 3D brain graph | wired | `3d-force-graph 1.80` in App.tsx, init-once + graphData updates |
+| Orb breathing + drift | wired | rootGroup scale + position every frame in animate() |
 
 ---
 
-## UI (Tauri / React)
+## Operator Snapshot Schema (vision block)
 
-Two Tauri windows defined in `apps/ava-control/src-tauri/tauri.conf.json`:
-
-1. **Main window** — `apps/ava-control/src/App.tsx` (1700+ lines). Tabs: Chat, Brain, Vision, People, Learning, Emil, Proposals, Journal, Settings.
-2. **Widget window** — `apps/ava-control/src/WidgetApp.tsx`. 150×150 transparent always-on-top orb. URL: `/?widget=1`. Uses `OrbCanvas` from `apps/ava-control/src/components/OrbCanvas.tsx`.
-
-Brain-tab graph is currently 2D D3 (`d3.forceSimulation`) in `App.tsx` lines ~1188–1370. Re-init is now gated on major node-count changes only — no longer thrashes on every poll. Right-click rotation / true 3D rendering is on the TODO list (see Known Issues).
-
-The orb (`components/OrbCanvas.tsx`) uses Three.js. `_ava_thinking` flag in globals (set by `reply_engine.run_ava` on entry, cleared in `finally`) is exposed as `snap.thinking` and drives the fast blue thinking pulse. Voice-loop state (`passive`/`listening`/`thinking`/`speaking`) drives the orb when the voice loop is active.
-
----
-
-## Voice Stack
-
+```json
+{
+  "vision": {
+    "perception": { ... },
+    "llava_scene_description": "...",
+    "recognized_person_id": "zeke",
+    "recognized_confidence": 0.93,
+    "expression": "smiling",
+    "face_age": 28,
+    "face_gender": "M",
+    "attention_state": "focused",
+    "gaze_region": "center",
+    "gaze_calibrated": true,
+    "expression_calibrated": true,
+    "expression_calibration_samples": 412
+  }
+}
 ```
-clap_detector / wake_word ──→ _wake_word_detected flag ──→ voice_loop.on_wake()
-                                                              │
-                                                              ▼
-   stt_engine.listen_session(max=12s, silence=1.5s)  ◀── voice_loop._listen_and_respond()
-                                                              │
-                                                              ▼
-                                          run_ava(text)  ──→ reply text
-                                                              │
-                                                              ▼
-                              tts_engine.speak(clean, blocking=True)
-                                                              │
-                                                              ▼
-                                    TTSWorker queue → pyttsx3 thread
-```
-
-- **ClapDetector** (`brain/clap_detector.py`): sounddevice RMS, ambient×5.0 multiplier, 0.15 floor, 3s cooldown. Two claps within 1s wake.
-- **WakeWordDetector** (`brain/wake_word.py`): Porcupine if API key, else whisper-poll fallback.
-- **VoiceLoop** (`brain/voice_loop.py`): always-on background thread. Respects `input_muted` and `tts_enabled` globals.
-- **STT** (`brain/stt_engine.py`): Whisper, VAD-based `listen_session()` with silence cutoff.
-- **TTS** (`brain/tts_engine.py` + `brain/tts_worker.py`): pyttsx3 via dedicated worker thread (in progress — see Known Issues), MeloTTS fallback scaffold.
 
 ---
 
@@ -200,110 +204,106 @@ clap_detector / wake_word ──→ _wake_word_detected flag ──→ voice_loo
 
 | File | Purpose |
 |---|---|
-| `state/model_eval_p44.json` | ava-personal self-evaluation results |
-| `state/identity_proposals.jsonl` | Ava's pending identity proposals |
-| `state/identity_extensions.md` | Approved identity additions injected into prompts |
-| `state/routing_proposals.jsonl` | Ava's proposed routing changes |
-| `state/zeke_mind_model.json` | Inferred Zeke mood/energy/focus |
-| `state/self_critique.json` | Per-response scoring history |
-| `state/repair_queue.json` | Topics Ava wants to revisit |
-| `state/episodic_memory.jsonl` | Persistent episode store |
-| `state/wake_patterns.json` | Wake-word activations |
-| `state/leisure_log.jsonl` | Autonomous leisure activity |
-| `state/dino_memory.json` | Dino game session memory |
-| `state/ava_style.json` | Ava's self-proposed expression mappings |
-| `state/restart_log.jsonl` | Watchdog restart history |
-| `state/restart_requested.flag` | Watchdog trigger file (cleared on startup) |
-| `state/mood_carryover.json` | Emotional state across sessions |
+| `state/chat_history.jsonl` | Persisted user/assistant turns with model, emotion, route |
+| `state/expression_baseline_{pid}.json` | Per-person eyebrow + mouth EMA baseline |
+| `state/wake_patterns_learned.json` | Patterns Ava learned from clarification answers |
+| `state/question_history.jsonl` | Questions Ava asked + answers received |
+| `state/voice_style.json` | Adaptive voice rate/volume |
 | `state/connectivity_log.jsonl` | Online/offline transitions |
+| `state/episodic_memory.jsonl` | Persistent episode store |
+| `state/identity_proposals.jsonl` | Ava's pending identity proposals |
+| `state/identity_extensions.md` | Approved additions injected into prompts |
+| `state/concept_graph.json` | Concept graph nodes + edges |
+| `state/restart_log.jsonl` | Watchdog restart history |
+| `state/mood_carryover.json` | Emotional state across sessions |
 | `state/trust_scores.json` | Per-person progressive trust |
 | `state/eye_tracking/` | Calibration + gaze samples |
 | `state/video_memory/` | Visual episodic clusters |
 
 ---
 
-## Key File Map
+## Module Map (current brain/)
 
-| File | Role |
+| Module | Role |
 |---|---|
-| `avaagent.py` | Main agent runtime; delegates startup to `brain/startup.run_startup(globals())` |
-| `brain/startup.py` | All subsystem init in background daemon threads (LLM calls never block main) |
-| `brain/operator_server.py` | FastAPI HTTP + WebSocket control plane |
-| `brain/reply_engine.py` | `run_ava` — main turn pipeline (fast path + dual-brain integration) |
-| `brain/prompt_builder.py` | Identity + memory + concept + relationship blocks → final prompt |
+| `avaagent.py` | Main runtime; delegates startup |
+| `brain/startup.py` | All subsystem init in background daemon threads |
+| `brain/operator_server.py` | FastAPI HTTP + WebSocket |
+| `brain/reply_engine.py` | `run_ava` — main turn pipeline + simple-question fast path |
+| `brain/prompt_builder.py` | System + memory + voice-tone block |
 | `brain/dual_brain.py` | Foreground + background parallel inference |
-| `brain/voice_loop.py` | STT → LLM → TTS hands-free loop |
-| `brain/tts_engine.py` | TTS coordinator (uncommitted: routes through `tts_worker`) |
-| `brain/tts_worker.py` | Single-threaded pyttsx3 owner (NEW, untracked) |
-| `brain/stt_engine.py` | Whisper STT |
+| `brain/ollama_lock.py` | Process-wide Ollama serialization |
+| `brain/voice_loop.py` | passive / attentive / listening / thinking / speaking |
+| `brain/wake_detector.py` | Direct vs indirect address regex classifier |
+| `brain/wake_learner.py` | Clarification + learned-pattern persistence |
+| `brain/voice_mood_detector.py` | librosa pitch/energy/tempo/question |
+| `brain/question_engine.py` | When Ava asks Zeke things; cooldowns |
+| `brain/tts_worker.py` | Kokoro + pyttsx3 fallback, live amplitude |
+| `brain/tts_engine.py` | TTS coordinator (wraps worker) |
+| `brain/stt_engine.py` | Whisper base; returns audio_array for reuse |
 | `brain/clap_detector.py` | Double-clap wake (5× ambient, 0.15 floor) |
 | `brain/wake_word.py` | Porcupine + whisper-poll wake |
-| `brain/face_recognizer.py` | face_recognition lib, thread-safe singleton |
+| `brain/insight_face_engine.py` | InsightFace buffalo_l GPU engine |
+| `brain/camera_annotator.py` | Per-frame face overlays |
+| `brain/expression_calibrator.py` | Per-person expression baseline |
+| `brain/face_recognizer.py` | Legacy face_recognition lib (fallback) |
+| `brain/expression_detector.py` | Legacy MediaPipe expression (fallback) |
 | `brain/eye_tracker.py` | MediaPipe iris tracking |
-| `brain/expression_detector.py` | Facial expression per frame |
 | `brain/video_memory.py` | Persistent visual episodes |
 | `brain/connectivity.py` | Online/offline monitor |
 | `brain/frame_store.py` | Buffered live-frame publisher |
-| `brain/heartbeat.py` | Periodic background tasks |
-| `brain/concept_graph.py` | Concept graph with decay/strengthen, Windows-safe save |
+| `brain/heartbeat.py` | Periodic background tasks; question + proactive checks |
+| `brain/concept_graph.py` | Concept graph; Windows-safe save |
 | `brain/episodic_memory.py` | Episode store + recall |
 | `brain/relationship_arc.py` | Familiarity → relationship stage |
 | `brain/trust_system.py` | Progressive trust |
-| `brain/proactive_triggers.py` | Conditions for proactive talk (NOT WIRED) |
-| `tools/tool_registry.py` | Hot-reload tool registry |
-| `tools/creative/image_generator.py` | FLUX local + cloud image generation |
-| `tools/system/app_launcher.py` | Open/close apps, list windows |
-| `tools/system/browser_tool.py` | Open URL, navigate, click, type |
-| `tools/system/widget_move_tool.py` | Move widget to named position |
-| `tools/system/connectivity_tool.py` | Manual reachability check |
-| `tools/system/eye_tracking_tool.py` | Calibrate, get gaze info |
-| `apps/ava-control/src/App.tsx` | Main Tauri UI (~1700 lines) |
-| `apps/ava-control/src/WidgetApp.tsx` | Desktop widget orb |
-| `apps/ava-control/src/components/OrbCanvas.tsx` | Three.js orb (27 emotions, 16 shapes) |
-| `apps/ava-control/src-tauri/tauri.conf.json` | Tauri config (2 windows) |
-| `apps/ava-control/src-tauri/capabilities/default.json` | Tauri 2 capability allowlist |
-| `start_ava_desktop.bat` | Production launch (avaagent + watchdog + packaged exe) |
-| `start_ava_dev.bat` | Dev launch (avaagent + watchdog + Vite HMR) |
-| `scripts/watchdog.py` | Auto-restart watchdog |
-| `config/ava_tuning.py` | Model routing + cloud model profiles |
-| `ava_core/IDENTITY.md` | **DO NOT EDIT** |
-| `ava_core/SOUL.md` | **DO NOT EDIT** |
-| `ava_core/USER.md` | **DO NOT EDIT** |
+| `brain/proactive_triggers.py` | Face greeting + Stream B insight delivery |
+| `brain/person_onboarding.py` | 13-stage flow; pushes embeddings to InsightFace |
+| `brain/health.py` | Health check (camera reads frame_store now) |
+| `brain/background_ticks.py` | Heartbeat + video capture + clipboard daemons |
 
 ---
 
-## Current Known Issues (in priority order)
+## CUDA Setup Notes
 
-1. **TTS not speaking responses.** pyttsx3 thread issue. The `TTSWorker` rewrite in `brain/tts_worker.py` is on disk but uncommitted. `voice_loop._listen_and_respond` reaches the speak step with `tts_enabled=True` but the worker either never initializes (COM apartment), never receives the queue item, or hangs on `runAndWait()`. **Investigate first** — full voice loop is unusable until this is fixed.
-2. **Simple responses still taking 3+ minutes.** The fast-path in `reply_engine.run_ava` (uncommitted) detects greetings but the LLM call itself is slow. Possible causes: `ava-personal:latest` cold-load, Ollama queue contention from dual-brain background stream, embedding/vector init still blocking. Add timing logs around `ChatOllama.invoke()` to confirm where the 3 min lives.
-3. **Brain tab greys out while loading.** Initial D3 force simulation runs synchronously on the main thread; large graphs freeze the tab. Mitigation already in place (gated reinit on >10-node delta) helps subsequent updates, not first paint.
-4. **Right-click 3D rotation on brain graph not implemented.** Brain tab is currently 2D D3 only — no `3d-force-graph` dependency yet (`apps/ava-control/package.json` has only `d3` and `three`). Adding 3D would require either adopting `3d-force-graph` or building a Three.js graph renderer that reuses the orb's WebGL context.
-5. **Chat history not persisting** across app restarts in the UI. Backend canonical history is preserved in state, but `App.tsx` chat panel does not hydrate from it on mount.
-6. **Greeting on face detection not wired.** `face_recognizer` reports `current_person`, `runtime_presence` tracks face-change events, but no path triggers a greeting reply when a known face appears.
-7. **Proactive conversation not wired.** `brain/proactive_triggers.py` exists but no caller in `reply_engine` or `heartbeat` invokes it to push an unprompted reply.
-8. **Clipboard monitor not started.** No clipboard watcher daemon is registered in `startup.py`.
-9. **Image viewer window not built yet.** `tools/creative/image_generator.py` saves images and registers `show_image`, but there's no third Tauri window or in-app modal that displays the latest generated image.
+ORT 1.25.1 expects CUDA 12 runtime libs. They are pip-installed via:
+```
+nvidia-cublas-cu12, nvidia-cudnn-cu12, nvidia-cuda-runtime-cu12, nvidia-cuda-nvrtc-cu12,
+nvidia-cufft-cu12, nvidia-curand-cu12, nvidia-cusolver-cu12, nvidia-cusparse-cu12,
+nvidia-nvjitlink-cu12
+```
 
-### Lower-priority issues
+`brain/insight_face_engine._add_cuda_paths()` registers each `site-packages/nvidia/*/bin/` with `os.add_dll_directory` BEFORE the ORT import. This is the Python 3.8+ Windows-recommended way — `PATH` alone isn't enough for ORT's native loader on modern Windows.
 
-- Minecraft bot still requires `npm install mineflayer` in `tools/games/minecraft/`.
-- Dino game requires Chrome focused on the dino tab.
-- WebSocket transport keeps REST polling alive as fallback (by design).
-- `face_recognition` requires dlib (compiled on install); already installed on this machine.
+Verified providers: `['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']`. All 5 buffalo_l ONNX sessions report `Applied providers: ['CUDAExecutionProvider', 'CPUExecutionProvider']`.
 
 ---
 
-## Suggested Next Steps
+## Known Issues / Open Items (for testing)
 
-The four UI features (chat history hydration, face greeting, proactive trigger wiring, clipboard monitor, image viewer) are all **wiring problems**, not new builds — the underlying modules already exist. They will move quickly once TTS and slow-response are unblocked.
+1. **Voice mood now reuses STT audio** — no extra recording, no added latency. Verify in logs: `[voice_mood] ... (reused STT audio)`.
+2. **Camera health check** — now reads `frame_store.peek_buffer_age_sec()` first; only reports `error` if no frames for >10s. Earlier "Health: ERROR | camera:error" should no longer fire when capture is running.
+3. **First-run InsightFace warmup ~80s** — startup logs warn about this; subsequent runs hit the cudnn cache.
+4. **Simple question fast path** — verified end-to-end in `reply_engine.run_ava`. Logs `[run_ava] FAST PATH: simple question` and `FAST PATH complete in {time}s`.
+5. **face_recognition lib** still used as fallback when InsightFace is unavailable. Keep dlib-built install around.
+6. **expression_detector.py (MediaPipe)** still wired in 5 helper paths. Coexists with `expression_calibrator` (which uses InsightFace landmarks). Either is acceptable.
 
-1. Fix TTS (commit `tts_worker.py`, debug COM apartment + queue draining).
-2. Profile the simple-question fast path; identify the actual 3-min bottleneck.
-3. Hydrate chat history from backend on `App.tsx` mount.
-4. Wire `proactive_triggers` and face-greeting into the reply path.
-5. Start a clipboard monitor daemon in `startup.py`.
-6. Add a third Tauri window or modal for the image viewer.
-7. Decide on 3D brain graph: add `3d-force-graph` dependency, or build a Three.js renderer.
+---
+
+## Smoke Tests Done This Pass
+
+| Test | Result |
+|---|---|
+| `wake_detector` 10/10 cases | PASS |
+| `expression_calibrator` neutral / surprised / smiling on synthetic 106-pt | PASS |
+| `voice_mood_detector` excited / neutral / question on synthetic tones | PASS |
+| `question_engine` cooldown + busy-mode skip | PASS |
+| InsightFace GPU initialization | PASS (`provider=CUDAExecutionProvider`, ~41ms/frame) |
+| `tts_worker` Kokoro speak with emotion + live amplitude RMS | PASS (45 non-zero amplitude samples / 50 chars) |
+| Ollama lock serialization | PASS (concurrent calls serialize as expected) |
+| `protobuf 3.20.3` — both mediapipe and insightface working | PASS |
+| `tsc --noEmit` clean | PASS |
+| `npm run tauri:build` | PASS |
 
 ---
 
@@ -311,10 +311,11 @@ The four UI features (chat history hydration, face greeting, proactive trigger w
 
 `GET /api/v1/debug/export` emits a compact textual bundle:
 - Ribbon/live summary
-- Model routing (selected/fallback model, reason, confidence)
+- Model routing
 - Strategic continuity / memory
 - Self-improvement loop state
 - Deep self snapshot (mood, energy, critique averages, pending repairs)
 - Connectivity state
 - Dual-brain status (foreground busy, background queue, live thought)
+- Vision: recognized person, expression, attention, gaze
 - Full snapshot JSON (truncated)

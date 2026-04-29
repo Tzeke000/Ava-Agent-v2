@@ -40,29 +40,51 @@ def _issue(severity, subsystem, message):
     return {'severity': str(severity), 'subsystem': str(subsystem), 'message': str(message), 'ts': now_iso()}
 
 def _camera_status(host):
+    # Prefer the live frame buffer maintained by the persistent capture thread
+    # (brain/background_ticks._video_frame_capture_thread). The legacy
+    # CAMERA_LATEST_JSON_PATH path was a stale on-disk JSON that this loop
+    # doesn't write any more — falling back to it caused false "error" reports.
+    try:
+        from brain.frame_store import peek_buffer_age_sec
+        age = peek_buffer_age_sec()
+        if age is not None:
+            out = {'age_seconds': round(age, 1)}
+            if age <= 5.0:
+                out.update({'status': 'healthy', 'detail': f'fresh frame {round(age,1)}s ago'})
+                return out, []
+            if age <= 10.0:
+                out.update({'status': 'degraded', 'detail': f'frame {round(age,1)}s ago'})
+                return out, [_issue('warning', 'camera', out['detail'])]
+            out.update({'status': 'error', 'detail': f'no frames for {round(age,1)}s'})
+            return out, [_issue('error', 'camera', out['detail'])]
+    except Exception:
+        pass
+
+    # Fallback: legacy CAMERA_LATEST_JSON_PATH check.
     path = host.get('CAMERA_LATEST_JSON_PATH')
     if not path:
-        return {'status':'warning','detail':'camera latest path unavailable'}, [_issue('warning','camera','camera latest path unavailable')]
+        return {'status': 'warning', 'detail': 'camera latest path unavailable'}, [_issue('warning', 'camera', 'camera latest path unavailable')]
     p = Path(path)
     if not p.exists():
-        return {'status':'warning','detail':'no captured frame yet'}, [_issue('warning','camera','no captured frame yet')]
+        # Frame buffer was empty AND no legacy path — capture thread hasn't run yet.
+        return {'status': 'warning', 'detail': 'no captured frame yet'}, [_issue('warning', 'camera', 'no captured frame yet')]
     try:
         import json
         cam = json.loads(p.read_text(encoding='utf-8'))
         age = now_ts() - iso_to_ts((cam or {}).get('time'))
-        out = {'age_seconds': round(age,1)}
+        out = {'age_seconds': round(age, 1)}
         stale = safe_float(host.get('HEALTH_CAMERA_STALE_SECONDS', 25.0), 25.0)
         light = safe_float(host.get('HEALTH_LIGHT_STALE_SECONDS', 120.0), 120.0)
         if age <= stale:
-            out.update({'status':'healthy','detail':f'fresh frame {round(age,1)}s ago'})
+            out.update({'status': 'healthy', 'detail': f'fresh frame {round(age,1)}s ago'})
             return out, []
         if age <= light:
-            out.update({'status':'degraded','detail':f'stale frame {round(age,1)}s ago'})
-            return out, [_issue('warning','camera',out['detail'])]
-        out.update({'status':'error','detail':f'very stale frame {round(age,1)}s ago'})
-        return out, [_issue('error','camera',out['detail'])]
+            out.update({'status': 'degraded', 'detail': f'stale frame {round(age,1)}s ago'})
+            return out, [_issue('warning', 'camera', out['detail'])]
+        out.update({'status': 'error', 'detail': f'very stale frame {round(age,1)}s ago'})
+        return out, [_issue('error', 'camera', out['detail'])]
     except Exception as e:
-        return {'status':'error','detail':f'camera state unreadable: {e}'}, [_issue('error','camera',f'camera state unreadable: {e}')]
+        return {'status': 'error', 'detail': f'camera state unreadable: {e}'}, [_issue('error', 'camera', f'camera state unreadable: {e}')]
 
 def _memory_status(host):
     fn = host.get('get_memory_status')

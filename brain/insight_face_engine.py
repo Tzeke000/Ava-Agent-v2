@@ -255,6 +255,21 @@ class InsightFaceEngine:
             print(f"[insight_face] add_face error: {e!r}")
             return False
 
+    def update_known_faces(self, faces_dir: Path | None = None) -> int:
+        """Reload all embeddings from disk. Called by onboarding after photos
+        are saved so any newly-added person directory is picked up. Wipes the
+        in-memory cache and rebuilds it. Returns the new known_count."""
+        if not self._available or self._app is None:
+            return 0
+        target = Path(faces_dir) if faces_dir is not None else None
+        with self._lock:
+            self._known = {}
+            self._known_counts = {}
+        if target is None:
+            return 0
+        self._load_faces(target)
+        return len(self._known)
+
     # ── status ─────────────────────────────────────────────────────────────────
 
     @property
