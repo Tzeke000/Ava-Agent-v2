@@ -1797,6 +1797,29 @@ def create_app():
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
 
+    @app.get("/api/v1/camera/live_frame")
+    async def camera_live_frame() -> dict[str, Any]:
+        """Return current camera frame as JPEG base64. No caching — always fresh."""
+        try:
+            import cv2
+            import base64 as _b64
+            from brain.frame_store import read_live_frame_with_meta, LIVE_CACHE_MAX_AGE_SEC
+            meta = read_live_frame_with_meta(max_age=LIVE_CACHE_MAX_AGE_SEC)
+            frame = meta.frame
+            if frame is None:
+                return {"ok": False, "error": "no frame available", "b64": None}
+            ok_enc, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            if not ok_enc:
+                return {"ok": False, "error": "jpeg encode failed", "b64": None}
+            b64 = _b64.b64encode(buf.tobytes()).decode("ascii")
+            return {
+                "ok": True, "b64": b64,
+                "age_sec": round(float(meta.age_sec), 3),
+                "freshness": str(meta.freshness),
+            }
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200], "b64": None}
+
     # ── Connectivity + Image endpoints ───────────────────────────────────────
 
     @app.get("/api/v1/connectivity")
