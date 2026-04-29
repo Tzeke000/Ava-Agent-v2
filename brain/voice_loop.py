@@ -89,11 +89,13 @@ class VoiceLoop:
 
     def _listen_and_respond(self) -> None:
         if self._g.get("input_muted"):
+            print("[voice_loop] skipped — input_muted is True")
             return
 
         stt = self._g.get("stt_engine")
         tts = self._g.get("tts_engine")
         if stt is None or tts is None:
+            print(f"[voice_loop] skipped — stt={'set' if stt else 'None'} tts={'set' if tts else 'None'}")
             return
 
         # Listening
@@ -101,15 +103,18 @@ class VoiceLoop:
         print("[voice_loop] listening…")
         try:
             result = stt.listen_session(max_seconds=12.0, silence_seconds=1.5)
-        except Exception:
+        except Exception as e:
+            print(f"[voice_loop] listen_session error: {e!r}")
             self._set_state("passive")
             return
 
         if result is None or not result.get("speech_detected"):
+            print("[voice_loop] no speech detected")
             self._set_state("passive")
             return
         text = str(result.get("text") or "").strip()
         if not text:
+            print("[voice_loop] speech detected but empty transcription")
             self._set_state("passive")
             return
 
@@ -117,28 +122,53 @@ class VoiceLoop:
 
         # Thinking
         self._set_state("thinking")
+        print(f"[voice_loop] calling run_ava with: {text[:100]!r}")
         try:
             from brain.reply_engine import run_ava
-            reply, _visual, _profile, _actions, _reflection = run_ava(text)
+            run_ava_result = run_ava(text)
+            reply, _visual, _profile, _actions, _reflection = run_ava_result
+            print(f"[voice_loop] run_ava returned reply_chars={len(str(reply or ''))}")
         except Exception as e:
-            print(f"[voice_loop] run_ava failed: {e}")
+            import traceback as _tb
+            print(f"[voice_loop] run_ava failed: {e!r}\n{_tb.format_exc()[:600]}")
             self._set_state("passive")
             return
 
         reply_text = str(reply or "").strip()
         if not reply_text:
+            print("[voice_loop] reply was empty — nothing to speak")
             self._set_state("passive")
             return
+        print(f"[voice_loop] reply preview: {reply_text[:80]!r}")
 
         # Speaking
         self._set_state("speaking")
         import re as _re
         clean = _re.sub(r"[*_`#\[\]()]", "", reply_text)
         clean = _re.sub(r"\s+", " ", clean).strip()[:400]
-        if clean and _re.search(r"[A-Za-z0-9]", clean):
-            tts_enabled = bool(self._g.get("tts_enabled", False))
-            if tts_enabled and callable(getattr(tts, "speak", None)):
-                tts.speak(clean, blocking=True)
+        if not (clean and _re.search(r"[A-Za-z0-9]", clean)):
+            print("[voice_loop] reply had no speakable content after cleanup")
+            self._set_state("passive")
+            return
+
+        tts_enabled = bool(self._g.get("tts_enabled", False))
+        speak_callable = callable(getattr(tts, "speak", None))
+        print(f"[voice_loop] tts check: enabled={tts_enabled} speak_callable={speak_callable} engine={getattr(tts, '_engine_name', '?')}")
+        if not tts_enabled:
+            print("[voice_loop] TTS disabled in globals — not speaking. Toggle via /api/v1/tts/toggle.")
+            self._set_state("passive")
+            return
+        if not speak_callable:
+            print("[voice_loop] tts.speak is not callable")
+            self._set_state("passive")
+            return
+
+        try:
+            print(f"[voice_loop] speaking response ({len(clean)} chars)…")
+            tts.speak(clean, blocking=True)
+            print("[voice_loop] done speaking")
+        except Exception as e:
+            print(f"[voice_loop] TTS failed to speak: {e!r}")
 
         self._set_state("passive")
 
