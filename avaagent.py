@@ -7743,24 +7743,59 @@ try:
 except Exception as _op_http_e:
     print(f"[operator_http] optional API not started: {_op_http_e}")
 
-print("[ava] operator HTTP on :5876 — Tauri app is the UI. Ctrl+C to exit.")
+import signal as _signal
+
+_ava_shutdown = False
+
+def _ava_signal_handler(sig, frame):
+    global _ava_shutdown
+    print(f"\n[ava] shutdown signal received ({sig})")
+    _ava_shutdown = True
+
+_signal.signal(_signal.SIGINT, _ava_signal_handler)
 try:
-    while True:
-        time.sleep(1)
-except KeyboardInterrupt:
-    print("[ava] shutdown requested")
-except Exception as _ava_fatal_e:
-    import traceback as _tb
-    _ava_tb = _tb.format_exc()
-    print("[FATAL] Ava crashed:")
-    print(_ava_tb)
+    _signal.signal(_signal.SIGTERM, _ava_signal_handler)
+except (OSError, ValueError):
+    pass  # SIGTERM may not be available on all platforms
+
+print("[ava] operator HTTP on :5876 — Ctrl+C to exit.")
+
+_keepalive_errors = 0
+while not _ava_shutdown:
     try:
-        _crash_path = Path("state/crash_log.txt")
-        _crash_path.parent.mkdir(exist_ok=True)
-        with open(_crash_path, "a", encoding="utf-8") as _cf:
-            _cf.write(f"\n=== CRASH {time.ctime()} ===\n")
-            _cf.write(_ava_tb)
-        print(f"[FATAL] crash log written to {_crash_path}")
-    except Exception:
-        pass
-    input("Press enter to exit...")
+        time.sleep(2)
+        _keepalive_errors = 0
+
+        # Restart operator HTTP thread if it died unexpectedly
+        _http_thread = globals().get("_operator_http_thread")
+        if _http_thread is not None and not _http_thread.is_alive():
+            print("[ava] WARNING: operator HTTP thread died — restarting")
+            try:
+                from brain.operator_server import start_operator_http_background
+                _restart_fn = globals().get("operator_console_chat")
+                if _restart_fn:
+                    start_operator_http_background(globals(), _restart_fn)
+                    print("[ava] operator HTTP restarted")
+            except Exception as _re:
+                print(f"[ava] operator HTTP restart failed: {_re}")
+
+    except KeyboardInterrupt:
+        print("[ava] keyboard interrupt")
+        _ava_shutdown = True
+    except Exception as _ke:
+        import traceback as _tb
+        _keepalive_errors += 1
+        print(f"[ava] keepalive error #{_keepalive_errors}: {_ke}")
+        if _keepalive_errors > 10:
+            print("[ava] too many keepalive errors — writing crash log")
+            try:
+                _crash_path = Path("state/crash_log.txt")
+                _crash_path.parent.mkdir(exist_ok=True)
+                with open(_crash_path, "a", encoding="utf-8") as _cf:
+                    _cf.write(f"\n=== KEEPALIVE CRASH {time.ctime()} ===\n")
+                    _cf.write(_tb.format_exc())
+            except Exception:
+                pass
+            break
+
+print("[ava] shutdown complete")
