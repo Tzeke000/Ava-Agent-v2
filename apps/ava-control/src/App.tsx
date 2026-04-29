@@ -321,6 +321,8 @@ export default function App() {
   useEffect(() => {
     let unlistenFocus: (() => void) | null = null;
     let unlistenBlur: (() => void) | null = null;
+    let pollId: ReturnType<typeof setInterval> | null = null;
+    let wasMinimized = false;
 
     const setupWidgetListeners = async () => {
       try {
@@ -332,29 +334,46 @@ export default function App() {
           try {
             const widget = await WebviewWindow.getByLabel("widget");
             if (widget) await widget.show();
-          } catch { /* widget window may not exist in dev */ }
+          } catch { /* widget window may not exist */ }
         };
 
         const hideWidget = async () => {
           try {
             const widget = await WebviewWindow.getByLabel("widget");
             if (widget) await widget.hide();
-          } catch { /* widget window may not exist in dev */ }
+          } catch { /* widget window may not exist */ }
         };
 
-        // Tauri v2: listen to focus events to detect minimize/restore
+        // Event-based: blur fires when minimize button is clicked on Windows
         unlistenBlur = await mainWin.listen("tauri://blur", async () => {
-          // Brief delay then check if actually minimized
-          await new Promise((r) => setTimeout(r, 150));
+          await new Promise((r) => setTimeout(r, 200));
           try {
             const minimized = await mainWin.isMinimized();
-            if (minimized) showWidget();
-          } catch { showWidget(); } // fallback: show on any blur
+            if (minimized && !wasMinimized) {
+              wasMinimized = true;
+              await showWidget();
+            }
+          } catch { /* silent — no fallback; polling handles it */ }
         });
 
-        unlistenFocus = await mainWin.listen("tauri://focus", () => {
-          hideWidget();
+        unlistenFocus = await mainWin.listen("tauri://focus", async () => {
+          if (wasMinimized) {
+            wasMinimized = false;
+            await hideWidget();
+          }
         });
+
+        // Polling backup: catches cases where blur event doesn't fire (e.g. Win+D)
+        pollId = setInterval(async () => {
+          try {
+            const minimized = await mainWin.isMinimized();
+            if (minimized !== wasMinimized) {
+              wasMinimized = minimized;
+              if (minimized) await showWidget();
+              else await hideWidget();
+            }
+          } catch { /* Tauri not available in browser */ }
+        }, 500);
       } catch {
         // Not running inside Tauri (dev browser) — no-op
       }
@@ -364,6 +383,7 @@ export default function App() {
     return () => {
       unlistenFocus?.();
       unlistenBlur?.();
+      if (pollId !== null) clearInterval(pollId);
     };
   }, []);
 

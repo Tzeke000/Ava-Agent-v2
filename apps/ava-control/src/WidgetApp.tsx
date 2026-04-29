@@ -77,24 +77,24 @@ export default function WidgetApp() {
     return () => { alive = false; clearInterval(iv); };
   }, []);
 
-  // Load saved position on mount and apply to window
+  // Load saved position on mount and restore widget window position
   useEffect(() => {
-    getJson("/api/v1/widget/position")
-      .then((pos) => {
+    const restorePosition = async () => {
+      try {
+        const pos = await getJson("/api/v1/widget/position");
         if (pos && typeof pos === "object") {
           const p = pos as Record<string, unknown>;
           const x = Number(p.x) || 100;
           const y = Number(p.y) || 100;
-          // Attempt to move the Tauri window to saved position (best-effort)
-          try {
-            (window as any).__TAURI_INTERNALS__?.invoke("plugin:window|set_position", {
-              label: "widget",
-              position: { Physical: { x, y } },
-            }).catch(() => {});
-          } catch { /* ok */ }
+          // Tauri v2: use proper window API to set position
+          const { getCurrentWindow } = await import("@tauri-apps/api/window");
+          const { LogicalPosition } = await import("@tauri-apps/api/dpi");
+          const win = getCurrentWindow();
+          await win.setPosition(new LogicalPosition(x, y));
         }
-      })
-      .catch(() => {});
+      } catch { /* position restore is best-effort */ }
+    };
+    void restorePosition();
   }, []);
 
   const [emotion, emotionColor] = getEmotion(snap);
