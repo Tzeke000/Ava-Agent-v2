@@ -439,7 +439,27 @@ def run_startup(g: dict[str, Any]) -> None:
     try:
         from brain.voice_loop import start_voice_loop
         _vl_ok = start_voice_loop(g)
-        print(f"[voice_loop] started={_vl_ok}")
+        if _vl_ok:
+            print("[voice_loop] started=True — passive listening active")
+        else:
+            # Diagnose exactly why voice loop didn't start
+            _stt_obj = g.get("stt_engine")
+            _tts_obj = g.get("tts_engine")
+            _stt_ok = (
+                _stt_obj is not None
+                and callable(getattr(_stt_obj, "is_available", None))
+                and _stt_obj.is_available()
+            )
+            _tts_ok = (
+                _tts_obj is not None
+                and callable(getattr(_tts_obj, "is_available", None))
+                and _tts_obj.is_available()
+            )
+            print(
+                f"[voice_loop] started=False — "
+                f"stt={'ok' if _stt_ok else ('None' if _stt_obj is None else 'unavailable')} "
+                f"tts={'ok' if _tts_ok else ('None' if _tts_obj is None else 'unavailable')}"
+            )
     except Exception as e:
         print(f"[voice_loop] startup skipped: {e}")
 

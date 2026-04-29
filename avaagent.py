@@ -6850,14 +6850,14 @@ def operator_console_chat(message: str, *, image=None) -> dict:
             except Exception:
                 pass
             if not should_skip_initial_workspace_tick(_rp_decision):
-                print("[operator_console_chat] step: workspace.tick (with 10s timeout)")
+                print("[operator_console_chat] step: workspace.tick (with 5s timeout)")
                 try:
                     with _occ_futures.ThreadPoolExecutor(max_workers=1) as _ex_t:
                         _fut_t = _ex_t.submit(lambda: workspace.tick(camera_manager, image, globals(), clean_message))
-                        _fut_t.result(timeout=10.0)
+                        _fut_t.result(timeout=5.0)
                     print("[operator_console_chat] step: workspace.tick complete")
                 except _occ_futures.TimeoutError:
-                    print("[operator_console_chat] WARN: workspace.tick exceeded 10s — proceeding without fresh perception")
+                    print("[operator_console_chat] WARN: workspace.tick exceeded 5s — proceeding without fresh perception")
                 except Exception as _wte:
                     print(f"[operator_console_chat] workspace.tick error: {_wte!r} — proceeding")
             else:
@@ -6872,9 +6872,29 @@ def operator_console_chat(message: str, *, image=None) -> dict:
                 )
             except Exception:
                 pass
-            reply, visual, active_profile, actions, refl = run_ava(
-                clean_message, image, get_active_person_id()
-            )
+            print("[operator_console_chat] step: run_ava (90s timeout)")
+            _run_ava_result = None
+            try:
+                with _occ_futures.ThreadPoolExecutor(max_workers=1) as _ex_ra:
+                    _person_id_for_run = get_active_person_id()
+                    _fut_ra = _ex_ra.submit(lambda: run_ava(clean_message, image, _person_id_for_run))
+                    _run_ava_result = _fut_ra.result(timeout=90.0)
+            except _occ_futures.TimeoutError:
+                print("[operator_console_chat] WARN: run_ava exceeded 90s — returning fallback response")
+                _run_ava_result = None
+            except Exception as _rae:
+                print(f"[operator_console_chat] run_ava error: {_rae!r}")
+                _run_ava_result = None
+
+            if _run_ava_result is None:
+                reply = "Sorry, I'm thinking slowly right now. Try again?"
+                visual = {}
+                active_profile = load_profile_by_id(get_active_person_id())
+                actions = []
+                refl = {}
+            else:
+                reply, visual, active_profile, actions, refl = _run_ava_result
+
             try:
                 print(
                     f"[operator_console_chat] run_ava returned "
@@ -6898,9 +6918,9 @@ def operator_console_chat(message: str, *, image=None) -> dict:
             try:
                 with _occ_futures.ThreadPoolExecutor(max_workers=1) as _ex_p:
                     _fut_p = _ex_p.submit(lambda: workspace.tick(camera_manager, image, globals(), clean_message))
-                    _fut_p.result(timeout=10.0)
+                    _fut_p.result(timeout=5.0)
             except _occ_futures.TimeoutError:
-                print("[operator_console_chat] WARN: post-reply workspace.tick exceeded 10s")
+                print("[operator_console_chat] WARN: post-reply workspace.tick exceeded 5s")
             except Exception as _wpe:
                 print(f"[operator_console_chat] post-reply workspace.tick error: {_wpe!r}")
             perception = workspace.state.perception if workspace.state else build_perception(
