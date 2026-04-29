@@ -533,12 +533,22 @@ CURRENT MOOD AND AFFECT:
 INNER LIFE (FAST CONTEXT):
 - current_thought: {_fast_thought or "(none recent)"}
 - current_curiosity: {_fast_curiosity_topic or "(none)"}
+CURRENT PERSON AT MACHINE: {_g.get("_current_person_at_machine") or "unknown"}
 
 USER MESSAGE:
 {user_input}
 
 Respond as Ava — concise and natural unless they explicitly ask for depth or technical detail.
 """
+
+    # Phase 88: inject ambient context hint
+    try:
+        from brain.ambient_intelligence import get_context_hint
+        _ambient_hint = get_context_hint(_g)
+        if _ambient_hint:
+            prompt = prompt + f"\n{_ambient_hint}"
+    except Exception:
+        pass
 
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),

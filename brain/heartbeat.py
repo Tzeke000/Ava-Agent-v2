@@ -536,6 +536,13 @@ def _run_heartbeat_tick(
         except Exception:
             pass
 
+    # Phase 88: ambient intelligence observation
+    try:
+        from brain.ambient_intelligence import observe_session
+        observe_session(g)
+    except Exception:
+        pass
+
     # Phase 75: auto fine-tune check (every 14 days if 50+ new turns)
     _FT_CHECK_INTERVAL = 14 * 24 * 3600
     _last_ft_check = float(st.meta.get("last_finetune_check_wall") or 0)
