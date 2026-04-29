@@ -446,6 +446,22 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         system_stats = {"error": "psutil not installed"}
     except Exception as e:
         system_stats = {"error": str(e)[:100]}
+    # Phase 70: Emil bridge status
+    emil_block: dict[str, Any] = {"online": False, "last_contact": 0.0, "shared_topics": []}
+    try:
+        from brain.emil_bridge import get_emil_bridge
+        emil_block = get_emil_bridge(host.get("BASE_DIR") or Path.cwd()).get_status()
+    except Exception:
+        pass
+
+    # Phase 71: active plans summary
+    active_plans_block: list[dict[str, Any]] = []
+    try:
+        from brain.planner import get_planner
+        active_plans_block = get_planner(host.get("BASE_DIR") or Path.cwd()).get_active_plans()[:10]
+    except Exception:
+        pass
+
     mood_block = _load_mood_block(host)
     style_block = _load_style(host)
     deep_self_block = {}
@@ -562,6 +578,8 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "inner_life": inner_life,
         "brain_graph": brain_graph_block,
         "visual_memory": visual_memory_block,
+        "emil": emil_block,
+        "active_plans": active_plans_block,
         "reply_path": host.get("reply_path_meta") if isinstance(host.get("reply_path_meta"), dict) else {},
     }
 
@@ -577,6 +595,8 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "tools": tools_block,
         "tts": tts_block,
         "widget": widget_block,
+        "emil": emil_block,
+        "active_plans": active_plans_block,
         "system_stats": system_stats,
         "mood": mood_block,
         "style": style_block,
@@ -1404,6 +1424,106 @@ def create_app():
                 "message": f"workbench approve failed: {e}",
                 "trace": traceback.format_exc()[:1400],
             }
+
+    # Phase 70: Emil bridge endpoints
+    class EmilSendIn(BaseModel):
+        message: str = ""
+        context: str = ""
+
+    class EmilShareIn(BaseModel):
+        topic: str = ""
+        knowledge: str = ""
+
+    @app.get("/api/v1/emil/status")
+    def emil_status() -> dict[str, Any]:
+        try:
+            from brain.emil_bridge import get_emil_bridge
+            return get_emil_bridge(_g().get("BASE_DIR") or Path.cwd()).get_status()
+        except Exception as e:
+            return {"online": False, "error": str(e)[:200]}
+
+    @app.post("/api/v1/emil/ping")
+    def emil_ping() -> dict[str, Any]:
+        try:
+            from brain.emil_bridge import get_emil_bridge
+            return get_emil_bridge(_g().get("BASE_DIR") or Path.cwd()).ping_emil()
+        except Exception as e:
+            return {"online": False, "error": str(e)[:200]}
+
+    @app.post("/api/v1/emil/send")
+    def emil_send(body: EmilSendIn) -> dict[str, Any]:
+        try:
+            from brain.emil_bridge import get_emil_bridge
+            return get_emil_bridge(_g().get("BASE_DIR") or Path.cwd()).send_to_emil(
+                str(body.message or ""), str(body.context or "")
+            )
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
+    @app.post("/api/v1/emil/share")
+    def emil_share(body: EmilShareIn) -> dict[str, Any]:
+        try:
+            from brain.emil_bridge import get_emil_bridge
+            return get_emil_bridge(_g().get("BASE_DIR") or Path.cwd()).share_knowledge(
+                str(body.topic or ""), str(body.knowledge or "")
+            )
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
+    # Phase 71: Plans endpoints
+    class PlanCreateIn(BaseModel):
+        goal: str = ""
+        context: str = ""
+
+    @app.get("/api/v1/plans")
+    def plans_list() -> dict[str, Any]:
+        try:
+            from brain.planner import get_planner
+            planner = get_planner(_g().get("BASE_DIR") or Path.cwd())
+            all_plans = planner._load()
+            return {
+                "ok": True,
+                "plans": all_plans[-50:],
+                "active_count": sum(1 for p in all_plans if str(p.get("status") or "") == "active"),
+            }
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200], "plans": []}
+
+    @app.post("/api/v1/plans/create")
+    def plans_create(body: PlanCreateIn) -> dict[str, Any]:
+        goal = str(body.goal or "").strip()
+        if not goal:
+            return {"ok": False, "error": "goal required"}
+        try:
+            from brain.planner import get_planner
+            plan = get_planner(_g().get("BASE_DIR") or Path.cwd()).create_plan(goal, str(body.context or ""))
+            return {"ok": True, "plan": plan}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
+    @app.post("/api/v1/plans/{plan_id}/pause")
+    def plans_pause(plan_id: str) -> dict[str, Any]:
+        try:
+            from brain.planner import get_planner
+            return get_planner(_g().get("BASE_DIR") or Path.cwd()).pause_plan(plan_id)
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
+    @app.post("/api/v1/plans/{plan_id}/resume")
+    def plans_resume(plan_id: str) -> dict[str, Any]:
+        try:
+            from brain.planner import get_planner
+            return get_planner(_g().get("BASE_DIR") or Path.cwd()).resume_plan(plan_id)
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
+    @app.get("/api/v1/plans/{plan_id}/progress")
+    def plans_progress(plan_id: str) -> dict[str, Any]:
+        try:
+            from brain.planner import get_planner
+            return get_planner(_g().get("BASE_DIR") or Path.cwd()).check_progress(plan_id)
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
 
     @app.post("/api/v1/workbench/reject")
     def workbench_reject(body: WorkbenchActionIn) -> dict[str, Any]:

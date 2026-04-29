@@ -19,6 +19,7 @@ const TABS = [
   { id: "models" as const, label: "Models / Brains" },
   { id: "finetune" as const, label: "Finetune" },
   { id: "workbench" as const, label: "Workbench" },
+  { id: "plans" as const, label: "Plans" },
   { id: "identity" as const, label: "Identity" },
   { id: "debug" as const, label: "Debug" },
 ];
@@ -220,6 +221,11 @@ export default function App() {
     user: "",
   });
 
+  const [plans, setPlans] = useState<{ plans: Record<string, unknown>[]; active_count: number } | null>(null);
+  const [plansBusy, setPlansBusy] = useState(false);
+  const [planGoalInput, setPlanGoalInput] = useState("");
+  const [planMsg, setPlanMsg] = useState("");
+
   const [apiCallLog, setApiCallLog] = useState<ApiLogEntry[]>([]);
   const [lastChatResponse, setLastChatResponse] = useState<Record<string, unknown> | null>(null);
   const [lastSnapshotRaw, setLastSnapshotRaw] = useState<Snapshot | null>(null);
@@ -404,6 +410,23 @@ export default function App() {
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [chatHist, chatThinking]);
+
+  const fetchPlans = useCallback(async () => {
+    setPlansBusy(true);
+    try {
+      const data = await getJson("/api/v1/plans");
+      setPlans(data as { plans: Record<string, unknown>[]; active_count: number });
+    } catch {
+      // keep stale
+    } finally {
+      setPlansBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab !== "plans") return;
+    void fetchPlans();
+  }, [tab, fetchPlans]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -1743,6 +1766,111 @@ export default function App() {
                   </Section>
                 </>
               )}
+            </div>
+          )}
+
+          {tab === "plans" && (
+            <div className="op-pane">
+              <h1 className="op-h1">Plans</h1>
+              <p className="op-lead">
+                Ava's long-horizon plans — created from her own goals and curiosity.
+                She decides priority, approach, and timing.
+              </p>
+              <Section title="Create a plan (Ava-initiated)">
+                <p className="op-note">
+                  Ava creates plans from her own goals. You can seed one here as a suggestion.
+                </p>
+                <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+                  <input
+                    className="op-input"
+                    placeholder="Goal description…"
+                    value={planGoalInput}
+                    onChange={(e) => setPlanGoalInput(e.target.value)}
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    type="button"
+                    className="btn primary"
+                    disabled={plansBusy || !planGoalInput.trim()}
+                    onClick={async () => {
+                      setPlansBusy(true);
+                      setPlanMsg("");
+                      try {
+                        const res = await postJson("/api/v1/plans/create", { goal: planGoalInput.trim() });
+                        const r = res as Record<string, unknown>;
+                        if (r.ok) {
+                          setPlanMsg(`Created plan: ${String((r.plan as Record<string, unknown>)?.id ?? "")}`);
+                          setPlanGoalInput("");
+                          void fetchPlans();
+                        } else {
+                          setPlanMsg(`Error: ${String(r.error ?? "unknown")}`);
+                        }
+                      } catch (e) {
+                        setPlanMsg(e instanceof Error ? e.message : String(e));
+                      } finally {
+                        setPlansBusy(false);
+                      }
+                    }}
+                  >
+                    Create
+                  </button>
+                </div>
+                {planMsg && <p className="op-note">{planMsg}</p>}
+              </Section>
+              <Section title={`Active plans (${plans?.active_count ?? 0})`}>
+                <button type="button" className="btn ghost" style={{ marginBottom: "8px" }} onClick={() => void fetchPlans()} disabled={plansBusy}>
+                  Refresh
+                </button>
+                {!plans ? (
+                  <p className="op-muted">Loading…</p>
+                ) : plans.plans.length === 0 ? (
+                  <p className="op-muted">No plans yet. Ava will create them from her goals and curiosity.</p>
+                ) : (
+                  plans.plans.map((plan) => {
+                    const p = plan as Record<string, unknown>;
+                    const steps = (p.steps as Record<string, unknown>[]) ?? [];
+                    const done = steps.filter((s) => String(s.status) === "completed" || String(s.status) === "skipped").length;
+                    const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
+                    return (
+                      <div key={String(p.id)} style={{ border: "1px solid #2a2a3a", borderRadius: "6px", padding: "12px", marginBottom: "10px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                          <strong style={{ color: "#a78bfa" }}>[{String(p.id)}] {String(p.goal ?? "").slice(0, 80)}</strong>
+                          <span style={{
+                            background: String(p.status) === "active" ? "#22c55e22" : String(p.status) === "paused" ? "#eab30822" : "#6b728022",
+                            color: String(p.status) === "active" ? "#4ade80" : String(p.status) === "paused" ? "#fbbf24" : "#9ca3af",
+                            borderRadius: "4px", padding: "2px 8px", fontSize: "0.8em",
+                          }}>{String(p.status)}</span>
+                        </div>
+                        <div style={{ fontSize: "0.85em", color: "#9ca3af", marginBottom: "6px" }}>
+                          {done}/{steps.length} steps · {pct}%
+                          <div style={{ background: "#1e1e2e", borderRadius: "3px", height: "4px", marginTop: "4px" }}>
+                            <div style={{ background: "#a78bfa", width: `${pct}%`, height: "4px", borderRadius: "3px", transition: "width 0.3s" }} />
+                          </div>
+                        </div>
+                        {((p.progress_notes as string[]) ?? []).slice(-2).map((n, i) => (
+                          <p key={i} style={{ fontSize: "0.8em", color: "#6b7280", margin: "2px 0" }}>· {n}</p>
+                        ))}
+                        <div style={{ display: "flex", gap: "6px", marginTop: "8px" }}>
+                          {String(p.status) === "active" && (
+                            <button type="button" className="btn ghost" style={{ fontSize: "0.8em", padding: "2px 8px" }}
+                              onClick={async () => {
+                                await postJson(`/api/v1/plans/${String(p.id)}/pause`, {});
+                                void fetchPlans();
+                              }}>Pause</button>
+                          )}
+                          {String(p.status) === "paused" && (
+                            <button type="button" className="btn ghost" style={{ fontSize: "0.8em", padding: "2px 8px" }}
+                              onClick={async () => {
+                                await postJson(`/api/v1/plans/${String(p.id)}/resume`, {});
+                                void fetchPlans();
+                              }}>Resume</button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </Section>
             </div>
           )}
 

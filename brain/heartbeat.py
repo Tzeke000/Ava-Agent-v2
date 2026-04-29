@@ -518,6 +518,13 @@ def _run_heartbeat_tick(
     except Exception:
         pass
 
+    # Phase 71: long-horizon plan tick
+    try:
+        from brain.planner import get_planner
+        get_planner(g.get("BASE_DIR") or Path(__file__).resolve().parent.parent).tick_active_plans(g)
+    except Exception:
+        pass
+
     # Phase 45: weekly concept graph decay
     _WEEK_SECONDS = 7 * 24 * 3600
     _last_decay = float(st.meta.get("last_concept_decay_wall") or 0)
