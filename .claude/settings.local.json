@@ -46,7 +46,11 @@
       "Bash(py -3.11 -m py_compile brain/prompt_builder.py)",
       "Bash(py -3.11 -m py_compile brain/turn_handler.py)",
       "Bash(py -3.11 -m py_compile brain/reply_engine.py)",
-      "Bash(py -3.11 -c ' *)"
+      "Bash(py -3.11 -c ' *)",
+      "Bash(ollama list *)",
+      "Bash(py -3.11 -m py_compile brain/stt_engine.py)",
+      "Bash(py -3.11 -m py_compile brain/voice_loop.py)",
+      "Bash(py -3.11 -m py_compile brain/clap_detector.py)"
     ]
   }
 }

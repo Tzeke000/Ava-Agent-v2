@@ -446,6 +446,25 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         system_stats = {"error": "psutil not installed"}
     except Exception as e:
         system_stats = {"error": str(e)[:100]}
+    # Phase 76: llava status
+    llava_block = {
+        "model": str(host.get("_llava_model_name") or "none"),
+        "active": bool(host.get("_llava_model_name")),
+        "last_description": str(host.get("_llava_scene_description") or "")[:200],
+    }
+
+    # Phase 74: voice loop state
+    voice_loop_block: dict[str, Any] = {"active": False, "state": "passive"}
+    try:
+        _vl = host.get("_voice_loop")
+        if _vl is not None:
+            voice_loop_block = {
+                "active": bool(getattr(_vl, "active", False)),
+                "state": str(getattr(_vl, "state", "passive")),
+            }
+    except Exception:
+        pass
+
     # Phase 70: Emil bridge status
     emil_block: dict[str, Any] = {"online": False, "last_contact": 0.0, "shared_topics": []}
     try:
@@ -595,6 +614,8 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "tools": tools_block,
         "tts": tts_block,
         "widget": widget_block,
+        "voice_loop": voice_loop_block,
+        "llava": llava_block,
         "emil": emil_block,
         "active_plans": active_plans_block,
         "system_stats": system_stats,
@@ -1151,8 +1172,18 @@ def create_app():
                     if not error:
                         error = "stt_unavailable"
                 else:
-                    out = stt_obj.listen_once()
-                    text = str(out or "").strip()
+                    # Phase 73: use listen_session (VAD + silence detection) if available
+                    if callable(getattr(stt_obj, "listen_session", None)):
+                        result = stt_obj.listen_session()
+                        if result is None:
+                            text = ""
+                        else:
+                            text = str(result.get("text") or "").strip()
+                            _STT_STATE["confidence"] = float(result.get("confidence") or 0.0)
+                            _STT_STATE["speech_detected"] = bool(result.get("speech_detected", True))
+                    else:
+                        out = stt_obj.listen_once()
+                        text = str(out or "").strip()
             except Exception as e:
                 error = str(e)
             finally:
@@ -1359,6 +1390,19 @@ def create_app():
             return {"ok": True, "tools": items, "count": len(items)}
         except Exception as e:
             return {"ok": False, "error": str(e)[:300], "tools": []}
+
+    @app.post("/api/v1/clap/calibrate")
+    def clap_calibrate() -> dict[str, Any]:
+        try:
+            from brain.clap_detector import calibrate_clap_threshold
+            result = calibrate_clap_threshold(_g())
+            # Also update running detector if available
+            _det = _g().get("_clap_detector")
+            if _det is not None and callable(getattr(_det, "recalibrate", None)):
+                result = _det.recalibrate()
+            return result
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
 
     @app.get("/api/v1/debug/export", response_class=PlainTextResponse)
     def debug_export() -> str:
