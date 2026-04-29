@@ -29,15 +29,20 @@ echo [ava-launch] Repo: %~dp0
 echo.
 
 echo [ava-launch] Step 1/4: Starting Python backend ^(avaagent.py + watchdog, minimized^)...
-start "Ava Python" /MIN /D "%~dp0" python avaagent.py
+REM Clear stale restart flag so watchdog doesn't immediately relaunch avaagent
+if exist "%~dp0state\restart_requested.flag" (
+  del /f /q "%~dp0state\restart_requested.flag"
+  echo [ava-launch] Cleared stale restart_requested.flag
+)
+start "Ava Python" /MIN /D "%~dp0" py -3.11 avaagent.py
 if errorlevel 1 (
-  echo [ava-launch] ERROR: could not start python avaagent.py ^(is Python on PATH?^).
+  echo [ava-launch] ERROR: could not start py -3.11 avaagent.py ^(is Python 3.11 on PATH?^).
   pause
   exit /b 1
 )
 echo [ava-launch] Step 1/4: OK — Python process started ^(separate window^).
 if exist "%~dp0scripts\watchdog.py" (
-  start "Ava Watchdog" /MIN /D "%~dp0" python scripts\watchdog.py
+  start "Ava Watchdog" /MIN /D "%~dp0" py -3.11 scripts\watchdog.py
   echo [ava-launch] Step 1/4: Watchdog started.
 )
 

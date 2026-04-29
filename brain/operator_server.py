@@ -1483,19 +1483,23 @@ def create_app():
             # Send full snapshot immediately on connect
             snap = build_snapshot(_g())
             await ws.send_json({"type": "snapshot", "data": snap})
-            # Keep connection alive; push deltas every 1s
+            # Push deltas every 1s — build_snapshot once per tick, never break on error
             while True:
                 await _asyncio.sleep(1.0)
                 try:
+                    _snap = build_snapshot(_g())
                     delta = {
                         "type": "delta",
-                        "ribbon": build_snapshot(_g()).get("ribbon"),
-                        "tts": build_snapshot(_g()).get("tts"),
-                        "widget": build_snapshot(_g()).get("widget"),
+                        "ribbon": _snap.get("ribbon"),
+                        "tts": _snap.get("tts"),
+                        "widget": _snap.get("widget"),
                     }
                     await ws.send_json(delta)
-                except Exception:
+                except WebSocketDisconnect:
                     break
+                except Exception as _ws_e:
+                    # Log once then continue — don't kill the loop on transient errors
+                    print(f"[ws] delta error (skipping tick): {_ws_e!r}")
         except WebSocketDisconnect:
             pass
         except Exception:

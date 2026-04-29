@@ -14,7 +14,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import gradio as gr
 import numpy as np
 from faster_whisper import WhisperModel
 
@@ -7388,18 +7387,18 @@ def debug_panel_refresh_fn() -> tuple[str, str, str, str]:
 
 
 def refresh_profiles_fn():
-    return gr.update(choices=get_profile_choices(), value=get_active_profile_text())
+    return {"choices": get_profile_choices(), "value": get_active_profile_text()}
 
 def create_profile_fn(name, relationship, allowed):
     name = (name or "").strip()
     if not name:
-        return "Please enter a name.", gr.update(choices=get_profile_choices()), get_active_profile_text(), get_active_profile_summary()
+        return "Please enter a name.", {"choices": get_profile_choices()}, get_active_profile_text(), get_active_profile_summary()
 
     profile = create_or_get_profile(name, relationship_to_zeke=(relationship or "known person"), allowed=bool(allowed))
     set_active_person(profile["person_id"], source="created_from_ui")
     return (
         f"✅ Created or loaded profile for {profile['name']}.",
-        gr.update(choices=get_profile_choices(), value=f"{profile['name']} [{profile['person_id']}]"),
+        {"choices": get_profile_choices(), "value": f"{profile['name']} [{profile['person_id']}]"},
         f"{profile['name']} [{profile['person_id']}]",
         json.dumps(profile, indent=2, ensure_ascii=False)
     )
@@ -7753,50 +7752,23 @@ def load_emotion_reference() -> dict:
 # =========================================================
 # STARTUP  (logic extracted to brain/startup.py)
 # =========================================================
+_STARTUP_COMPLETE = False
 from brain.startup import run_startup as _run_startup
 _run_startup(globals())
 
 # =========================================================
-# UI  (layout extracted to brain/gradio_ui.py)
+# Operator HTTP API (only UI — Tauri app connects to :5876)
 # =========================================================
-from brain.gradio_ui import build_gradio_demo as _build_gradio
-demo = _build_gradio({
-    "chat_fn": chat_fn, "voice_fn": voice_fn, "camera_tick_fn": camera_tick_fn,
-    "debug_panel_refresh_fn": debug_panel_refresh_fn,
-    "refresh_profiles_fn": refresh_profiles_fn, "create_profile_fn": create_profile_fn,
-    "switch_profile_fn": switch_profile_fn, "save_note_fn": save_note_fn,
-    "save_like_fn": save_like_fn, "save_impression_fn": save_impression_fn,
-    "memory_search_fn": memory_search_fn, "memory_delete_fn": memory_delete_fn,
-    "memory_manual_add_fn": memory_manual_add_fn, "memory_update_importance_fn": memory_update_importance_fn,
-    "memory_refresh_recent_fn": memory_refresh_recent_fn,
-    "workbench_refresh_index_fn": workbench_refresh_index_fn, "workbench_read_fn": workbench_read_fn,
-    "workbench_write_fn": workbench_write_fn, "workbench_append_fn": workbench_append_fn,
-    "read_chatlog_fn": read_chatlog_fn, "read_code_fn": read_code_fn,
-    "reload_personality_fn": reload_personality_fn,
-    "capture_face_for_active_person_fn": capture_face_for_active_person_fn,
-    "train_faces_fn": train_faces_fn, "recognize_face_now_fn": recognize_face_now_fn,
-    "refresh_reflections_fn": refresh_reflections_fn, "refresh_self_model_fn": refresh_self_model_fn,
-    "CAMERA_TICK_SECONDS": CAMERA_TICK_SECONDS,
-    "get_profile_choices": get_profile_choices, "get_active_profile_text": get_active_profile_text,
-    "get_active_profile_summary": get_active_profile_summary,
-})
-
 try:
     from brain.operator_server import start_operator_http_background
-
     start_operator_http_background(globals(), operator_console_chat)
 except Exception as _op_http_e:
     print(f"[operator_http] optional API not started: {_op_http_e}")
 
-_ava_gr_open = os.environ.get("AVA_GRADIO_OPEN", "0").strip().lower() in ("1", "true", "yes")
-_ava_gr_host = os.environ.get("AVA_GRADIO_SERVER_NAME", "127.0.0.1").strip() or "127.0.0.1"
-_ava_gr_port = int(os.environ.get("AVA_GRADIO_SERVER_PORT", "7860") or "7860")
-print(
-    f"[gradio] UI http://{_ava_gr_host}:{_ava_gr_port}/ "
-    f"(set AVA_GRADIO_OPEN=1 to auto-open browser; operator API is separate)"
-)
+print("[ava] operator HTTP on :5876 — Tauri app is the UI. Ctrl+C to exit.")
 try:
-    demo.launch(server_name=_ava_gr_host, server_port=_ava_gr_port, inbrowser=_ava_gr_open)
+    while True:
+        time.sleep(1)
 except KeyboardInterrupt:
     print("[ava] shutdown requested")
 except Exception as _ava_fatal_e:
