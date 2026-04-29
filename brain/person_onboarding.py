@@ -382,6 +382,12 @@ _TRIGGER_PATTERNS = [
     re.compile(r"ava[,.]?\s+profile me", re.IGNORECASE),
 ]
 
+_REFRESH_PATTERNS = [
+    re.compile(r"(?:hey ava[,.]?\s+)?(?:ava[,.]?\s+)?update my profile", re.IGNORECASE),
+    re.compile(r"ava[,.]?\s+update my profile", re.IGNORECASE),
+    re.compile(r"(?:hey ava[,.]?\s+)?(?:ava[,.]?\s+)?refresh my profile", re.IGNORECASE),
+]
+
 
 def detect_onboarding_trigger(user_input: str) -> tuple[bool, Optional[str]]:
     """
@@ -394,6 +400,11 @@ def detect_onboarding_trigger(user_input: str) -> tuple[bool, Optional[str]]:
             name_hint = m.group(1).strip() if m.lastindex and m.lastindex >= 1 else None
             return True, name_hint
     return False, None
+
+
+def detect_refresh_trigger(user_input: str) -> bool:
+    """Returns True if user wants to refresh/update their profile."""
+    return any(p.search(user_input) for p in _REFRESH_PATTERNS)
 
 
 def start_onboarding(person_id: str, base_dir: Path, name_hint: Optional[str] = None) -> OnboardingFlow:

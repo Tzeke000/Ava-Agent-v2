@@ -55,9 +55,22 @@ def run_ava(
     )
 
     try:
-        # Phase 79: onboarding trigger detection
+        # Phases 79-80: onboarding and profile refresh trigger detection
         try:
-            from brain.person_onboarding import detect_onboarding_trigger, start_onboarding, run_onboarding_step
+            from brain.person_onboarding import (
+                detect_onboarding_trigger, detect_refresh_trigger,
+                start_onboarding, run_onboarding_step, refresh_profile,
+            )
+            # Phase 80: refresh trigger
+            if detect_refresh_trigger(_inp) and _g.get("_onboarding_flow") is None:
+                _ref = refresh_profile(active_person_id, _g)
+                if _ref.get("action") == "retake_photos":
+                    _ref_reply = "Sure, let me update your profile. Let's start with some fresh photos."
+                else:
+                    _ref_reply = "I've noted the update. Is there anything specific you'd like me to know?"
+                _ap = _av.load_profile_by_id(active_person_id)
+                return finalize_ava_turn(user_input, _ref_reply, {}, _ap, [], turn_route="profile_refresh")
+            # Phase 79: new onboarding trigger
             _ob_triggered, _ob_name = detect_onboarding_trigger(_inp)
             if _ob_triggered and _g.get("_onboarding_flow") is None:
                 _ob_person_id = f"person_{uuid.uuid4().hex[:8]}"
