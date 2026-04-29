@@ -308,6 +308,15 @@ def run_ava(
         except Exception:
             pass
 
+        # Phase 96: conversation quality check (with one regeneration attempt)
+        try:
+            from brain.response_quality import response_quality_check
+            ai_reply, _quality_issues = response_quality_check(ai_reply, _inp, {}, _g)
+            if _quality_issues:
+                print(f"[run_ava] quality issues: {_quality_issues}")
+        except Exception:
+            pass
+
         _vroute = isinstance(visual, dict) and visual.get("turn_route")
         print(
             f"[run_ava] exit route={_vroute or 'llm'} via finalize actions={len(actions)} "
