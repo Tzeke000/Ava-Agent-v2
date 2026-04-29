@@ -6873,18 +6873,32 @@ def operator_console_chat(message: str, *, image=None) -> dict:
             except Exception:
                 pass
             print("[operator_console_chat] step: run_ava (90s timeout)")
-            _run_ava_result = None
-            try:
-                with _occ_futures.ThreadPoolExecutor(max_workers=1) as _ex_ra:
-                    _person_id_for_run = get_active_person_id()
-                    _fut_ra = _ex_ra.submit(lambda: run_ava(clean_message, image, _person_id_for_run))
-                    _run_ava_result = _fut_ra.result(timeout=90.0)
-            except _occ_futures.TimeoutError:
-                print("[operator_console_chat] WARN: run_ava exceeded 90s — returning fallback response")
+            # Use threading.Event so we don't block on ThreadPoolExecutor.__exit__
+            # waiting for a stuck worker. Worker keeps running in background but we
+            # return to the caller immediately on timeout.
+            _run_ava_result_box: list = [None]
+            _run_ava_error_box: list = [None]
+            _run_ava_done = threading.Event()
+            _person_id_for_run = get_active_person_id()
+
+            def _run_ava_worker():
+                try:
+                    _run_ava_result_box[0] = run_ava(clean_message, image, _person_id_for_run)
+                except Exception as _rae:
+                    _run_ava_error_box[0] = _rae
+                finally:
+                    _run_ava_done.set()
+
+            _t_ra = threading.Thread(target=_run_ava_worker, daemon=True, name="ava-run-ava-turn")
+            _t_ra.start()
+            if not _run_ava_done.wait(timeout=90.0):
+                print("[operator_console_chat] TIMEOUT after 90s — returning fallback response (worker still running in bg)")
                 _run_ava_result = None
-            except Exception as _rae:
-                print(f"[operator_console_chat] run_ava error: {_rae!r}")
+            elif _run_ava_error_box[0] is not None:
+                print(f"[operator_console_chat] run_ava error: {_run_ava_error_box[0]!r}")
                 _run_ava_result = None
+            else:
+                _run_ava_result = _run_ava_result_box[0]
 
             if _run_ava_result is None:
                 reply = "Sorry, I'm thinking slowly right now. Try again?"

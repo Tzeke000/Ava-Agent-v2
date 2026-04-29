@@ -741,6 +741,8 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "tts": tts_block,
         "widget": widget_block,
         "voice_loop": voice_loop_block,
+        "thinking": bool(host.get("_ava_thinking", False)),
+        "thinking_since": float(host.get("_ava_thinking_since") or 0),
         "llava": llava_block,
         "emil": emil_block,
         "active_plans": active_plans_block,

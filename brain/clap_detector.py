@@ -140,7 +140,8 @@ class ClapDetector:
                 if rms > self._threshold:
                     self._clap_times.append(now)
                     self._clap_times = [t for t in self._clap_times if now - t < 3.0]
-                    recent = [t for t in self._clap_times if now - t < 1.0]
+                    # Tighter 0.8s window: two claps must be close together to count
+                    recent = [t for t in self._clap_times if now - t < 0.8]
                     if len(recent) >= 2:
                         self._clap_times.clear()
                         self._last_trigger_ts = now
