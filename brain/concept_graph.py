@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
+
+# Process-level lock so concurrent threads never race on the same .tmp file
+_SAVE_LOCK = threading.Lock()
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
@@ -125,20 +129,28 @@ class ConceptGraph:
             "version": self.version,
         }
         tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-        try:
-            tmp.replace(self.path)
-        except OSError as _e:
-            # WinError 32: file locked by another process — delete stale .tmp and retry once
-            if getattr(_e, "winerror", None) == 32 or "WinError 32" in str(_e):
-                try:
-                    tmp.unlink(missing_ok=True)
-                    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-                    tmp.replace(self.path)
-                except Exception:
-                    pass
-            else:
-                raise
+        # Skip save entirely if .tmp is currently held by another process/instance.
+        # The next save attempt (seconds later) will succeed once the lock clears.
+        if tmp.is_file():
+            try:
+                tmp.unlink()
+            except OSError:
+                # Still locked — skip this save, data is safe in memory
+                return
+        with _SAVE_LOCK:
+            try:
+                tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+                tmp.replace(self.path)
+            except OSError as _e:
+                _winerr = getattr(_e, "winerror", None)
+                if _winerr in (5, 32):
+                    # Access denied (5) or file locked (32) — discard tmp and skip
+                    try:
+                        tmp.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                else:
+                    raise
 
     def add_node(self, label: str, type: NodeType, notes: str = "") -> str:
         node_id = _slugify(label)
