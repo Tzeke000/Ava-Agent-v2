@@ -301,6 +301,13 @@ def run_ava(
         if _mb_pending:
             ai_reply = f"{_mb_pending}\n\n{ai_reply}"
 
+        # Phase 92: apply emotional expression style
+        try:
+            from brain.expression_style import apply_emotional_style
+            ai_reply = apply_emotional_style(ai_reply, _g)
+        except Exception:
+            pass
+
         _vroute = isinstance(visual, dict) and visual.get("turn_route")
         print(
             f"[run_ava] exit route={_vroute or 'llm'} via finalize actions={len(actions)} "
