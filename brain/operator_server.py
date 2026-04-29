@@ -679,6 +679,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "current_person": current_person_block,
         "notification_count_today": _notif_count_today,
         "security": _security_block,
+        "trust_scores": (lambda: __import__("brain.trust_system", fromlist=["get_all_trust_scores"]).get_all_trust_scores(host) if True else {})() if True else {},
         "system_stats": system_stats,
         "mood": mood_block,
         "style": style_block,

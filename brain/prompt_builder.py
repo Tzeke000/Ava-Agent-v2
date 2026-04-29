@@ -278,6 +278,14 @@ def build_prompt(
     except Exception:
         pass
 
+    # Phase 98: trust context
+    _trust_context_block = ""
+    try:
+        from brain.trust_system import get_trust_context
+        _trust_context_block = get_trust_context(active_profile["person_id"], _g)
+    except Exception:
+        pass
+
     prompt = f"""
 {personality}
 
@@ -350,6 +358,7 @@ pending_repair_note: {_pending_repair_note or "(none)"}
 {_emil_online_hint}
 CURRENT PERSON AT MACHINE: {_g.get("_current_person_at_machine") or "unknown"} (confidence={_g.get("_face_recognizer_last_confidence") or 0.0:.2f})
 {_rel_memory_block}
+{_trust_context_block}
 
 AVAILABLE READ-ONLY FILES:
 - chatlog.jsonl
