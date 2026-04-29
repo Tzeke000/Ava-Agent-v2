@@ -329,3 +329,99 @@ def _defaults_relationship_fields(state: Any) -> None:
     state.recent_social_tone = "neutral"
     state.relationship_confidence = 0.35
     state.relationship_meta = {}
+
+
+# ── Phase 91: Relationship Memory Depth ───────────────────────────────────────
+# Stores the texture of relationships — moments, references, trust, themes.
+
+import json
+import time
+from pathlib import Path
+
+
+def _rel_memory_path(base_dir: Path, person_id: str) -> Path:
+    return base_dir / "profiles" / f"{person_id}_relationship.json"
+
+
+def load_relationship_memory(base_dir: Path, person_id: str) -> dict[str, Any]:
+    path = _rel_memory_path(base_dir, person_id)
+    if path.is_file():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {
+        "person_id": person_id,
+        "first_meeting": "",
+        "memorable_moments": [],
+        "inside_references": [],
+        "emotional_history": [],
+        "trust_events": [],
+        "conversation_themes": {},
+        "growth_notes": [],
+    }
+
+
+def save_relationship_memory(base_dir: Path, person_id: str, mem: dict[str, Any]) -> None:
+    path = _rel_memory_path(base_dir, person_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(mem, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def record_memorable_moment(
+    base_dir: Path, person_id: str, summary: str, emotional_context: str, memorability: float
+) -> None:
+    """Record a moment worth remembering about this relationship."""
+    if memorability < 0.5:
+        return
+    mem = load_relationship_memory(base_dir, person_id)
+    moments = list(mem.get("memorable_moments") or [])
+    moments.append({
+        "ts": time.time(),
+        "summary": str(summary or "")[:300],
+        "emotional_context": str(emotional_context or "")[:100],
+        "memorability": round(memorability, 3),
+    })
+    # Keep top 20 by memorability
+    moments = sorted(moments, key=lambda m: float(m.get("memorability") or 0), reverse=True)[:20]
+    mem["memorable_moments"] = moments
+    save_relationship_memory(base_dir, person_id, mem)
+
+
+def record_emotion_with_person(base_dir: Path, person_id: str, emotion: str) -> None:
+    """Track how Ava feels when in this person's presence."""
+    mem = load_relationship_memory(base_dir, person_id)
+    history = list(mem.get("emotional_history") or [])
+    history.append({"ts": time.time(), "emotion": str(emotion or "")[:40]})
+    mem["emotional_history"] = history[-50:]  # Keep last 50
+    save_relationship_memory(base_dir, person_id, mem)
+
+
+def record_conversation_theme(base_dir: Path, person_id: str, topic: str) -> None:
+    """Track recurring topics with this person."""
+    mem = load_relationship_memory(base_dir, person_id)
+    themes = dict(mem.get("conversation_themes") or {})
+    key = str(topic or "")[:60]
+    themes[key] = int(themes.get(key) or 0) + 1
+    mem["conversation_themes"] = themes
+    save_relationship_memory(base_dir, person_id, mem)
+
+
+def get_relationship_summary_for_prompt(base_dir: Path, person_id: str) -> str:
+    """Return a brief summary for prompt injection."""
+    mem = load_relationship_memory(base_dir, person_id)
+    parts: list[str] = []
+    moments = mem.get("memorable_moments") or []
+    if moments:
+        top = moments[0].get("summary") or ""
+        parts.append(f"Memorable: {str(top)[:120]}")
+    themes = mem.get("conversation_themes") or {}
+    if themes:
+        top_themes = sorted(themes.items(), key=lambda x: int(x[1]), reverse=True)[:3]
+        parts.append("Recurring topics: " + ", ".join(t for t, _ in top_themes))
+    growth = mem.get("growth_notes") or []
+    if growth:
+        parts.append(f"Growth: {str(growth[-1])[:100]}")
+    if not parts:
+        return ""
+    return "RELATIONSHIP MEMORY: " + " | ".join(parts)

@@ -270,6 +270,14 @@ def build_prompt(
     from brain.relationship_arc import build_relationship_stage_block
     _relationship_stage_block = build_relationship_stage_block(_g)
 
+    # Phase 91: relationship memory depth
+    _rel_memory_block = ""
+    try:
+        from brain.relationship_model import get_relationship_summary_for_prompt
+        _rel_memory_block = get_relationship_summary_for_prompt(Path(BASE_DIR), active_profile["person_id"])
+    except Exception:
+        pass
+
     prompt = f"""
 {personality}
 
@@ -341,6 +349,7 @@ pending_repair_note: {_pending_repair_note or "(none)"}
 {_active_plans_prompt}
 {_emil_online_hint}
 CURRENT PERSON AT MACHINE: {_g.get("_current_person_at_machine") or "unknown"} (confidence={_g.get("_face_recognizer_last_confidence") or 0.0:.2f})
+{_rel_memory_block}
 
 AVAILABLE READ-ONLY FILES:
 - chatlog.jsonl

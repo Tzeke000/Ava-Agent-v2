@@ -168,4 +168,17 @@ def finalize_ava_turn(
         except Exception:
             pass
 
+    # Phase 91: relationship memory depth — record emotion + conversation theme
+    try:
+        from pathlib import Path as _Path91
+        from brain.relationship_model import record_emotion_with_person, record_conversation_theme
+        _base91 = _Path91(_g.get("BASE_DIR") or ".")
+        _mood91 = str((_g.get("_current_mood") or {}).get("current_mood") or "neutral")
+        record_emotion_with_person(_base91, person_id, _mood91)
+        _topic91 = _av._extract_simple_topic(user_input)
+        if _topic91:
+            record_conversation_theme(_base91, person_id, _topic91)
+    except Exception:
+        pass
+
     return ai_reply, visual_out, active_profile, actions, reflection
