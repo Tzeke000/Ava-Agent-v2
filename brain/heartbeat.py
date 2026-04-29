@@ -536,6 +536,44 @@ def _run_heartbeat_tick(
     except Exception as _pe:
         print(f"[heartbeat] proactive_check error: {_pe}")
 
+    # Reminder delivery — speaks any reminders whose due_ts has passed.
+    try:
+        from tools.system.reminder_tool import deliver_due_reminders
+        deliver_due_reminders(g)
+    except Exception as _re:
+        print(f"[heartbeat] reminder delivery error: {_re}")
+
+    # App-discovery → curiosity bridge. Run this lazily (~1/min) so Ava can
+    # surface a question about something on the machine she hasn't asked
+    # about yet.
+    try:
+        _last_app_curiosity_ts = float(g.get("_last_app_curiosity_ts") or 0)
+        if (time.time() - _last_app_curiosity_ts) > 60.0:
+            disc = g.get("_app_discoverer")
+            if disc is not None and getattr(disc, "count", 0) > 0:
+                seen = set(g.get("_discussed_apps") or [])
+                games = disc.get_by_category("game")
+                for entry in games[:5]:
+                    name = str(entry.get("name") or "")
+                    if not name or name in seen:
+                        continue
+                    try:
+                        from brain.curiosity_topics import add_topic
+                        add_topic(
+                            f"what {name} is like",
+                            f"discovered installed on the machine",
+                            g,
+                        )
+                        seen.add(name)
+                        g["_discussed_apps"] = list(seen)
+                        print(f"[heartbeat] app curiosity added: {name}")
+                        break  # one new game per minute, max
+                    except Exception:
+                        pass
+            g["_last_app_curiosity_ts"] = time.time()
+    except Exception as _ace:
+        print(f"[heartbeat] app curiosity error: {_ace}")
+
     # Question engine — Ava decides when to ask Zeke a question. Delivery via
     # the TTS worker; we mark_asked() so the cooldown sticks.
     try:

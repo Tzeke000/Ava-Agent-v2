@@ -375,6 +375,40 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_question_engine"] = None
         print(f"[question_engine] startup skipped: {e}")
 
+    # Command builder + voice command router (must come BEFORE app discovery
+    # init so VoiceCommandRouter sees an empty custom-commands list, then
+    # reload happens automatically when Ava/Zeke create new commands).
+    print("[startup] step: command builder + voice command router")
+    try:
+        from brain.command_builder import bootstrap_command_builder
+        from brain.voice_commands import bootstrap_voice_command_router, builtin_count
+        bootstrap_command_builder(g)
+        bootstrap_voice_command_router(g)
+        print(f"[voice_commands] router ready ({builtin_count()} built-in commands)")
+    except Exception as e:
+        g["_command_builder"] = None
+        g["_voice_command_router"] = None
+        print(f"[voice_commands] startup skipped: {e}")
+
+    # Correction handler — detects "no, I meant X" and learns mappings.
+    print("[startup] step: correction handler")
+    try:
+        from brain.correction_handler import bootstrap_correction_handler
+        bootstrap_correction_handler(g)
+    except Exception as e:
+        g["_correction_handler"] = None
+        print(f"[correction_handler] startup skipped: {e}")
+
+    # App discoverer — scans desktop / Program Files / Steam / Epic for
+    # installed apps and games. Initial scan is in a background thread.
+    print("[startup] step: app discoverer (background)")
+    try:
+        from brain.app_discoverer import bootstrap_app_discoverer
+        bootstrap_app_discoverer(g)
+    except Exception as e:
+        g["_app_discoverer"] = None
+        print(f"[app_discoverer] startup skipped: {e}")
+
     print("[startup] step: mood init")
     if not MOOD_PATH.exists():
         g["save_mood"](g["enrich_mood_state"](g["default_mood"]()))

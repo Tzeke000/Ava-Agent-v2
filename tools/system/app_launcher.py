@@ -104,37 +104,153 @@ def _resolve_app(name: str) -> tuple[str | None, str]:
     return None, key
 
 
+def _learned_apps_path(g: dict[str, Any]) -> Path:
+    return Path(g.get("BASE_DIR") or ".") / "state" / "learned_apps.json"
+
+
+def _record_learned_app(name: str, exe_path: str, g: dict[str, Any]) -> None:
+    """Persist a phrase → exe_path mapping so future calls hit known list directly."""
+    p = _learned_apps_path(g)
+    try:
+        import json
+        existing: dict[str, str] = {}
+        if p.is_file():
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    existing = {str(k): str(v) for k, v in data.items()}
+            except Exception:
+                pass
+        existing[name.lower().strip()] = exe_path
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        print(f"[app_launcher] learned-apps save error: {e}")
+
+
+def _check_learned(name: str, g: dict[str, Any]) -> str | None:
+    p = _learned_apps_path(g)
+    if not p.is_file():
+        return None
+    try:
+        import json
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            v = data.get(name.lower().strip())
+            if v:
+                return str(v)
+    except Exception:
+        pass
+    return None
+
+
+def _filesystem_glob_search(name: str) -> str | None:
+    """Last-resort: glob desktop + Program Files for a substring match."""
+    needle = name.lower().strip()
+    if not needle:
+        return None
+    home = Path(os.path.expanduser("~"))
+    roots = [
+        home / "Desktop",
+        Path(r"C:\Users\Public\Desktop"),
+        Path(r"C:\Program Files"),
+        Path(r"C:\Program Files (x86)"),
+        home / "AppData" / "Local",
+    ]
+    candidates: list[Path] = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        try:
+            # Limit depth — bail after enough hits.
+            for p in root.rglob("*.exe"):
+                try:
+                    if needle in p.stem.lower() and p.is_file():
+                        candidates.append(p)
+                        if len(candidates) >= 8:
+                            break
+                except OSError:
+                    continue
+            if len(candidates) >= 8:
+                break
+        except Exception:
+            continue
+    if not candidates:
+        return None
+    # Prefer shortest path (top-level installs).
+    candidates.sort(key=lambda p: len(str(p)))
+    return str(candidates[0])
+
+
 def _tool_open_app(params: dict[str, Any], g: dict[str, Any]) -> dict[str, Any]:
     app_name = str(params.get("app_name") or "").strip()
     if not app_name:
         return {"ok": False, "error": "app_name required"}
 
-    exe, canonical = _resolve_app(app_name)
     args = params.get("args") or []
     if isinstance(args, str):
         args = args.split()
 
-    try:
-        if exe:
+    # Step 1: hardcoded known list.
+    exe, canonical = _resolve_app(app_name)
+    if exe:
+        try:
             cmd = [exe] + list(args)
             subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE if exe == "cmd.exe" else 0)
-            return {"ok": True, "launched": canonical, "exe": exe}
-        else:
-            # Fallback: shell=True with start command
-            subprocess.Popen(
-                f'start "" "{app_name}"',
-                shell=True,
-            )
-            return {"ok": True, "launched": app_name, "method": "shell_start"}
-    except FileNotFoundError:
-        # Last resort: shell start
+            return {"ok": True, "launched": canonical, "exe": exe, "source": "known"}
+        except Exception:
+            pass  # Fall through to shell start at the end.
+
+    # Step 2: previously learned mapping.
+    learned = _check_learned(app_name, g)
+    if learned and Path(learned).is_file():
         try:
-            subprocess.Popen(f'start "" "{app_name}"', shell=True)
-            return {"ok": True, "launched": app_name, "method": "shell_fallback"}
-        except Exception as e2:
-            return {"ok": False, "error": f"Could not launch {app_name!r}: {e2}"}
+            subprocess.Popen([learned] + list(args))
+            return {"ok": True, "launched": app_name, "exe": learned, "source": "learned"}
+        except Exception:
+            pass
+
+    # Step 3: discoverer fuzzy match.
+    disc = g.get("_app_discoverer")
+    if disc is not None:
+        try:
+            entry = disc.fuzzy_match(app_name)
+        except Exception:
+            entry = None
+        if entry:
+            path = str(entry.get("exe_path") or "")
+            try:
+                if path.startswith("steam://") or path.startswith("epic://"):
+                    os.startfile(path)  # type: ignore[attr-defined]
+                else:
+                    subprocess.Popen([path] + list(args))
+                disc.record_launch(path)
+                _record_learned_app(app_name, path, g)
+                return {
+                    "ok": True,
+                    "launched": entry.get("name") or app_name,
+                    "exe": path,
+                    "source": "discoverer",
+                }
+            except Exception as e:
+                print(f"[app_launcher] discoverer launch error: {e}")
+
+    # Step 4: filesystem glob fallback.
+    found = _filesystem_glob_search(app_name)
+    if found:
+        try:
+            subprocess.Popen([found] + list(args))
+            _record_learned_app(app_name, found, g)
+            return {"ok": True, "launched": app_name, "exe": found, "source": "glob_search"}
+        except Exception:
+            pass
+
+    # Step 5: shell start as the very last resort.
+    try:
+        subprocess.Popen(f'start "" "{app_name}"', shell=True)
+        return {"ok": True, "launched": app_name, "method": "shell_start", "source": "shell"}
     except Exception as e:
-        return {"ok": False, "error": str(e)[:300]}
+        return {"ok": False, "error": f"Could not launch {app_name!r}: {e}"}
 
 
 def _tool_close_app(params: dict[str, Any], g: dict[str, Any]) -> dict[str, Any]:

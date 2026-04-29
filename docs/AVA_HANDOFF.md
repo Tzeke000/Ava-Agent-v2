@@ -1,5 +1,5 @@
 # AVA HANDOFF
-**Last updated:** April 29, 2026 (audit pass — pre-launch)
+**Last updated:** April 29, 2026 (voice-first upgrade pass)
 **Latest commit on master:** see `git log --oneline -1`
 
 ---
@@ -261,6 +261,68 @@ For each photo stage, Ava waits for "ready", then captures 3 frames from the cam
 | `brain/person_onboarding.py` | 13-stage flow; pushes embeddings to InsightFace |
 | `brain/health.py` | Health check (camera reads frame_store now) |
 | `brain/background_ticks.py` | Heartbeat + video capture + clipboard daemons |
+| `brain/voice_commands.py` | VoiceCommandRouter — 37 built-ins + custom commands |
+| `brain/command_builder.py` | Custom command + custom tab CRUD |
+| `brain/correction_handler.py` | "no, I meant X" detection + learning |
+| `brain/app_discoverer.py` | Desktop / Start Menu / Program Files / Steam / Epic scan |
+| `tools/system/reminder_tool.py` | set_reminder / get_reminders / cancel_reminders + heartbeat delivery |
+| `tools/system/pointer_tool.py` | point_at_element + point_at_screen_object via LLaVA |
+
+---
+
+## Voice-first stack (NEW)
+
+**VoiceCommandRouter** — `brain/voice_commands.py` runs at the very top of
+`run_ava` for every input. 37 built-in commands cover:
+
+- **UI navigation**: "show me your brain", "open journal", "show status", etc
+- **Journal**: "what did you write in your journal", "write in journal about X"
+- **Inner life**: "what are you thinking", "what's your mood"
+- **Time / date**: "what time is it", "what's today's date"
+- **System**: "check the system", "how's the computer"
+- **Voice control**: "mute", "unmute", "go to sleep", "wake up", "help"
+- **Apps**: "open chrome", "close notepad", "play dino game"
+- **Widget**: "move to top right", "come here", "get out of the way"
+- **Reminders**: "remind me to X in N minutes", "list reminders", "cancel reminders"
+- **Builder**: "make a command", "remember that X means Y", "make a tab called X"
+- **Pointing**: "show me X", "where is X"
+
+Custom commands live in `state/custom_commands.json` (created via
+`brain/command_builder.create_command` — Ava builds her own at runtime).
+Trigger format examples:
+- action `tab:brain` → switch tab
+- action `open:chrome` → launch app
+- action `move:top_right` → reposition widget
+- action `say:Hello` → speak literal text
+- action `tool:set_reminder:{"text":"foo","minutes":5}` → invoke any registered tool
+
+**App discoverer** — `brain/app_discoverer.py` scans Desktop, Start Menu,
+Program Files (x86 + 64), LOCALAPPDATA, Steam (libraryfolders.vdf-aware), and
+Epic Games on startup (background thread) and refreshes every 24h. Provides
+fuzzy match on name + aliases (e.g. "vscode" → Visual Studio Code) used by
+the voice command router and the `open_app` tool.
+
+**Correction handler** — `brain/correction_handler.py` detects "no, I meant
+X" / "wrong one" / "I said X not Y" patterns. When triggered, looks up
+`g["_last_action"]` and either re-routes the replacement phrase or asks for
+clarification. Mappings persist to `state/learned_commands.json`.
+
+**Reminders** — `tools/system/reminder_tool.py` persists pending reminders
+to `state/reminders.jsonl`. The heartbeat tick checks every cycle and
+speaks any due reminders via the TTS worker.
+
+**Tab routing** — `POST /api/v1/ui/tab` sets `g["_requested_tab"]`; the
+frontend polls `GET /api/v1/ui/tab` every 1s, switches tab, server clears
+the flag on read.
+
+**Custom tabs** — `state/custom_tabs.json` stores tab configs created via
+`command_builder.create_tab`. Frontend polls `/api/v1/ui/custom_tabs` every
+30s and renders via `CustomTabRenderer`. Supported types: `web_embed`,
+`journal_view`, `data_display`, `image_gallery`, `custom_stats`, `chat_log`.
+
+**Screen object pointing** — `pointer_tool.point_at_screen_object` takes a
+screenshot, asks LLaVA for percent coordinates, moves the widget orb to the
+located point, morphs to pointer shape for 5 seconds.
 
 ---
 
