@@ -45,10 +45,26 @@ def run_ava(
     active_person_id = active_person_id or _av.get_active_person_id()
     _inp = (user_input or "").strip()
     _g["_last_user_interaction_ts"] = time.time()
+    _g["_last_user_message_ts"] = time.time()
+    _g["_last_user_input"] = _inp
     _u_low = _inp.lower()
     _g["_desktop_tier3_approved"] = any(
         k in _u_low for k in ("yes do it", "go ahead", "yes, do it", "go ahead and do it")
     )
+
+    # Dual-brain: mark foreground busy (pauses Stream B) and harvest live thought
+    _db = None
+    try:
+        from brain.dual_brain import get_dual_brain
+        _db = get_dual_brain(_g)
+        if _db is not None:
+            _db.mark_foreground_start()
+            _live = _db.get_live_thought()
+            if _live:
+                _g["_dual_brain_live_thought"] = _live
+    except Exception:
+        _db = None
+
     print(
         f"[run_ava] enter person={active_person_id} has_image={image is not None} "
         f"input_chars={len(_inp)}"
@@ -331,6 +347,18 @@ def run_ava(
         except Exception:
             pass
 
+        # Dual-brain: weave in background insights + release foreground
+        try:
+            if _db is not None:
+                ai_reply = _db.handoff_insight_to_foreground(ai_reply, _inp)
+                _db.mark_foreground_end()
+                # Store last reply for self-critique
+                _g["_last_ai_reply"] = ai_reply[:500]
+                # Submit self-critique to stream B (non-blocking)
+                _db.submit("self_critique", payload={"last_reply": ai_reply[:400], "user_input": _inp[:200]})
+        except Exception:
+            pass
+
         _vroute = isinstance(visual, dict) and visual.get("turn_route")
         print(
             f"[run_ava] exit route={_vroute or 'llm'} via finalize actions={len(actions)} "
@@ -343,6 +371,12 @@ def run_ava(
     except Exception as e:
         import traceback
         print(f"[run_ava] exception (fallback turn): {e!r}\n{traceback.format_exc()}")
+        # Always release foreground on exception
+        try:
+            if _db is not None:
+                _db.mark_foreground_end()
+        except Exception:
+            pass
         try:
             ap = _av.load_profile_by_id(active_person_id)
         except Exception:

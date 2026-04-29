@@ -509,19 +509,76 @@ def _run_heartbeat_tick(
         if mode == HeartbeatMode.LEARNING_REVIEW:
             st.meta["last_learning_review_wall"] = now
 
-    # Phase 58: autonomous leisure check
+    # Dual-brain task scheduling — all background inference goes through Stream B
+    try:
+        from brain.dual_brain import get_dual_brain
+        _db = get_dual_brain(g)
+    except Exception:
+        _db = None
+
+    # Phase 58: autonomous leisure check (quick decision; Ava may submit to dual brain)
     try:
         from brain.leisure import autonomous_leisure_check
         _leisure_result = autonomous_leisure_check(g)
         if _leisure_result:
             print(_leisure_result)
+            # If leisure was triggered, submit a creative task to stream B
+            if _db is not None:
+                _db.submit("creative", topic="leisure", payload={})
     except Exception:
         pass
 
-    # Phase 71: long-horizon plan tick
+    # Phase 71: long-horizon plan tick (via dual brain if available)
+    _PLAN_TICK_INTERVAL = 120.0
+    _last_plan_tick = float(st.meta.get("last_plan_tick_wall") or 0)
+    if (now - _last_plan_tick) >= _PLAN_TICK_INTERVAL:
+        try:
+            if _db is not None:
+                _db.submit("plan_step", topic="active_plan")
+            else:
+                from brain.planner import get_planner
+                get_planner(g.get("BASE_DIR") or Path(__file__).resolve().parent.parent).tick_active_plans(g)
+            st.meta["last_plan_tick_wall"] = now
+        except Exception:
+            pass
+
+    # Dual-brain: inner_monologue every 10 minutes
+    _MONOLOGUE_INTERVAL = 600.0
+    _last_mono = float(st.meta.get("last_dual_monologue_wall") or 0)
+    if (now - _last_mono) >= _MONOLOGUE_INTERVAL:
+        try:
+            if _db is not None:
+                _db.submit("inner_monologue")
+            st.meta["last_dual_monologue_wall"] = now
+        except Exception:
+            pass
+
+    # Dual-brain: curiosity_research every 30 minutes
+    _CURIOSITY_INTERVAL = 1800.0
+    _last_curiosity_db = float(st.meta.get("last_dual_curiosity_wall") or 0)
+    if (now - _last_curiosity_db) >= _CURIOSITY_INTERVAL:
+        try:
+            if _db is not None:
+                _db.submit("curiosity_research")
+            st.meta["last_dual_curiosity_wall"] = now
+        except Exception:
+            pass
+
+    # Dual-brain: journal_entry when lonely + idle
     try:
-        from brain.planner import get_planner
-        get_planner(g.get("BASE_DIR") or Path(__file__).resolve().parent.parent).tick_active_plans(g)
+        _mood_path = Path(g.get("BASE_DIR") or ".") / "ava_mood.json"
+        if _mood_path.is_file():
+            import json as _jmood
+            _mood_d = _jmood.loads(_mood_path.read_text(encoding="utf-8"))
+            _ew = _mood_d.get("emotion_weights") or {}
+            _loneliness = float(_ew.get("loneliness") or 0.0)
+            _last_interact = float(g.get("_last_user_interaction_ts") or 0)
+            _idle_mins = (now - _last_interact) / 60.0
+            if _loneliness > 0.7 and _idle_mins > 30 and _db is not None:
+                _last_journal_hb = float(st.meta.get("last_dual_journal_wall") or 0)
+                if (now - _last_journal_hb) >= 3600:
+                    _db.submit("journal_entry", topic="loneliness_idle")
+                    st.meta["last_dual_journal_wall"] = now
     except Exception:
         pass
 
@@ -543,7 +600,7 @@ def _run_heartbeat_tick(
     except Exception:
         pass
 
-    # Phase 89: check for stale curiosity (7+ days unresolved) — prioritize during next leisure
+    # Phase 89: check for stale curiosity (7+ days unresolved)
     try:
         from brain.curiosity_topics import prioritize_curiosities
         _top_curiosities = prioritize_curiosities(g)
@@ -569,12 +626,17 @@ def _run_heartbeat_tick(
         except Exception:
             pass
 
-    # Phase 85: weekly memory consolidation
+    # Phase 85: weekly memory consolidation (via dual brain)
     try:
-        from brain.memory_consolidation import should_consolidate, consolidate
+        from brain.memory_consolidation import should_consolidate
         if should_consolidate(g):
-            print("[heartbeat] running weekly memory consolidation...")
-            consolidate(g)
+            if _db is not None:
+                _db.submit("memory_consolidation")
+                print("[heartbeat] memory consolidation submitted to stream B")
+            else:
+                from brain.memory_consolidation import consolidate
+                print("[heartbeat] running weekly memory consolidation...")
+                consolidate(g)
     except Exception:
         pass
 

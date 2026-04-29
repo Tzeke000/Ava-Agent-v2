@@ -364,6 +364,7 @@ pending_repair_note: {_pending_repair_note or "(none)"}
 CURRENT PERSON AT MACHINE: {_g.get("_current_person_at_machine") or "unknown"} (confidence={_g.get("_face_recognizer_last_confidence") or 0.0:.2f})
 {_rel_memory_block}
 {_trust_context_block}
+{("LIVE THOUGHT (from your background processing): " + str(_g.get("_dual_brain_live_thought") or "")) if _g.get("_dual_brain_live_thought") else ""}
 
 AVAILABLE READ-ONLY FILES:
 - chatlog.jsonl
@@ -556,7 +557,7 @@ CURRENT MOOD AND AFFECT:
 INNER LIFE (FAST CONTEXT):
 - current_thought: {_fast_thought or "(none recent)"}
 - current_curiosity: {_fast_curiosity_topic or "(none)"}
-CURRENT PERSON AT MACHINE: {_g.get("_current_person_at_machine") or "unknown"}
+{("LIVE THOUGHT (your background processing): " + str(_g.get("_dual_brain_live_thought") or "")) if _g.get("_dual_brain_live_thought") else ""}CURRENT PERSON AT MACHINE: {_g.get("_current_person_at_machine") or "unknown"}
 
 USER MESSAGE:
 {user_input}
