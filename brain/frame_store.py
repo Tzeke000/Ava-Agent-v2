@@ -146,6 +146,15 @@ def read_live_frame_with_meta(
     )
 
 
+def push_frame(frame: Any) -> None:
+    """Called by the persistent background camera thread to update the shared buffer.
+    This decouples the background capture loop from read_live_frame_with_meta so the
+    live_frame endpoint never needs to open its own VideoCapture."""
+    global _buffer_frame, _buffer_ts
+    _buffer_frame = frame
+    _buffer_ts = _now()
+
+
 def peek_buffer_age_sec() -> float | None:
     """Debug helper: seconds since last successful device capture, or None if empty."""
     if _buffer_frame is None or _buffer_ts <= 0.0:

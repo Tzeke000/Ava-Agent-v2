@@ -1802,15 +1802,20 @@ def create_app():
 
     @app.get("/api/v1/camera/live_frame")
     async def camera_live_frame() -> dict[str, Any]:
-        """Return current camera frame as JPEG base64. No caching — always fresh."""
+        """Return current camera frame as JPEG base64. Served from background thread buffer."""
         try:
             import cv2
             import base64 as _b64
             from brain.frame_store import read_live_frame_with_meta, LIVE_CACHE_MAX_AGE_SEC
-            meta = read_live_frame_with_meta(max_age=LIVE_CACHE_MAX_AGE_SEC)
+            # Use a generous max_age — background thread updates the buffer at 15fps,
+            # so frames are almost always fresh; we just need to not reject them.
+            meta = read_live_frame_with_meta(max_age=5.0)
             frame = meta.frame
             if frame is None:
-                return {"ok": False, "error": "no frame available", "b64": None}
+                return {"ok": False, "error": "no frame available", "b64": None, "age_sec": -1.0}
+            # Reject frames older than 5 seconds — camera thread has stopped or camera is gone
+            if meta.age_sec > 5.0:
+                return {"ok": False, "error": "stale frame", "b64": None, "age_sec": round(meta.age_sec, 3)}
             ok_enc, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
             if not ok_enc:
                 return {"ok": False, "error": "jpeg encode failed", "b64": None}

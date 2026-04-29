@@ -381,6 +381,20 @@ def run_startup(g: dict[str, Any]) -> None:
         g["tts_engine_name"] = "none"
     g["tts_enabled"] = False
 
+    print("[startup] step: STT engine (Whisper)")
+    try:
+        from brain.stt_engine import STTEngine
+        _stt = STTEngine()
+        if _stt.is_available():
+            g["stt_engine"] = _stt
+            print("[stt_engine] Whisper ready — voice input enabled")
+        else:
+            g["stt_engine"] = None
+            print("[stt_engine] Whisper unavailable — voice input disabled")
+    except Exception as _stt_e:
+        g["stt_engine"] = None
+        print(f"[stt_engine] startup skipped: {_stt_e}")
+
     print("[startup] step: wake word detector")
     try:
         from brain.wake_word import WakeWordDetector

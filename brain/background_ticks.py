@@ -61,6 +61,13 @@ def _video_frame_capture_thread(g: dict[str, Any]) -> None:
         try:
             ret, frame = cap.read()
             if ret and frame is not None:
+                # Update shared frame buffer so /api/v1/camera/live_frame always
+                # serves fresh frames without needing its own VideoCapture.
+                try:
+                    from brain.frame_store import push_frame as _push_frame
+                    _push_frame(frame)
+                except Exception:
+                    pass
                 vm = g.get("_video_memory")
                 et = g.get("_expression_detector")
                 ez = g.get("_eye_tracker")
