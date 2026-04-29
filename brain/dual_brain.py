@@ -306,6 +306,7 @@ class DualBrain:
             return None
         try:
             from langchain_ollama import ChatOllama
+            from langchain_core.messages import HumanMessage
             model = self.get_thinking_model()
             llm = ChatOllama(model=model, temperature=0.8, num_predict=100)
             prompt = (
@@ -315,9 +316,10 @@ class DualBrain:
                 "Be brief — 1-2 sentences max. "
                 "This is your private thinking, not a reply."
             )
-            result = llm.invoke(prompt)
+            result = llm.invoke([HumanMessage(content=prompt)])
             return str(getattr(result, "content", str(result))).strip()[:200]
-        except Exception:
+        except Exception as e:
+            print(f"[live_think] inference error: {e}")
             return None
 
     def _task_inner_monologue(self, g: dict[str, Any]) -> str:

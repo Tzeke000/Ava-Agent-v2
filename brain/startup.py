@@ -237,14 +237,22 @@ def run_startup(g: dict[str, Any]) -> None:
         g["pickup_note"] = None
         print(f"[shutdown_ritual] pickup note load skipped: {e}")
 
-    print("[startup] step: profiles + identity + selftest")
+    print("[startup] step: profiles + identity")
     g["seed_default_profiles"]()
     from brain.identity_loader import load_ava_identity
     g["_AVA_IDENTITY_BLOCK"] = load_ava_identity()
     g["ensure_emotion_reference_file"]()
-    from brain.health_runtime import print_startup_selftest
-    print_startup_selftest(g)
     g["_write_ava_pid_file"]()
+    # Defer selftest until after vectorstore init (which runs in background)
+    # so vector_memory check passes correctly
+    def _delayed_selftest():
+        time.sleep(15.0)  # wait for vectorstore init to complete
+        try:
+            from brain.health_runtime import print_startup_selftest
+            print_startup_selftest(g)
+        except Exception as _ste:
+            print(f"[startup-selftest] error: {_ste}")
+    _bg("ava-delayed-selftest", _delayed_selftest)
 
     print("[startup] step: self narrative")
     from brain.beliefs import SELF_NARRATIVE_PATH, save_self_narrative, load_self_narrative
@@ -424,6 +432,14 @@ def run_startup(g: dict[str, Any]) -> None:
         _bg("ava-milestone-100", _bg_milestone)
     except Exception as e:
         print(f"[milestone_100] dispatch skipped: {e}")
+
+    # ── Background ticks: heartbeat + video capture daemons ───────────────────
+    print("[startup] step: background tick threads")
+    try:
+        from brain.background_ticks import bootstrap_background_ticks
+        bootstrap_background_ticks(g)
+    except Exception as e:
+        print(f"[background_ticks] startup skipped: {e}")
 
     print("Ava running...")
     print(f"Base dir: {BASE_DIR}")

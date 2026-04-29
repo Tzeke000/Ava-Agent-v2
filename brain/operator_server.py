@@ -267,32 +267,38 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "operator_http_url": f"http://127.0.0.1:{_op_port}/",
     }
 
+    # Heartbeat block — perception may be None until first chat tick, so fall back
+    # to background-tick globals (set by brain.background_ticks) for live data.
+    _hb_mode = (getattr(perception, "heartbeat_mode", "") if perception else "") or str(host.get("_heartbeat_last_mode") or "")
+    _hb_summary = (getattr(perception, "heartbeat_summary", "") if perception else "") or str(host.get("_heartbeat_last_summary") or "")
+    _hb_tick_id = int((getattr(perception, "heartbeat_tick_id", 0) if perception else 0) or host.get("_heartbeat_last_tick_id") or 0)
     heartbeat_block = {
-        "heartbeat_mode": getattr(perception, "heartbeat_mode", "") if perception else "",
-        "heartbeat_summary": getattr(perception, "heartbeat_summary", "") if perception else "",
+        "heartbeat_mode": _hb_mode,
+        "heartbeat_summary": _hb_summary,
         "heartbeat_last_reason": getattr(perception, "heartbeat_last_reason", "") if perception else "",
-        "heartbeat_tick_id": getattr(perception, "heartbeat_tick_id", 0) if perception else 0,
+        "heartbeat_tick_id": _hb_tick_id,
+        "heartbeat_last_ts": float(host.get("_heartbeat_last_ts") or 0),
         "heartbeat_meta": dict(getattr(perception, "heartbeat_meta", {}) or {}) if perception else {},
-        "runtime_presence_mode": getattr(perception, "runtime_presence_mode", ""),
-        "runtime_operator_summary": getattr(perception, "runtime_operator_summary", ""),
+        "runtime_presence_mode": getattr(perception, "runtime_presence_mode", "") if perception else "",
+        "runtime_operator_summary": getattr(perception, "runtime_operator_summary", "") if perception else "",
         "runtime_presence_meta": dict(getattr(perception, "runtime_presence_meta", {}) or {}) if perception else {},
         "runtime_threads_summary": getattr(perception, "runtime_threads_summary", "") if perception else "",
         "runtime_active_issue_summary": getattr(perception, "runtime_active_issue_summary", "") if perception else "",
         "runtime_maintenance_summary": getattr(perception, "runtime_maintenance_summary", "") if perception else "",
         "runtime_ready_state": getattr(perception, "runtime_ready_state", "") if perception else "",
-        "learning_summary": getattr(perception, "learning_summary", ""),
-        "learning_focus": getattr(perception, "learning_focus", ""),
+        "learning_summary": getattr(perception, "learning_summary", "") if perception else "",
+        "learning_focus": getattr(perception, "learning_focus", "") if perception else "",
         "learning_meta": dict(getattr(perception, "learning_meta", {}) or {}) if perception else {},
         "snapshot_carryover": snap_runtime,
     }
 
     rm = dict(getattr(perception, "routing_meta", {}) or {}) if perception else {}
     models_block = {
-        "selected_model": getattr(perception, "routing_selected_model", ""),
-        "cognitive_mode": getattr(perception, "cognitive_mode", ""),
-        "fallback_model": getattr(perception, "routing_fallback_model", ""),
-        "routing_reason": str(getattr(perception, "routing_reason", "") or "")[:900],
-        "routing_confidence": float(getattr(perception, "routing_confidence", 0.0) or 0.0),
+        "selected_model": (getattr(perception, "routing_selected_model", "") if perception else "") or str(host.get("LLM_MODEL") or "ava-personal:latest"),
+        "cognitive_mode": getattr(perception, "cognitive_mode", "") if perception else "",
+        "fallback_model": getattr(perception, "routing_fallback_model", "") if perception else "",
+        "routing_reason": str((getattr(perception, "routing_reason", "") if perception else "") or "")[:900],
+        "routing_confidence": float((getattr(perception, "routing_confidence", 0.0) if perception else 0.0) or 0.0),
         "routing_meta": rm,
         "switch_reason_last": str(rm.get("switch_reason") or rm.get("switch_explain") or "")[:500],
         "no_switch_reason_last": str(rm.get("no_switch_reason") or rm.get("no_switch_explain") or "")[:500],

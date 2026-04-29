@@ -6818,6 +6818,7 @@ def operator_console_chat(message: str, *, image=None) -> dict:
     Operator desktop / HTTP API entry: text chat mirroring the Gradio chat_fn path (camera optional).
     Keeps canonical history and calls the same run_ava + finalize pipeline as the web UI.
     """
+    import concurrent.futures as _occ_futures
     clean_message = _extract_text_content(message).strip()
     out: dict = {"ok": True, "source": "operator_console"}
     try:
@@ -6831,7 +6832,13 @@ def operator_console_chat(message: str, *, image=None) -> dict:
         except Exception:
             pass
         if not clean_message:
-            workspace.tick(camera_manager, image, globals(), "")
+            print("[operator_console_chat] step: empty-message workspace.tick")
+            try:
+                with _occ_futures.ThreadPoolExecutor(max_workers=1) as _ex_e:
+                    _fut_e = _ex_e.submit(lambda: workspace.tick(camera_manager, image, globals(), ""))
+                    _fut_e.result(timeout=10.0)
+            except Exception as _eet:
+                print(f"[operator_console_chat] empty-tick timeout/error: {_eet}")
             perception = workspace.state.perception if workspace.state else build_perception(
                 camera_manager, image, globals(), ""
             )
@@ -6842,11 +6849,19 @@ def operator_console_chat(message: str, *, image=None) -> dict:
             out["canonical_history"] = list(_get_canonical_history())
             return out
 
+        print("[operator_console_chat] step: record_user_message")
         workspace.record_user_message()
-        note_user_interaction_for_initiative(clean_message, interaction_kind="text")
+        print("[operator_console_chat] step: note_user_interaction_for_initiative")
+        try:
+            note_user_interaction_for_initiative(clean_message, interaction_kind="text")
+        except Exception as _nie:
+            print(f"[operator_console_chat] note_user_interaction error: {_nie}")
+        print("[operator_console_chat] step: _mark_user_reply_started")
         _mark_user_reply_started()
         try:
+            print("[operator_console_chat] step: _sync_canonical_history")
             _sync_canonical_history(_get_canonical_history())
+            print("[operator_console_chat] step: prepare_reply_path_for_turn")
             _rp_decision = prepare_reply_path_for_turn(
                 globals(), clean_message, workspace, voice_session=False
             )
@@ -6858,7 +6873,18 @@ def operator_console_chat(message: str, *, image=None) -> dict:
             except Exception:
                 pass
             if not should_skip_initial_workspace_tick(_rp_decision):
-                workspace.tick(camera_manager, image, globals(), clean_message)
+                print("[operator_console_chat] step: workspace.tick (with 10s timeout)")
+                try:
+                    with _occ_futures.ThreadPoolExecutor(max_workers=1) as _ex_t:
+                        _fut_t = _ex_t.submit(lambda: workspace.tick(camera_manager, image, globals(), clean_message))
+                        _fut_t.result(timeout=10.0)
+                    print("[operator_console_chat] step: workspace.tick complete")
+                except _occ_futures.TimeoutError:
+                    print("[operator_console_chat] WARN: workspace.tick exceeded 10s — proceeding without fresh perception")
+                except Exception as _wte:
+                    print(f"[operator_console_chat] workspace.tick error: {_wte!r} — proceeding")
+            else:
+                print("[operator_console_chat] step: workspace.tick skipped (fast path cached)")
             canon = list(_get_canonical_history())
             canon.append({"role": "user", "content": clean_message})
             _set_canonical_history(canon)
@@ -6892,7 +6918,14 @@ def operator_console_chat(message: str, *, image=None) -> dict:
             except Exception as e:
                 print(f"[self-narrative] update failed (operator chat): {e}")
 
-            workspace.tick(camera_manager, image, globals(), clean_message)
+            try:
+                with _occ_futures.ThreadPoolExecutor(max_workers=1) as _ex_p:
+                    _fut_p = _ex_p.submit(lambda: workspace.tick(camera_manager, image, globals(), clean_message))
+                    _fut_p.result(timeout=10.0)
+            except _occ_futures.TimeoutError:
+                print("[operator_console_chat] WARN: post-reply workspace.tick exceeded 10s")
+            except Exception as _wpe:
+                print(f"[operator_console_chat] post-reply workspace.tick error: {_wpe!r}")
             perception = workspace.state.perception if workspace.state else build_perception(
                 camera_manager, image, globals(), clean_message
             )

@@ -199,9 +199,15 @@ class EyeTracker:
         if not path.is_file():
             return
         try:
-            self._calib = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+            data = json.loads(path.read_text(encoding="utf-8"))
+            # Validate required keys before accepting
+            required = ("sx_slope", "sx_inter", "sy_slope", "sy_inter")
+            if isinstance(data, dict) and all(k in data for k in required):
+                self._calib = data
+            else:
+                print("[eye_tracker] calibration file missing required keys; ignoring")
+        except Exception as e:
+            print(f"[eye_tracker] calibration load failed: {e}")
 
     # ── Iris extraction ───────────────────────────────────────────────────────
 

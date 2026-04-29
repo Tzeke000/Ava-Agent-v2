@@ -129,28 +129,32 @@ class ConceptGraph:
             "version": self.version,
         }
         tmp = self.path.with_suffix(".json.tmp")
-        # Skip save entirely if .tmp is currently held by another process/instance.
-        # The next save attempt (seconds later) will succeed once the lock clears.
-        if tmp.is_file():
-            try:
-                tmp.unlink()
-            except OSError:
-                # Still locked — skip this save, data is safe in memory
-                return
+        # All file operations must happen under the lock to prevent TOCTOU races
+        # between concurrent threads in the same process.
         with _SAVE_LOCK:
+            # Stale .tmp from previous crashed instance — try to clear it
+            if tmp.is_file():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    # Still locked by another process — skip this save
+                    return
             try:
                 tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
                 tmp.replace(self.path)
             except OSError as _e:
                 _winerr = getattr(_e, "winerror", None)
                 if _winerr in (5, 32):
-                    # Access denied (5) or file locked (32) — discard tmp and skip
+                    # Access denied or file locked — discard tmp silently and skip
                     try:
                         tmp.unlink(missing_ok=True)
                     except Exception:
                         pass
                 else:
-                    raise
+                    # Unexpected OSError — log but don't crash
+                    print(f"[concept_graph] save failed: {_e!r}")
+            except Exception as _e2:
+                print(f"[concept_graph] save unexpected error: {_e2!r}")
 
     def add_node(self, label: str, type: NodeType, notes: str = "") -> str:
         node_id = _slugify(label)
