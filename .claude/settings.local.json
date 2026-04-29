@@ -50,7 +50,10 @@
       "Bash(ollama list *)",
       "Bash(py -3.11 -m py_compile brain/stt_engine.py)",
       "Bash(py -3.11 -m py_compile brain/voice_loop.py)",
-      "Bash(py -3.11 -m py_compile brain/clap_detector.py)"
+      "Bash(py -3.11 -m py_compile brain/clap_detector.py)",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d, indent=2\\)\\)\")",
+      "Bash(py -3.11 -m py_compile brain/person_onboarding.py)",
+      "Bash(npx tsc *)"
     ]
   }
 }
