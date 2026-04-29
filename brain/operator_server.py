@@ -319,9 +319,26 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
 
+    # Phase 81: face recognizer status
+    _fr_confidence = 0.0
+    _fr_person_id = "unknown"
+    try:
+        from brain.face_recognizer import get_recognizer
+        _fr = get_recognizer(Path(host.get("BASE_DIR") or "."))
+        _fr_confidence_val = host.get("_face_recognizer_last_confidence")
+        _fr_person_id_val = host.get("_face_recognizer_last_person_id")
+        if isinstance(_fr_confidence_val, float):
+            _fr_confidence = _fr_confidence_val
+        if isinstance(_fr_person_id_val, str):
+            _fr_person_id = _fr_person_id_val
+    except Exception:
+        pass
+
     vision_block = {
         "perception": _perception_dict(perception),
         "llava_scene_description": str(host.get("_llava_scene_description") or "")[:700],
+        "recognized_person_id": _fr_person_id,
+        "recognized_confidence": round(_fr_confidence, 3),
     }
 
     memory_block = {
