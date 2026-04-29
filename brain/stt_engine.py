@@ -5,6 +5,7 @@ import threading
 import time
 import wave
 from pathlib import Path
+from typing import Any
 
 
 class STTEngine:
@@ -206,12 +207,32 @@ class STTEngine:
             return {"text": None, "confidence": 0.0}
 
         try:
-            segments, info = self._model.transcribe(
-                str(wav_path),
-                language="en",
-                vad_filter=True,
-                beam_size=5,  # better accuracy than greedy default
-            )
+            # initial_prompt biases Whisper toward hearing "Ava" as the wake
+            # word — without it Whisper often drops the name as filler.
+            # hotwords is a faster-whisper feature; gracefully fall back if
+            # the installed version doesn't accept it.
+            transcribe_kwargs: dict[str, Any] = {
+                "language": "en",
+                "vad_filter": True,
+                "beam_size": 5,
+                "initial_prompt": "Ava,",
+                "vad_parameters": {
+                    "min_silence_duration_ms": 500,
+                    "threshold": 0.008,
+                },
+            }
+            try:
+                segments, info = self._model.transcribe(
+                    str(wav_path),
+                    hotwords="Ava",
+                    **transcribe_kwargs,
+                )
+            except TypeError:
+                # Older faster-whisper versions don't accept hotwords.
+                segments, info = self._model.transcribe(
+                    str(wav_path),
+                    **transcribe_kwargs,
+                )
             parts = []
             avg_logprob_sum = 0.0
             seg_count = 0
@@ -257,3 +278,26 @@ class STTEngine:
         if result is None:
             return None
         return result.get("text")
+
+    def listen_short(self, max_seconds: float = 8.0, silence_seconds: float = 1.0) -> str | None:
+        """Tight short-utterance listen for yes/no clarifications. Tighter
+        silence cutoff than listen_session — we expect a one-word answer.
+
+        Returns the transcribed text (lowercased, stripped) or None if no
+        speech was detected.
+        """
+        try:
+            r = self.listen_session(
+                max_seconds=max_seconds,
+                silence_seconds=silence_seconds,
+                rms_threshold=0.008,
+            )
+        except Exception as e:
+            print(f"[stt_engine] listen_short error: {e!r}")
+            return None
+        if not isinstance(r, dict):
+            return None
+        if not r.get("speech_detected"):
+            return None
+        text = str(r.get("text") or "").strip().lower()
+        return text or None

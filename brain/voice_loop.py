@@ -221,26 +221,37 @@ class VoiceLoop:
             time.time() - self._last_speak_end_ts
         ) < _ATTENTIVE_TIMEOUT_SEC
 
-        if not in_attentive_when_started:
+        # Clap-triggered wake: ALWAYS direct, no classification, no clarify.
+        # The clap_detector set _wake_source="clap" before triggering.
+        wake_source = str(self._g.get("_wake_source") or "")
+        if wake_source == "clap":
+            print(f"[voice_loop] clap-triggered → bypassing wake classification")
+            # Consume the wake_source so a later passive listen re-classifies.
+            self._g.pop("_wake_source", None)
+            self._g.pop("_wake_source_ts", None)
+            # Skip wake_detector entirely — fall through to run_ava.
+        elif not in_attentive_when_started:
             try:
                 from brain.wake_detector import get_wake_detector
                 wd = get_wake_detector()
                 is_direct, conf, reason = wd.classify(text, self._g)
                 print(f"[voice_loop] wake-classify direct={is_direct} conf={conf:.2f} reason={reason}")
-                # Borderline → ask for clarification via WakeLearner.
+                # Borderline → ask for clarification AND wait for the answer.
                 if not is_direct or conf < 0.6:
-                    try:
-                        from brain.wake_learner import get_wake_learner
-                        wl = get_wake_learner()
-                        if wl is not None and wl.can_clarify():
-                            asked = wl.ask_clarification(text, self._g)
-                            if asked:
-                                print("[voice_loop] asked wake clarification — skipping run_ava this turn")
-                                self._set_state("passive")
-                                return
-                    except Exception as _e:
-                        print(f"[voice_loop] wake clarify error: {_e!r}")
-                    if not is_direct:
+                    handled_via_clarify = self._handle_clarification(text, is_direct=is_direct)
+                    if handled_via_clarify is not None:
+                        # Either we got a yes (handled_via_clarify holds the
+                        # phrase to run) or a no (None returned from helper);
+                        # treat True as "proceed", False as "skip".
+                        if handled_via_clarify:
+                            # Continue with the original text into run_ava.
+                            pass
+                        else:
+                            self._set_state("passive")
+                            return
+                    elif not is_direct:
+                        # No clarification was attempted (cooldown or unable)
+                        # AND classifier said indirect → skip.
                         print("[voice_loop] not direct address — skipping")
                         self._set_state("passive")
                         return
@@ -300,6 +311,79 @@ class VoiceLoop:
             self._set_state("passive")
 
     # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _handle_clarification(self, original_text: str, is_direct: bool) -> "bool | None":
+        """Ask WakeLearner to speak a clarification, then BLOCK and wait up
+        to 8 seconds for a yes/no answer. Persist the answer via
+        learn_from_correction so future utterances of this shape don't need
+        re-asking.
+
+        Returns:
+          True   → user confirmed; caller should proceed with run_ava
+          False  → user denied; caller should skip
+          None   → no clarification was attempted (cooldown, no TTS, etc).
+        """
+        try:
+            from brain.wake_learner import get_wake_learner
+            wl = get_wake_learner()
+            if wl is None or not wl.can_clarify():
+                return None
+            asked = wl.ask_clarification(original_text, self._g)
+            if not asked:
+                return None
+        except Exception as _e:
+            print(f"[voice_loop] wake clarify dispatch error: {_e!r}")
+            return None
+
+        # Wait for yes/no with a tight short-listen.
+        stt = self._g.get("stt_engine")
+        if stt is None or not callable(getattr(stt, "listen_short", None)):
+            print("[voice_loop] no listen_short available — clarification can't be answered")
+            return None
+        print("[voice_loop] waiting up to 8s for clarification answer…")
+        try:
+            answer = stt.listen_short(max_seconds=8.0, silence_seconds=1.0) or ""
+        except Exception as e:
+            print(f"[voice_loop] clarification listen error: {e!r}")
+            return None
+        a = (answer or "").lower().strip()
+        if not a:
+            print("[voice_loop] no clarification answer — skipping")
+            self._g.pop("_wake_clarify_pending", None)
+            return False
+
+        yes_words = (
+            "yes", "yeah", "yep", "yup", "correct", "right",
+            "i was", "talking to you", "that's right", "thats right",
+            "you", "ya", "uh huh", "uh-huh", "mhm",
+        )
+        no_words = (
+            "no", "nope", "nah", "not", "wasn't", "wasnt", "wasn't talking",
+            "not you", "not to you", "different", "other one",
+        )
+
+        is_yes = any(w in a for w in yes_words)
+        is_no = any(w in a for w in no_words)
+        if is_yes and not is_no:
+            print(f"[voice_loop] clarification YES → run_ava with original")
+            try:
+                wl.learn_from_correction(original_text, was_direct=True, g=self._g)
+            except Exception:
+                pass
+            self._g.pop("_wake_clarify_pending", None)
+            return True
+        if is_no and not is_yes:
+            print(f"[voice_loop] clarification NO → skip and learn indirect")
+            try:
+                wl.learn_from_correction(original_text, was_direct=False, g=self._g)
+            except Exception:
+                pass
+            self._g.pop("_wake_clarify_pending", None)
+            return False
+        # Unclear — neither yes nor no. Skip this turn.
+        print(f"[voice_loop] clarification ambiguous ({a!r}) — skipping this turn")
+        self._g.pop("_wake_clarify_pending", None)
+        return False
 
     def _analyze_voice_mood_from_result(self, stt_result: dict | None) -> None:
         """Run voice_mood_detector on the audio array STT already captured.

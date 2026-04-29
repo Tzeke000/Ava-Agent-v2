@@ -16,9 +16,11 @@ from typing import Any, Callable, Optional
 
 
 _DEFAULT_THRESHOLD = 0.4
-_CALIBRATION_MULTIPLIER = 5.0  # was 3.0 — bumped so claps must be much louder than ambient
-_MIN_THRESHOLD_FLOOR = 0.15  # never accept a calibrated threshold below this — keyboard/mouse noise
-_TRIGGER_COOLDOWN_SEC = 3.0  # ignore claps for this long after a successful double-clap trigger
+_CALIBRATION_MULTIPLIER = 5.0
+_MIN_THRESHOLD_FLOOR = 0.35  # bumped from 0.15 — keyboard/mouse never crosses this
+_TRIGGER_COOLDOWN_SEC = 4.0  # bumped from 3.0
+_DOUBLE_WINDOW_SEC = 0.6     # both claps must land within 0.6s of each other (was 0.8)
+_MIN_CLAP_SEPARATION_SEC = 0.1  # the two claps must be at least 0.1s apart — prevents one loud sound triggering twice
 
 
 def _calibration_path(g: dict[str, Any]) -> Path:
@@ -138,11 +140,15 @@ class ClapDetector:
                     return
                 rms = float(np.sqrt(np.mean(indata ** 2)))
                 if rms > self._threshold:
+                    # Reject if this clap is within _MIN_CLAP_SEPARATION_SEC of
+                    # the previous one — that's a single loud event, not two.
+                    if self._clap_times and (now - self._clap_times[-1]) < _MIN_CLAP_SEPARATION_SEC:
+                        return
                     self._clap_times.append(now)
                     self._clap_times = [t for t in self._clap_times if now - t < 3.0]
-                    # Tighter 0.8s window: two claps must be close together to count
-                    recent = [t for t in self._clap_times if now - t < 0.8]
-                    if len(recent) >= 2:
+                    # Tighter window: both claps must land within 0.6s.
+                    recent = [t for t in self._clap_times if now - t < _DOUBLE_WINDOW_SEC]
+                    if len(recent) >= 2 and (recent[-1] - recent[0]) >= _MIN_CLAP_SEPARATION_SEC:
                         self._clap_times.clear()
                         self._last_trigger_ts = now
                         self._trigger()
@@ -161,6 +167,10 @@ class ClapDetector:
     def _trigger(self) -> None:
         self._g["_wake_word_detected"] = True
         self._g["_wake_word_ts"] = time.time()
+        # Clap = explicit wake. wake_detector will see "_wake_source"=="clap"
+        # and short-circuit to direct address — no classification needed.
+        self._g["_wake_source"] = "clap"
+        self._g["_wake_source_ts"] = time.time()
         print(f"[clap_detect] double clap detected (threshold={self._threshold:.3f}) — wake triggered")
         if callable(self._on_clap):
             try:
