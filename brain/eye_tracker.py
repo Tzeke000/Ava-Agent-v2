@@ -23,9 +23,11 @@ try:
 except ImportError:
     pass
 
-# MediaPipe iris landmark indices (Face Mesh)
-_LEFT_IRIS = [474, 475, 476, 477]
-_RIGHT_IRIS = [469, 470, 471, 472]
+# MediaPipe Face Mesh iris landmark indices (refine_landmarks=True required)
+# Left iris:  468 (center), 469, 470, 471, 472 (edge points)
+# Right iris: 473 (center), 474, 475, 476, 477 (edge points)
+_LEFT_IRIS  = [468, 469, 470, 471, 472]
+_RIGHT_IRIS = [473, 474, 475, 476, 477]
 _LEFT_EYE_OUTER = [33, 133]
 _RIGHT_EYE_OUTER = [362, 263]
 
