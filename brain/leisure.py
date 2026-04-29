@@ -68,6 +68,15 @@ def _journal_entry(g: dict[str, Any], base: Path) -> str:
 
 
 def _browse_curiosity(g: dict[str, Any]) -> str:
+    # Phase 89: use enhanced pursue_curiosity if topics available
+    try:
+        from brain.curiosity_topics import prioritize_curiosities, pursue_curiosity
+        top = prioritize_curiosities(g)
+        if top:
+            result = pursue_curiosity(top[0], g)
+            return f"Researched: {str(top[0].get('topic', ''))[:50]}: {result[:100]}"
+    except Exception:
+        pass
     try:
         from brain.curiosity_topics import get_current_curiosity
         topic_row = get_current_curiosity(g) or {}

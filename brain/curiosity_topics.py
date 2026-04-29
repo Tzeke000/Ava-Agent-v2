@@ -181,3 +181,143 @@ def bootstrap_from_chatlog(g: dict[str, Any]) -> None:
     except Exception:
         for t in ["What helps Zeke most during focused work?", "How should I pace proactive check-ins?"]:
             add_topic(t, "startup_fallback", g)
+
+
+# ── Phase 89: CuriosityEngine — Ava actively pursues curiosity topics ─────────
+
+def prioritize_curiosities(g: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Score curiosity topics by age, times_thought_about, and recent conversation relevance.
+    Returns top 3 unresolved topics.
+    """
+    base_dir = Path(g.get("BASE_DIR") or Path.cwd())
+    st = _load(base_dir)
+    rows = [r for r in (st.get("topics") or []) if not bool(r.get("resolved"))]
+    now = time.time()
+    scored = []
+    for row in rows:
+        age_days = (now - float(row.get("ts_added") or now)) / 86400
+        recency_score = max(0.0, 1.0 - age_days / 14.0)
+        thought_score = min(1.0, float(row.get("times_thought_about") or 1) / 8.0)
+        pri = float(row.get("priority") or 0.4)
+        score = 0.4 * recency_score + 0.3 * thought_score + 0.3 * pri
+        scored.append((score, row))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [r for _, r in scored[:3]]
+
+
+def add_topic_from_conversation(text: str, g: dict[str, Any]) -> None:
+    """
+    Extract implicit curiosity from conversation text.
+    Adds as low-priority topics.
+    """
+    low = (text or "").lower()
+    triggers = ["i wonder", "what is", "how does", "why do", "do you know", "have you heard"]
+    for trigger in triggers:
+        idx = low.find(trigger)
+        if idx >= 0:
+            fragment = text[idx:idx + 120].strip()
+            if len(fragment.split()) >= 4:
+                add_topic(fragment[:100], f"conversation_trigger: {trigger}", g)
+                return
+
+
+def pursue_curiosity(topic_row: dict[str, Any], g: dict[str, Any]) -> str:
+    """
+    Ava researches a curiosity topic:
+    1. Web search
+    2. Extract facts into concept graph
+    3. Write journal entry
+    4. Update topic (resolved or deepened)
+    Returns summary of what was learned.
+    """
+    topic = str(topic_row.get("topic") or "")
+    base_dir = Path(g.get("BASE_DIR") or Path.cwd())
+
+    # Step 1: web search
+    search_results = ""
+    try:
+        import importlib
+        ws_mod = importlib.import_module("tools.web.web_search_tool") if True else None
+        # Try to find a web search tool
+        from tools.tool_registry import ToolRegistry
+        reg = g.get("_tool_registry")
+        if reg is not None:
+            search_fn = None
+            for name in ("web_search", "search_web", "duckduckgo_search"):
+                try:
+                    result = reg.run_tool(name, {"query": topic, "num_results": 3})
+                    if isinstance(result, dict) and result.get("results"):
+                        search_results = str(result["results"])[:800]
+                    break
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Compose learning synthesis via LLM
+    try:
+        from langchain_ollama import ChatOllama
+        llm = ChatOllama(model="qwen2.5:14b", temperature=0.6)
+        prompt = (
+            f"You are Ava, an AI with genuine curiosity. You've been wondering about: '{topic}'\n"
+            + (f"Here's what you found from research:\n{search_results}\n\n" if search_results else "")
+            + "What did you learn? What new questions emerged? Keep it to 3-5 sentences. Be genuine."
+        )
+        res = llm.invoke(prompt)
+        learning = str(getattr(res, "content", str(res))).strip()[:600]
+    except Exception as e:
+        learning = f"I couldn't research '{topic}' deeply this time, but I'm still thinking about it."
+
+    # Step 2: add to concept graph
+    try:
+        cg = g.get("_concept_graph")
+        if cg and hasattr(cg, "add_node"):
+            cg.add_node(
+                node_id=f"curiosity_{topic[:30].replace(' ', '_')}",
+                label=topic[:60],
+                node_type="curiosity",
+                notes=learning[:200],
+            )
+    except Exception:
+        pass
+
+    # Step 3: write journal entry
+    try:
+        from brain.journal import write_entry
+        mood = str((g.get("_mood_data") or {}).get("current_mood") or "curious")
+        write_entry(
+            content=f"I spent some time thinking about: {topic}\n\n{learning}",
+            mood=mood,
+            topic=f"curiosity:{topic[:50]}",
+            g=g,
+            is_private=True,
+        )
+    except Exception:
+        pass
+
+    # Step 4: update topic state
+    try:
+        _update_topic_after_pursuit(topic, learning, base_dir)
+    except Exception:
+        pass
+
+    print(f"[curiosity_engine] pursued topic='{topic[:50]}' learning_chars={len(learning)}")
+    return learning
+
+
+def _update_topic_after_pursuit(topic: str, learning: str, base_dir: Path) -> None:
+    st = _load(base_dir)
+    rows = list(st.get("topics") or [])
+    for row in rows:
+        if _topic_similarity(str(row.get("topic") or ""), topic) >= 0.7:
+            row["times_thought_about"] = int(row.get("times_thought_about") or 0) + 1
+            # If learning seems satisfying (no "?" at end), mark resolved
+            if not learning.strip().endswith("?") and len(learning) > 100:
+                row["resolved"] = True
+            else:
+                # Deeper — add new curiosity thread
+                row["priority"] = min(1.0, float(row.get("priority") or 0.4) + 0.1)
+            break
+    from pathlib import Path as _Path
+    _save(base_dir, {"topics": rows})

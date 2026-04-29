@@ -543,6 +543,18 @@ def _run_heartbeat_tick(
     except Exception:
         pass
 
+    # Phase 89: check for stale curiosity (7+ days unresolved) — prioritize during next leisure
+    try:
+        from brain.curiosity_topics import prioritize_curiosities
+        _top_curiosities = prioritize_curiosities(g)
+        if _top_curiosities:
+            import time as _t89
+            oldest = min(float(r.get("ts_added") or _t89.time()) for r in _top_curiosities)
+            if (_t89.time() - oldest) > 7 * 24 * 3600:
+                g["_stale_curiosity_priority"] = _top_curiosities[0]
+    except Exception:
+        pass
+
     # Phase 75: auto fine-tune check (every 14 days if 50+ new turns)
     _FT_CHECK_INTERVAL = 14 * 24 * 3600
     _last_ft_check = float(st.meta.get("last_finetune_check_wall") or 0)

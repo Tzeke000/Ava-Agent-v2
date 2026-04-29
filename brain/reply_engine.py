@@ -281,7 +281,7 @@ def run_ava(
             actions = list(actions or []) + tool_actions
 
         try:
-            from brain.curiosity_topics import add_topic as add_curiosity_topic, mark_resolved as mark_curiosity_resolved
+            from brain.curiosity_topics import add_topic as add_curiosity_topic, mark_resolved as mark_curiosity_resolved, add_topic_from_conversation
             from brain.opinions import get_opinion, form_opinion
             _t = _av._extract_simple_topic(user_input)
             if _t:
@@ -291,6 +291,8 @@ def run_ava(
                     form_opinion(_t, user_input[:300], _g)
                 if "answered" in user_input.lower() or "resolved" in user_input.lower():
                     mark_curiosity_resolved(_t, _g)
+            # Phase 89: extract implicit curiosity from conversation
+            add_topic_from_conversation(user_input, _g)
         except Exception:
             pass
 
