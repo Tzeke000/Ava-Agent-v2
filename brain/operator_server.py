@@ -429,14 +429,31 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
     tts_obj = host.get("tts_engine")
-    tts_block = {
-        "available": bool(getattr(tts_obj, "is_available", lambda: False)()) if tts_obj is not None else False,
-        "enabled": bool(host.get("tts_enabled", False)),
-        "engine": str(host.get("tts_engine_name") or "none"),
-        "voice": str(getattr(tts_obj, "voice_name", lambda: "unknown")()) if tts_obj is not None else "unknown",
-        "tts_speaking": bool(getattr(tts_obj, "speaking", False)) if tts_obj is not None else bool(host.get("_tts_speaking", False)),
-        "tts_amplitude": float(getattr(tts_obj, "amplitude", 0.0)) if tts_obj is not None else float(host.get("_tts_amplitude", 0.0) or 0.0),
-    }
+    tts_worker = host.get("_tts_worker")
+    # Prefer the TTS worker for live state — it owns the engine, knows real amplitude.
+    if tts_worker is not None and getattr(tts_worker, "available", False):
+        try:
+            from brain.tts_worker import get_live_amplitude
+            _live_amp = float(get_live_amplitude())
+        except Exception:
+            _live_amp = 0.0
+        tts_block = {
+            "available": True,
+            "enabled": bool(host.get("tts_enabled", False)),
+            "engine": str(getattr(tts_worker, "engine_name", lambda: "none")()),
+            "voice": str(getattr(tts_worker, "voice_name", lambda: "unknown")()),
+            "tts_speaking": bool(getattr(tts_worker, "is_speaking", lambda: False)()),
+            "tts_amplitude": _live_amp,
+        }
+    else:
+        tts_block = {
+            "available": bool(getattr(tts_obj, "is_available", lambda: False)()) if tts_obj is not None else False,
+            "enabled": bool(host.get("tts_enabled", False)),
+            "engine": str(host.get("tts_engine_name") or "none"),
+            "voice": str(getattr(tts_obj, "voice_name", lambda: "unknown")()) if tts_obj is not None else "unknown",
+            "tts_speaking": bool(getattr(tts_obj, "speaking", False)) if tts_obj is not None else bool(host.get("_tts_speaking", False)),
+            "tts_amplitude": float(getattr(tts_obj, "amplitude", 0.0)) if tts_obj is not None else float(host.get("_tts_amplitude", 0.0) or 0.0),
+        }
     # Phase 49: pointing state for widget orb
     widget_block = {
         "pointing": bool(host.get("_widget_pointing", False)),
@@ -1267,13 +1284,63 @@ def create_app():
             "engine": str(h.get("tts_engine_name") or "none"),
         }
 
+    @app.get("/api/v1/tts/state")
+    def tts_state() -> dict[str, Any]:
+        """Lightweight live TTS state for fast UI polling — amplitude + speaking
+        flag pulled directly from the worker so the orb can react in real time
+        without waiting for the next full snapshot."""
+        h = _g()
+        worker = h.get("_tts_worker")
+        if worker is not None and getattr(worker, "available", False):
+            try:
+                from brain.tts_worker import get_live_amplitude
+                return {
+                    "ok": True,
+                    "speaking": bool(getattr(worker, "is_speaking", lambda: False)()),
+                    "amplitude": float(get_live_amplitude()),
+                    "engine": str(getattr(worker, "engine_name", lambda: "none")()),
+                    "voice": str(getattr(worker, "voice_name", lambda: "unknown")()),
+                }
+            except Exception as e:
+                return {"ok": False, "error": str(e)[:120], "speaking": False, "amplitude": 0.0}
+        # Legacy fallback
+        tts_obj = h.get("tts_engine")
+        return {
+            "ok": True,
+            "speaking": bool(getattr(tts_obj, "speaking", False)) if tts_obj is not None else False,
+            "amplitude": float(getattr(tts_obj, "amplitude", 0.0)) if tts_obj is not None else 0.0,
+            "engine": str(h.get("tts_engine_name") or "none"),
+            "voice": str(getattr(tts_obj, "voice_name", lambda: "unknown")()) if tts_obj is not None else "unknown",
+        }
+
     @app.post("/api/v1/tts/speak")
     def tts_speak(body: TTSSpeakIn) -> dict[str, Any]:
         h = _g()
-        tts_obj = h.get("tts_engine")
         text = str(body.text or "").strip()
         if not text:
             return {"ok": False, "error": "empty_text"}
+        # Prefer the TTS worker so emotion → voice/speed mapping is honored
+        # and Kokoro's neural voice is used when available.
+        worker = h.get("_tts_worker")
+        if worker is not None and getattr(worker, "available", False):
+            try:
+                emotion = "neutral"
+                intensity = 0.5
+                load_mood = h.get("load_mood")
+                if callable(load_mood):
+                    m = load_mood() or {}
+                    emotion = str(m.get("current_mood") or m.get("primary_emotion") or "neutral")
+                    intensity = float(m.get("energy") or m.get("intensity") or 0.5)
+                worker.speak_with_emotion(text, emotion=emotion, intensity=intensity, blocking=False)
+                return {
+                    "ok": True, "queued": True, "chars": len(text),
+                    "engine": str(getattr(worker, "engine_name", lambda: "none")()),
+                    "emotion": emotion, "intensity": intensity,
+                }
+            except Exception as e:
+                return {"ok": False, "error": str(e)[:220]}
+        # Fallback: legacy tts_engine path
+        tts_obj = h.get("tts_engine")
         if tts_obj is None or not callable(getattr(tts_obj, "is_available", None)) or not tts_obj.is_available():
             return {"ok": False, "error": "tts_unavailable"}
         try:

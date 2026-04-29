@@ -207,17 +207,17 @@ class TTSEngine:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
     def _init_engine(self) -> None:
-        # Route pyttsx3 through TTSWorker so all engine calls happen on a single
-        # dedicated thread (required by Windows COM/SAPI5 single-threaded apartment).
+        # Route through TTSWorker. The worker prefers Kokoro neural TTS and
+        # falls back to pyttsx3 (COM-isolated) automatically.
         try:
             from brain.tts_worker import get_tts_worker
             worker = get_tts_worker()
             if worker.is_available():
                 self._pyttsx3 = None  # we never call pyttsx3 directly anymore
                 self._voice_name = worker.voice_name()
-                self._engine_name = "pyttsx3"
+                self._engine_name = worker.engine_name()  # "kokoro" or "pyttsx3"
                 self._available = True
-                self._log(f"Using pyttsx3 via TTSWorker (voice={self._voice_name}).")
+                self._log(f"Using {self._engine_name} via TTSWorker (voice={self._voice_name}).")
                 return
         except Exception as e:
             self._log(f"TTSWorker init failed: {e!r}")
@@ -283,22 +283,26 @@ class TTSEngine:
             pass
 
     def _speak_pyttsx3(self, text: str, blocking: bool) -> None:
-        # Always route through TTSWorker — never call pyttsx3 from this thread.
+        # Route through TTSWorker. The worker uses Kokoro when available, falls
+        # back to pyttsx3 otherwise. Either way, emotion + intensity drive the
+        # actual voice characteristics; rate/volume from voice_style are kept
+        # as a hint for the pyttsx3 path only.
         try:
             from brain.tts_worker import get_tts_worker
             worker = get_tts_worker()
             if not worker.is_available():
-                self._log("pyttsx3 worker not available")
+                self._log("tts worker not available")
                 return
-            # Apply current voice style to worker before speaking
             try:
                 self._voice_style = _load_voice_style()
                 rate = int(self._voice_style.get("rate") or 175)
                 vol = float(self._voice_style.get("volume") or 0.9)
+                worker.apply_style(rate=rate, volume=vol)
             except Exception:
-                rate = 175
-                vol = 0.9
-            worker.speak(text, rate=rate, volume=vol, blocking=blocking)
+                pass
+            # Default to neutral — most callers should hit the operator endpoint
+            # or worker.speak_with_emotion directly when they want emotion.
+            worker.speak(text, emotion="neutral", intensity=0.5, blocking=blocking)
         except Exception as e:
             self._log(f"_speak_pyttsx3 routing error: {e!r}")
 

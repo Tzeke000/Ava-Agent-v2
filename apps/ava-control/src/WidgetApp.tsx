@@ -2,10 +2,14 @@
  * Phase 48 — Desktop Widget Orb
  *
  * Minimal always-on-top floating orb window. Polls operator HTTP for
- * mood state and renders OrbCanvas in a transparent 150×150 frame.
+ * mood + voice state and renders OrbCanvas in a transparent 150×150 frame.
  * Position is persisted via the operator API.
  *
  * Bootstrap: Ava tracks where the widget gets moved and starts defaulting there.
+ *
+ * The widget orb mirrors the same state machine as the main orb so the two
+ * always agree visually. Every state the main orb reacts to (thinking,
+ * listening, speaking with live amplitude, offline) shows up here too.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import OrbCanvas from "./components/OrbCanvas";
@@ -21,15 +25,34 @@ const EMOTION_COLOR: Record<string, string> = {
   contempt: "#4a5568", shame: "#b7791f", guilt: "#2d3748", anticipation: "#d69e2e",
 };
 
-type OrbState = "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "offline";
+type OrbState = "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "offline" | "listening";
 
-function getState(snap: Record<string, unknown> | null, online: boolean): OrbState {
+function getOrbState(snap: Record<string, unknown> | null, online: boolean): OrbState {
   if (!online || !snap) return "offline";
-  const rb = snap.ribbon as Record<string, unknown> | undefined;
+  const s = snap as Record<string, unknown>;
+
+  // Backend run_ava thinking flag — overrides everything except offline.
+  if (Boolean(s.thinking)) return "thinking";
+
+  // Voice loop state takes priority over heartbeat.
+  const voiceLoop = s.voice_loop as Record<string, unknown> | undefined;
+  const voiceState = String(voiceLoop?.state ?? "passive");
+  const voiceActive = Boolean(voiceLoop?.active);
+  if (voiceActive) {
+    if (voiceState === "speaking") return "speaking";
+    if (voiceState === "thinking") return "thinking";
+    if (voiceState === "listening") return "listening";
+  }
+
+  // TTS speaking outside the voice loop.
+  const tts = s.tts as Record<string, unknown> | undefined;
+  if (Boolean(tts?.tts_speaking)) return "speaking";
+
+  // Heartbeat hint for idle visuals.
+  const rb = s.ribbon as Record<string, unknown> | undefined;
   const hbMode = String(rb?.heartbeat_mode || "").toLowerCase();
   if (hbMode.includes("conversation")) return "speaking";
   if (hbMode.includes("maintenance") || hbMode.includes("learning")) return "thinking";
-  if (hbMode.includes("idle")) return "idle";
   return "idle";
 }
 
@@ -42,6 +65,12 @@ function getEmotion(snap: Record<string, unknown> | null): [string, string] {
   } catch {
     return ["calmness", "#1a6cf5"];
   }
+}
+
+function getTtsAmplitude(snap: Record<string, unknown> | null): number {
+  if (!snap) return 0;
+  const tts = snap.tts as Record<string, unknown> | undefined;
+  return Number(tts?.tts_amplitude ?? 0);
 }
 
 // Save widget drag position back to the state file via operator API
@@ -97,7 +126,8 @@ export default function WidgetApp() {
     };
   }, []);
 
-  // Poll snapshot
+  // Poll snapshot — fast enough that amplitude updates feel live (every 500ms).
+  // The operator snapshot reads live amplitude from the TTS worker each request.
   useEffect(() => {
     let alive = true;
     const poll = async () => {
@@ -112,7 +142,7 @@ export default function WidgetApp() {
       }
     };
     poll();
-    const iv = setInterval(poll, 3000);
+    const iv = setInterval(poll, 500);
     return () => { alive = false; clearInterval(iv); };
   }, []);
 
@@ -137,7 +167,8 @@ export default function WidgetApp() {
   }, []);
 
   const [emotion, emotionColor] = getEmotion(snap);
-  const orbState = getState(snap, online);
+  const orbState = getOrbState(snap, online);
+  const ttsAmplitude = getTtsAmplitude(snap);
 
   // Phase 49: pointer morph when Ava is pointing at something
   const widgetBlock = snap?.widget as Record<string, unknown> | undefined;
@@ -166,6 +197,7 @@ export default function WidgetApp() {
         state={orbState}
         size={150}
         shapeOverride={shapeOverride}
+        amplitude={ttsAmplitude}
       />
     </div>
   );
