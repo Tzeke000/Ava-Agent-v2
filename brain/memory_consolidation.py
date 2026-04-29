@@ -202,6 +202,15 @@ def consolidate(g: dict[str, Any]) -> dict[str, Any]:
         _step5["error"] = str(e)[:100]
     result["steps"]["identity_check"] = _step5
 
+    # Step 5.5 — Include learning summary in consolidation
+    _step_learning: dict[str, Any] = {}
+    try:
+        from brain.learning_tracker import what_have_i_learned_this_week
+        _step_learning["summary"] = what_have_i_learned_this_week(g)
+    except Exception as e:
+        _step_learning["error"] = str(e)[:100]
+    result["steps"]["learning_summary"] = _step_learning
+
     # Save state and log
     state = _load_state(g)
     state["last_consolidation_ts"] = time.time()
