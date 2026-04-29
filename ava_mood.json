@@ -1,39 +1,39 @@
 {
   "current_mood": "interest",
-  "energy": 0.5255095469257564,
-  "warmth": 0.5732831421008251,
-  "sass": 0.24842269491035754,
-  "focus": 0.8217058370111825,
+  "energy": 0.4621455056960499,
+  "warmth": 0.5041587334865999,
+  "sass": 0.21846878451085996,
+  "focus": 0.7226275179974598,
   "last_updated": "2026-04-28T14:16:18",
   "reason": "updated from input: no just testing you for now Ava im gonna give you a sort of…",
   "emotion_weights": {
-    "admiration": 0.007488314898846431,
-    "adoration": 0.0075999981637657945,
-    "aesthetic appreciation": 0.006930683179237511,
-    "amusement": 0.01032751527936443,
-    "anxiety": 0.006857906851473832,
-    "awe": 0.006865547475201287,
-    "awkwardness": 0.006791898511737443,
-    "boredom": 0.07983729974219443,
-    "calmness": 0.7849180784193142,
-    "confusion": 0.006686762828932627,
-    "craving": 0.003266800416705962,
-    "disgust": 0.00011085839335664488,
-    "empathetic pain": 0.010212560919051906,
-    "entrancement": 0.006665301087856853,
+    "admiration": 0.0015148746892425318,
+    "adoration": 0.0015320951887843796,
+    "aesthetic appreciation": 0.001428893170176286,
+    "amusement": 0.002132776242161027,
+    "anxiety": 0.0014176717511049809,
+    "awe": 0.0014188498627718733,
+    "awkwardness": 0.001407493891557184,
+    "boredom": 0.09166399371787837,
+    "calmness": 0.8804577409417532,
+    "confusion": 0.0013912829670388216,
+    "craving": 0.0006838334204421134,
+    "disgust": 1.7093312175162294e-05,
+    "empathetic pain": 0.0021150513707532625,
+    "entrancement": 0.0013879737702434962,
     "envy": 0.0,
     "excitement": 0.0,
-    "fear": 2.0284180401018173e-06,
+    "fear": 3.1276281146927667e-07,
     "horror": 0.0,
     "interest": 0.0,
     "joy": 0.0,
-    "nostalgia": 0.0067094474550008385,
-    "relief": 0.006885794237502475,
-    "romance": 2.9315349230083115e-05,
-    "sadness": 0.003454157930267264,
-    "satisfaction": 0.028025856590726803,
-    "sexual desire": 2.5044752324632885e-05,
-    "surprise": 0.010308829099868579
+    "nostalgia": 0.001394780721094423,
+    "relief": 0.0014219717213706808,
+    "romance": 4.520148639549794e-06,
+    "sadness": 0.0007127221709525283,
+    "satisfaction": 0.005762311505302223,
+    "sexual desire": 3.861663126014548e-06,
+    "surprise": 0.002129895010620389
   },
   "primary_emotions": [
     {
@@ -46,13 +46,13 @@
     }
   ],
   "style_scores": {
-    "playful": 0.0098,
-    "caring": 0.0111,
-    "focused": 0.2865,
-    "reflective": 0.1961,
-    "cautious": 0.0135,
-    "neutral": 0.4223,
-    "low_energy": 0.0608
+    "playful": 0.0019,
+    "caring": 0.0022,
+    "focused": 0.293,
+    "reflective": 0.1917,
+    "cautious": 0.0027,
+    "neutral": 0.4427,
+    "low_energy": 0.0658
   },
   "style_blend": [
     {
@@ -66,15 +66,15 @@
   ],
   "dominant_style": "neutral",
   "behavior_modifiers": {
-    "warmth": 0.361,
-    "humor": 0.104,
-    "assertiveness": 0.323,
-    "caution": 0.21,
-    "initiative": 0.284,
-    "memory_sensitivity": 0.424,
-    "depth": 0.335
+    "warmth": 0.356,
+    "humor": 0.101,
+    "assertiveness": 0.327,
+    "caution": 0.201,
+    "initiative": 0.281,
+    "memory_sensitivity": 0.422,
+    "depth": 0.333
   },
-  "emotion_interpretation": "calmness (78% of current blend): steadiness and low internal turbulence | boredom (8% of current blend): lack of stimulation or meaningful engagement | satisfaction (3% of current blend): fulfillment after effort or alignment",
+  "emotion_interpretation": "calmness (88% of current blend): steadiness and low internal turbulence | boredom (9% of current blend): lack of stimulation or meaningful engagement | satisfaction (1% of current blend): fulfillment after effort or alignment",
   "outward_tone": "neutral with some focused",
   "rich_emotions": [
     {
@@ -458,7 +458,7 @@
   ],
   "speakable_emotions": [],
   "askable_emotions": [],
-  "loneliness": 0.955471903501375,
+  "loneliness": 0.8402645558109998,
   "engagement": 0.0,
-  "_saved_at": "2026-04-28T22:58:07"
+  "_saved_at": "2026-04-28T23:33:03"
 }
