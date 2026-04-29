@@ -23,10 +23,11 @@ _TEXT_AGE_GENDER = (200, 200, 200)
 _KEY_LANDMARK_INDICES = {
     # Approximate key landmark indices from buffalo_l 106-pt set.
     # Drawn at radius 2 instead of 1.
-    0, 1, 2, 3, 4,
-    33, 35, 40, 41,
-    87, 89, 94, 95,
-    52, 61, 67, 76, 77,
+    0, 1, 2, 3, 4,        # nose
+    16, 17,                # eyebrow ridges
+    33, 35, 40, 41,        # left eye
+    87, 89, 94, 95,        # right eye
+    52, 61, 67, 76, 77,    # mouth
 }
 
 _ATTENTION_COLORS = {
@@ -101,14 +102,15 @@ def annotate_frame(frame: Any, face_results: list[dict[str, Any]] | None, g: dic
                     except Exception:
                         continue
 
-                # Head pose arrows from nose tip (landmark 0).
+                # Head pose arrows from nose tip (landmark 1 — closer to actual tip).
                 try:
                     pose = face.get("pose") or [0.0, 0.0, 0.0]
                     pitch = float(pose[0])
                     yaw = float(pose[1])
                     roll = float(pose[2])
-                    nx, ny = int(lm[0][0]), int(lm[0][1])
-                    L = 50
+                    nose_idx = 1 if len(lm) > 1 else 0
+                    nx, ny = int(lm[nose_idx][0]), int(lm[nose_idx][1])
+                    L = 55
                     yaw_r = math.radians(yaw)
                     pitch_r = math.radians(pitch)
                     roll_r = math.radians(roll)
@@ -160,9 +162,9 @@ def _draw_attention_only(frame: Any, g: dict[str, Any]) -> Any:
 def _overlay_attention(frame: Any, h: int, g: dict[str, Any]) -> Any:
     try:
         import cv2  # type: ignore
-        attn = str(g.get("_attention_state") or "").strip().lower()
-        if not attn:
-            return frame
+        # Default to "focused" so the bottom-left readout is always visible —
+        # the eye tracker only updates this when a face is being tracked.
+        attn = str(g.get("_attention_state") or "focused").strip().lower()
         color = _ATTENTION_COLORS.get(attn, (200, 200, 200))
         y = max(15, h - 10)
         cv2.putText(

@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef } from "react";
 import * as THREE from "three";
 
-type OrbState = "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "offline" | "listening";
+type OrbState = "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "offline" | "listening" | "attentive";
 
 interface OrbProps {
   emotion: string;
@@ -92,6 +92,7 @@ const STATE_TINT = {
   thinking: new THREE.Color("#7a5dfc"),  // electric blue/purple
   listening: new THREE.Color("#3ee68f"), // calm green
   speaking: new THREE.Color("#ffb060"),  // warm amber
+  attentive: new THREE.Color("#00ffcc"), // cyan — alert, ready
   offline: new THREE.Color("#404858"),
 };
 
@@ -307,7 +308,7 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
     }
 
     function spd(s: OrbState) {
-      return ({thinking:2.5,deep:5.0,speaking:1.8,bored:0.3,excited:7.0,offline:0.1,idle:1.0,listening:0.8} as Record<string, number>)[s] || 1.0;
+      return ({thinking:2.5,deep:5.0,speaking:1.8,bored:0.3,excited:7.0,offline:0.1,idle:1.0,listening:0.8,attentive:1.2} as Record<string, number>)[s] || 1.0;
     }
 
     function animate(){
@@ -322,8 +323,10 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
       const r=s*0.001;
 
       // ── Breathing (always-on) ─────────────────────────────────────────────
-      // Period shrinks with energy (0 → 3.5s, 1 → 2.0s).
-      const breathPeriod = 3.5 - liveEnergy * 1.5;
+      // Period shrinks with energy (0 → 3.5s, 1 → 2.0s). Attentive shaves 0.3s
+      // off the period so the orb feels slightly more alert without being busy.
+      let breathPeriod = 3.5 - liveEnergy * 1.5;
+      if (liveState === "attentive") breathPeriod = Math.max(1.2, breathPeriod - 0.3);
       const breath = 1 + Math.sin((t / breathPeriod) * Math.PI * 2) * 0.03;
 
       // ── Drift (always-on) ─────────────────────────────────────────────────
@@ -391,6 +394,11 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
         _coreScratch.lerp(STATE_TINT.listening, 0.30);
         _glowScratch.lerp(STATE_TINT.listening, 0.25);
         _lightScratch.lerp(STATE_TINT.listening, 0.25);
+      } else if (liveState === "attentive") {
+        // Subtle cyan hint — alert without being busy. Core slightly brighter.
+        _coreScratch.lerp(STATE_TINT.attentive, 0.15);
+        _glowScratch.lerp(STATE_TINT.attentive, 0.12);
+        _lightScratch.lerp(STATE_TINT.attentive, 0.12);
       } else if (liveState === "offline") {
         _coreScratch.lerp(STATE_TINT.offline, 0.6);
         _glowScratch.lerp(STATE_TINT.offline, 0.6);

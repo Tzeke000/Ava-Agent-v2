@@ -338,11 +338,40 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
 
+    # Eye tracker state (best-effort).
+    _gaze_calibrated = False
+    try:
+        _et = host.get("_eye_tracker")
+        if _et is not None:
+            _gaze_calibrated = bool(getattr(_et, "calibrated", False))
+    except Exception:
+        pass
+
+    # Expression calibration state for the current recognized person.
+    _expr_calibrated = False
+    _expr_samples = 0
+    try:
+        _cal = host.get("_expression_calibrator")
+        if _cal is not None and _fr_person_id and _fr_person_id != "unknown":
+            _bl = _cal.get_baseline(_fr_person_id)
+            _expr_calibrated = bool(_bl.get("calibrated"))
+            _expr_samples = int(_bl.get("sample_count") or 0)
+    except Exception:
+        pass
+
     vision_block = {
         "perception": _perception_dict(perception),
         "llava_scene_description": str(host.get("_llava_scene_description") or "")[:700],
         "recognized_person_id": _fr_person_id,
         "recognized_confidence": round(_fr_confidence, 3),
+        "expression": str(host.get("_current_expression") or "neutral"),
+        "face_age": int(host.get("_face_age") or 0),
+        "face_gender": str(host.get("_face_gender") or "?"),
+        "attention_state": str(host.get("_attention_state") or "focused"),
+        "gaze_region": str(host.get("_gaze_region") or "center"),
+        "gaze_calibrated": _gaze_calibrated,
+        "expression_calibrated": _expr_calibrated,
+        "expression_calibration_samples": _expr_samples,
     }
 
     memory_block = {

@@ -536,6 +536,26 @@ def _run_heartbeat_tick(
     except Exception as _pe:
         print(f"[heartbeat] proactive_check error: {_pe}")
 
+    # Question engine — Ava decides when to ask Zeke a question. Delivery via
+    # the TTS worker; we mark_asked() so the cooldown sticks.
+    try:
+        qe = g.get("_question_engine")
+        if qe is not None and bool(g.get("tts_enabled", False)):
+            candidate = qe.consider_asking(g)
+            if isinstance(candidate, dict):
+                worker = g.get("_tts_worker")
+                if worker is not None and getattr(worker, "available", False):
+                    text = str(candidate.get("text") or "").strip()
+                    if text:
+                        try:
+                            worker.speak_with_emotion(text, emotion="curiosity", intensity=0.5, blocking=False)
+                            qe.mark_asked(str(candidate.get("category") or ""), text, asked_to="zeke",
+                                          meta={"priority": float(candidate.get("priority") or 0)})
+                        except Exception as _qe2:
+                            print(f"[heartbeat] question speak failed: {_qe2}")
+    except Exception as _qe:
+        print(f"[heartbeat] question_engine error: {_qe}")
+
     # Attention monitoring — eye tracker checks every 30 seconds
     _ATTENTION_INTERVAL = 30.0
     _last_attention = float(st.meta.get("last_attention_check_wall") or 0)
