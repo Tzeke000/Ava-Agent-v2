@@ -143,6 +143,7 @@ def finalize_ava_turn(
         pass
 
     # TTS speak
+    _tts_spoke = False
     try:
         _tts = _g.get("tts_engine")
         _tts_enabled = bool(_g.get("tts_enabled", False))
@@ -154,7 +155,17 @@ def finalize_ava_turn(
                 _clean = _clean[:300].rstrip()
             if _clean and re.search(r"[A-Za-z0-9]", _clean):
                 _tts.speak(_clean, blocking=False)
+                _tts_spoke = True
     except Exception:
         pass
+
+    # Phase 87: voice style adaptation — called after TTS turn
+    if _tts_spoke:
+        try:
+            from brain.tts_engine import voice_style_adapt
+            _pos = len(str(user_input)) > 5  # simple positive signal: user sent meaningful input
+            voice_style_adapt(_pos, _g)
+        except Exception:
+            pass
 
     return ai_reply, visual_out, active_profile, actions, reflection

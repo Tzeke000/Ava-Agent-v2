@@ -106,6 +106,71 @@ if __name__ == "__main__":
 """.strip()
 
 
+_VOICE_STYLE_PATH = Path(__file__).resolve().parent.parent / "state" / "voice_style.json"
+
+_DEFAULT_VOICE_STYLE = {
+    "rate": 175,
+    "volume": 0.9,
+    "pause_frequency": 0.5,
+    "turns_logged": 0,
+    "positive_signal_count": 0,
+    "last_updated": None,
+}
+
+
+def _load_voice_style() -> dict[str, Any]:
+    if _VOICE_STYLE_PATH.is_file():
+        try:
+            data = json.loads(_VOICE_STYLE_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                style = dict(_DEFAULT_VOICE_STYLE)
+                style.update(data)
+                return style
+        except Exception:
+            pass
+    return dict(_DEFAULT_VOICE_STYLE)
+
+
+def _save_voice_style(style: dict[str, Any]) -> None:
+    _VOICE_STYLE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _VOICE_STYLE_PATH.write_text(json.dumps(style, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def voice_style_adapt(positive_signal: bool, g: dict[str, Any] | None = None) -> None:
+    """
+    Called after each TTS turn. Slowly adjusts voice style.
+    positive_signal: True if conversation continued positively.
+    Adjustments are 1-2% per session so change is gradual.
+    Stays within rate 140-210, volume 0.7-1.0.
+    """
+    style = _load_voice_style()
+    style["turns_logged"] = int(style.get("turns_logged") or 0) + 1
+    if positive_signal:
+        style["positive_signal_count"] = int(style.get("positive_signal_count") or 0) + 1
+
+    # Every 10 turns, gently drift rate toward 175 with slight variation
+    turns = int(style["turns_logged"])
+    if turns > 0 and turns % 10 == 0:
+        current_rate = float(style.get("rate") or 175)
+        pos_ratio = float(style.get("positive_signal_count") or 0) / max(1, turns)
+        # Positive responses → slightly faster and more expressive
+        if pos_ratio > 0.7:
+            delta = 1.5
+        elif pos_ratio < 0.3:
+            delta = -1.5
+        else:
+            delta = 0.0
+        new_rate = max(140, min(210, current_rate + delta))
+        style["rate"] = round(new_rate, 1)
+
+        new_vol = float(style.get("volume") or 0.9)
+        new_vol = max(0.7, min(1.0, new_vol + (0.005 if pos_ratio > 0.6 else -0.005)))
+        style["volume"] = round(new_vol, 3)
+        style["last_updated"] = __import__("datetime").datetime.now().isoformat(timespec="seconds")
+
+    _save_voice_style(style)
+
+
 class TTSEngine:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -118,6 +183,7 @@ class TTSEngine:
         self._pyttsx3 = None
         self._voice_name = "unknown"
         self._current_amplitude: float = 0.0
+        self._voice_style = _load_voice_style()
         self._init_engine()
 
     def _log(self, message: str) -> None:
@@ -210,10 +276,25 @@ class TTSEngine:
         self._player_thread = t
         t.start()
 
+    def _apply_voice_style(self) -> None:
+        """Apply current voice_style settings to pyttsx3 engine."""
+        if self._pyttsx3 is None:
+            return
+        # Reload style occasionally for live adaptation
+        self._voice_style = _load_voice_style()
+        try:
+            rate = int(self._voice_style.get("rate") or 175)
+            vol = float(self._voice_style.get("volume") or 0.9)
+            self._pyttsx3.setProperty("rate", max(140, min(210, rate)))
+            self._pyttsx3.setProperty("volume", max(0.7, min(1.0, vol)))
+        except Exception:
+            pass
+
     def _speak_pyttsx3(self, text: str, blocking: bool) -> None:
         if self._pyttsx3 is None:
             return
         self.stop()
+        self._apply_voice_style()
         if blocking:
             self._pyttsx3.say(text)
             self._pyttsx3.runAndWait()
