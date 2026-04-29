@@ -481,6 +481,14 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
 
+    # Phase 79: onboarding status
+    onboarding_block: dict[str, Any] = {"active": False, "stage": None, "person_id": None}
+    try:
+        from brain.person_onboarding import get_onboarding_status
+        onboarding_block = get_onboarding_status(host)
+    except Exception:
+        pass
+
     mood_block = _load_mood_block(host)
     style_block = _load_style(host)
     deep_self_block = {}
@@ -618,6 +626,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "llava": llava_block,
         "emil": emil_block,
         "active_plans": active_plans_block,
+        "onboarding": onboarding_block,
         "system_stats": system_stats,
         "mood": mood_block,
         "style": style_block,
@@ -818,7 +827,7 @@ def _build_workbench_result_from_host(host: dict[str, Any]):
 
 
 def create_app():
-    from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
+    from fastapi import Body, FastAPI, Request, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse, PlainTextResponse
     from pydantic import BaseModel
@@ -1607,6 +1616,54 @@ def create_app():
             "message": cmd_result["summary"],
             "result": cmd_result,
         }
+
+    # ── Phase 79: Onboarding endpoints ───────────────────────────────────────
+
+    @app.post("/api/v1/onboarding/start")
+    async def onboarding_start(request: Request) -> dict[str, Any]:
+        h = _g()
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+        from brain.person_onboarding import start_onboarding, get_onboarding_status
+        import uuid as _uuid
+        person_id = str(body.get("person_id") or f"person_{_uuid.uuid4().hex[:8]}")
+        name_hint = str(body.get("name") or "").strip() or None
+        base = Path(h.get("BASE_DIR") or ".")
+        flow = start_onboarding(person_id, base, name_hint=name_hint)
+        h["_onboarding_flow"] = flow
+        h["_onboarding_stage"] = flow.stage
+        # Run greeting step automatically
+        reply, stage, done = flow.run_step("", h)
+        return {"ok": True, "reply": reply, "stage": stage, "done": done, "status": get_onboarding_status(h)}
+
+    @app.get("/api/v1/onboarding/status")
+    async def onboarding_status() -> dict[str, Any]:
+        from brain.person_onboarding import get_onboarding_status
+        return get_onboarding_status(_g())
+
+    @app.post("/api/v1/onboarding/step")
+    async def onboarding_step(request: Request) -> dict[str, Any]:
+        h = _g()
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+        from brain.person_onboarding import run_onboarding_step, get_onboarding_status
+        user_input = str(body.get("input") or "").strip()
+        result = run_onboarding_step(user_input, h)
+        if result is None:
+            return {"ok": False, "message": "No active onboarding flow", "status": get_onboarding_status(h)}
+        reply, stage, done = result
+        return {"ok": True, "reply": reply, "stage": stage, "done": done, "status": get_onboarding_status(h)}
+
+    @app.post("/api/v1/profile/{person_id}/refresh")
+    async def profile_refresh(person_id: str) -> dict[str, Any]:
+        from brain.person_onboarding import refresh_profile
+        return refresh_profile(person_id, _g())
 
     return app
 

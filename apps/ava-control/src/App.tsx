@@ -253,6 +253,16 @@ export default function App() {
   const [backendShutdownDetected, setBackendShutdownDetected] = useState(false);
   const [operatorOpen, setOperatorOpen] = useState(false);
   const [cameraOverlayOpen, setCameraOverlayOpen] = useState(false);
+
+  // Phase 79: onboarding overlay
+  const [onboardingActive, setOnboardingActive] = useState(false);
+  const [onboardingStage, setOnboardingStage] = useState<string | null>(null);
+  const [onboardingReply, setOnboardingReply] = useState<string>("");
+  const [onboardingInput, setOnboardingInput] = useState("");
+  const [onboardingBusy, setOnboardingBusy] = useState(false);
+  const [onboardingStageIndex, setOnboardingStageIndex] = useState(0);
+  const [onboardingStageCount, setOnboardingStageCount] = useState(13);
+  const PHOTO_STAGES_UI = ["photo_front", "photo_left", "photo_right", "photo_up", "photo_down"];
   const prevOnlineRef = useRef<boolean | null>(null);
   const appStartedAtRef = useRef(Date.now());
   const sttPollRef = useRef<number | null>(null);
@@ -476,6 +486,20 @@ export default function App() {
       }
     };
   }, []);
+
+  // Phase 79: sync onboarding state from snapshot
+  useEffect(() => {
+    if (!snap) return;
+    const ob = asRecord(snap.onboarding);
+    if (!ob) return;
+    const active = Boolean(ob.active);
+    setOnboardingActive(active);
+    if (active) {
+      setOnboardingStage(typeof ob.stage === "string" ? ob.stage : null);
+      setOnboardingStageIndex(typeof ob.stage_index === "number" ? ob.stage_index : 0);
+      setOnboardingStageCount(typeof ob.stage_count === "number" ? ob.stage_count : 13);
+    }
+  }, [snap]);
 
   const pollBrainGraph = useCallback(async (reason = "interval") => {
     setBrainLoading(true);
@@ -1313,6 +1337,96 @@ export default function App() {
         </div>
       )}
 
+      {/* Phase 79: onboarding overlay */}
+      {onboardingActive && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 900,
+          background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: "#0d1117", border: "1px solid #1e40af", borderRadius: 16,
+            padding: "2rem", maxWidth: 520, width: "90%", boxShadow: "0 0 40px rgba(26,108,245,0.4)",
+          }}>
+            <div style={{ marginBottom: "1rem" }}>
+              <div style={{ fontSize: "0.75rem", color: "#4a90d9", marginBottom: 6 }}>
+                ONBOARDING — Stage {onboardingStageIndex + 1} / {onboardingStageCount}
+              </div>
+              <div style={{
+                height: 4, background: "#1e293b", borderRadius: 2, overflow: "hidden", marginBottom: "1rem",
+              }}>
+                <div style={{
+                  height: "100%", borderRadius: 2, background: "#1a6cf5",
+                  width: `${Math.round(((onboardingStageIndex) / Math.max(1, onboardingStageCount - 1)) * 100)}%`,
+                  transition: "width 0.4s ease",
+                }} />
+              </div>
+              <div style={{ color: "#e2e8f0", fontSize: "0.95rem", lineHeight: 1.6, marginBottom: "1.25rem" }}>
+                {onboardingReply || "Starting onboarding…"}
+              </div>
+              {PHOTO_STAGES_UI.includes(onboardingStage || "") && (
+                <div style={{ marginBottom: "0.75rem" }}>
+                  <img src={`${API_BASE}/api/v1/camera/frame?t=${cameraTick}`}
+                    alt="camera" style={{ width: "100%", borderRadius: 8, border: "1px solid #1e40af" }}
+                    onError={() => {}} />
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="text"
+                value={onboardingInput}
+                onChange={(e) => setOnboardingInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !onboardingBusy) {
+                    const inp = onboardingInput;
+                    setOnboardingInput("");
+                    setOnboardingBusy(true);
+                    postJson("/api/v1/onboarding/step", { input: inp })
+                      .then((d) => {
+                        const r = d as Record<string, unknown>;
+                        if (typeof r.reply === "string") setOnboardingReply(r.reply);
+                        if (r.done) { setOnboardingActive(false); setOnboardingReply(""); }
+                      })
+                      .catch(() => {})
+                      .finally(() => setOnboardingBusy(false));
+                  }
+                }}
+                placeholder="Type your response…"
+                disabled={onboardingBusy}
+                style={{
+                  flex: 1, background: "#1e293b", border: "1px solid #2d3748",
+                  borderRadius: 8, padding: "0.6rem 0.9rem", color: "#e2e8f0", fontSize: "0.9rem",
+                }}
+                autoFocus
+              />
+              <button
+                type="button"
+                disabled={onboardingBusy}
+                onClick={() => {
+                  const inp = onboardingInput;
+                  setOnboardingInput("");
+                  setOnboardingBusy(true);
+                  postJson("/api/v1/onboarding/step", { input: inp })
+                    .then((d) => {
+                      const r = d as Record<string, unknown>;
+                      if (typeof r.reply === "string") setOnboardingReply(r.reply);
+                      if (r.done) { setOnboardingActive(false); setOnboardingReply(""); }
+                    })
+                    .catch(() => {})
+                    .finally(() => setOnboardingBusy(false));
+                }}
+                style={{
+                  background: "#1a6cf5", border: "none", borderRadius: 8,
+                  padding: "0.6rem 1.2rem", color: "#fff", cursor: "pointer", fontSize: "0.9rem",
+                }}
+              >
+                {onboardingBusy ? "…" : "Send"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className={`operator-backdrop ${operatorOpen ? "open" : ""}`} onClick={() => setOperatorOpen(false)} />
       <div className={`op-body operator-drawer ${operatorOpen ? "open" : ""} ${shutdownInProgress ? "shutdown-locked" : ""}`}>
         <button className="operator-close" type="button" onClick={() => setOperatorOpen(false)}>
@@ -1516,19 +1630,48 @@ export default function App() {
               {!online ? (
                 <p className="op-banner-inline">Offline — snapshot unavailable.</p>
               ) : (
-                <Section title="Runtime">
-                  <Kv
-                    items={[
-                      { label: "Heartbeat mode", value: hb?.heartbeat_mode },
-                      { label: "Brain / model", value: models?.selected_model },
-                      { label: "Cognitive mode", value: models?.cognitive_mode },
-                      { label: "Runtime readiness", value: hb?.runtime_ready_state },
-                      { label: "Active issue", value: hb?.runtime_active_issue_summary },
-                      { label: "Camera / vision", value: ribbon?.vision_status },
-                      { label: "Snapshot ts", value: snap?.ts },
-                    ]}
-                  />
-                </Section>
+                <>
+                  <Section title="Runtime">
+                    <Kv
+                      items={[
+                        { label: "Heartbeat mode", value: hb?.heartbeat_mode },
+                        { label: "Brain / model", value: models?.selected_model },
+                        { label: "Cognitive mode", value: models?.cognitive_mode },
+                        { label: "Runtime readiness", value: hb?.runtime_ready_state },
+                        { label: "Active issue", value: hb?.runtime_active_issue_summary },
+                        { label: "Camera / vision", value: ribbon?.vision_status },
+                        { label: "Snapshot ts", value: snap?.ts },
+                      ]}
+                    />
+                  </Section>
+                  <Section title="Onboarding">
+                    <p className="op-muted" style={{ marginBottom: "0.75rem" }}>
+                      Start a new person onboarding flow. Ava will greet them, take photos, and build a profile.
+                    </p>
+                    <button
+                      type="button"
+                      className="op-btn"
+                      onClick={() => {
+                        postJson("/api/v1/onboarding/start", {})
+                          .then((d) => {
+                            const r = d as Record<string, unknown>;
+                            if (typeof r.reply === "string") setOnboardingReply(r.reply);
+                            setOnboardingActive(true);
+                            setOnboardingStage("greeting");
+                            setOnboardingStageIndex(0);
+                          })
+                          .catch(() => {});
+                      }}
+                    >
+                      Start Onboarding
+                    </button>
+                    {Boolean(asRecord(snap?.onboarding)?.active) && (
+                      <p style={{ color: "#f5c518", marginTop: "0.5rem", fontSize: "0.85rem" }}>
+                        Onboarding active — stage: {String(asRecord(snap?.onboarding)?.stage ?? "")}
+                      </p>
+                    )}
+                  </Section>
+                </>
               )}
             </div>
           )}

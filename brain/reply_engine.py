@@ -7,6 +7,7 @@ reply guards, tool execution, and delegates to turn_handler for finalization.
 from __future__ import annotations
 
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,32 @@ def run_ava(
     )
 
     try:
+        # Phase 79: onboarding trigger detection
+        try:
+            from brain.person_onboarding import detect_onboarding_trigger, start_onboarding, run_onboarding_step
+            _ob_triggered, _ob_name = detect_onboarding_trigger(_inp)
+            if _ob_triggered and _g.get("_onboarding_flow") is None:
+                _ob_person_id = f"person_{uuid.uuid4().hex[:8]}"
+                _ob_flow = start_onboarding(_ob_person_id, Path(BASE_DIR), name_hint=_ob_name)
+                _g["_onboarding_flow"] = _ob_flow
+                _g["_onboarding_stage"] = _ob_flow.stage
+        except Exception as _ob_e:
+            print(f"[run_ava] onboarding trigger check error: {_ob_e}")
+
+        # Phase 79: if onboarding flow is active, route through it
+        if _g.get("_onboarding_flow") is not None:
+            try:
+                _ob_result = run_onboarding_step(_inp, _g)
+                if _ob_result is not None:
+                    _ob_reply, _ob_stage, _ob_done = _ob_result
+                    _ap = _av.load_profile_by_id(active_person_id)
+                    return finalize_ava_turn(
+                        user_input, _ob_reply, {}, _ap, [], turn_route="onboarding"
+                    )
+            except Exception as _ob_e:
+                print(f"[run_ava] onboarding step error: {_ob_e}")
+                _g["_onboarding_flow"] = None
+
         try:
             from brain.concern_reconciliation import mark_concern_user_dismissed
             _redir = _av._user_redirected_topic(user_input)
