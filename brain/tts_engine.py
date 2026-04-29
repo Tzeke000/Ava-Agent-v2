@@ -260,7 +260,9 @@ class TTSEngine:
     def _play_wav(self, wav_path: str, blocking: bool) -> None:
         if winsound is None:
             return
-        self.stop()
+        # NOTE: do NOT self.stop() here. Stopping playback every time we start
+        # a new WAV cuts Ava off mid-sentence whenever a fresh utterance
+        # arrives. The TTS worker queue already serialises requests.
         if blocking:
             self._play_wav_blocking(wav_path)
             return

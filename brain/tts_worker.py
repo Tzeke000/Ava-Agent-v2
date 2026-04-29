@@ -166,9 +166,10 @@ _QueueItem = Optional[tuple[str, str, float, Optional[threading.Event]]]
 class TTSWorker:
     """Single-threaded TTS owner. Prefers Kokoro, falls back to pyttsx3."""
 
-    def __init__(self) -> None:
+    def __init__(self, g: Optional[dict[str, Any]] = None) -> None:
         self._queue: "queue.Queue[_QueueItem]" = queue.Queue()
         self._stop_evt = threading.Event()
+        self._g = g  # globals — used to publish _tts_speaking / _tts_amplitude
 
         # Engine state
         self._engine_type: str = "none"   # "kokoro" | "pyttsx3" | "none"
@@ -191,9 +192,56 @@ class TTSWorker:
         # Kokoro can take ~5-8s to load; allow generous init window.
         self._init_done.wait(timeout=20.0)
 
+    def attach_globals(self, g: dict[str, Any]) -> None:
+        """Late-bind globals if the worker was constructed before startup
+        finished setting them up. Safe to call multiple times."""
+        self._g = g
+
+    # ── globals helpers (publish UI-facing state) ──────────────────────────────
+
+    def _set_speaking_state(self, speaking: bool, amp: float = 0.0) -> None:
+        if self._g is None:
+            return
+        try:
+            self._g["_tts_speaking"] = bool(speaking)
+            self._g["_tts_amplitude"] = max(0.0, min(1.0, float(amp)))
+        except Exception:
+            pass
+
+    def _set_speaking_amplitude(self, amp: float) -> None:
+        if self._g is None:
+            return
+        try:
+            self._g["_tts_amplitude"] = max(0.0, min(1.0, float(amp)))
+        except Exception:
+            pass
+
+    def _muted(self) -> bool:
+        if self._g is None:
+            return False
+        try:
+            return bool(self._g.get("_tts_muted"))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _raise_thread_priority() -> None:
+        """Bump this thread to THREAD_PRIORITY_HIGHEST so audio playback
+        never gets starved by other foreground work."""
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            THREAD_PRIORITY_HIGHEST = 2
+            kernel32.SetThreadPriority(kernel32.GetCurrentThread(), THREAD_PRIORITY_HIGHEST)
+        except Exception:
+            pass
+
     # ── thread body ────────────────────────────────────────────────────────────
 
     def _run(self) -> None:
+        # Bump priority once for the lifetime of the worker thread. Audio
+        # playback should never get starved by other foreground work.
+        self._raise_thread_priority()
         try:
             if not self._try_init_kokoro():
                 self._try_init_pyttsx3()
@@ -216,6 +264,7 @@ class TTSWorker:
                     continue
                 try:
                     self._currently_speaking.set()
+                    self._set_speaking_state(True, 0.5)
                     if self._engine_type == "kokoro":
                         self._speak_kokoro(text, emotion, intensity)
                     else:
@@ -224,12 +273,14 @@ class TTSWorker:
                     print(f"[tts_worker] speak error ({self._engine_type}): {e!r}")
                 finally:
                     _set_live_amplitude(0.0)
+                    self._set_speaking_state(False, 0.0)
                     self._currently_speaking.clear()
                     if done:
                         done.set()
         finally:
             # Ensure amplitude resets if the loop dies
             _set_live_amplitude(0.0)
+            self._set_speaking_state(False, 0.0)
 
     # ── engine init ────────────────────────────────────────────────────────────
 
@@ -333,57 +384,61 @@ class TTSWorker:
         print(f"[tts_worker] kokoro spoke voice={voice} speed={speed:.2f} chars={len(text)}: {preview!r}")
 
     def _play_with_amplitude(self, audio_np: Any, sample_rate: int) -> None:
-        """Play audio via sounddevice; update _LIVE_AMPLITUDE each ~50ms.
+        """Play audio via a protected sd.OutputStream that cannot be
+        interrupted by window focus changes or other UI events.
 
-        We start playback non-blocking via `sd.play()`, then walk the audio
-        in 50ms windows computing RMS for each window, sleeping 50ms between
-        updates. The orb sees real audio amplitude in real time.
+        Uses stream.write() with a chunked feed so amplitude updates land in
+        real time. The ONLY conditions that abort playback mid-stream:
+          - the user has explicitly muted (g["_tts_muted"] = True)
+          - the worker is shutting down (self._stop_evt set)
+        Window focus changes, mouse clicks, other apps grabbing the mic — all
+        are ignored. Audio plays through to completion.
         """
         np = self._np
         sd = self._sd
 
-        # Pre-compute RMS profile in 50ms chunks.
-        chunk_size = max(1, int(sample_rate * 0.05))  # 50ms = 1200 samples @ 24kHz
+        # Force float32 for the stream.
+        if audio_np.dtype != np.float32:
+            audio_np = audio_np.astype(np.float32)
+
+        chunk_size = 2048  # ~85ms @ 24kHz — small enough for snappy amplitude
         n_samples = int(audio_np.shape[0])
-        n_chunks = (n_samples + chunk_size - 1) // chunk_size
-        amplitudes = np.zeros(n_chunks, dtype=np.float32)
-        for i in range(n_chunks):
-            seg = audio_np[i * chunk_size:(i + 1) * chunk_size]
-            if seg.size == 0:
-                continue
-            # RMS, normalized: float32 PCM is in [-1, 1] so RMS in [0, 1].
-            rms = float(np.sqrt(np.mean(seg.astype(np.float32) ** 2)))
-            amplitudes[i] = min(1.0, rms * 1.6)  # slight gain so the orb pulses meaningfully
 
         try:
-            sd.play(audio_np, samplerate=sample_rate)
+            with sd.OutputStream(
+                samplerate=sample_rate,
+                channels=1,
+                dtype="float32",
+                blocksize=chunk_size,
+                latency="low",
+            ) as stream:
+                idx = 0
+                while idx < n_samples:
+                    # Explicit mute is the only mid-stream abort.
+                    if self._muted() or self._stop_evt.is_set():
+                        break
+                    end = min(idx + chunk_size, n_samples)
+                    chunk = audio_np[idx:end]
+                    if len(chunk) < chunk_size:
+                        chunk = np.pad(chunk, (0, chunk_size - len(chunk)))
+                    # Real RMS amplitude for the orb pulse.
+                    rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
+                    amp = min(1.0, rms * 8.0)  # gain so the orb pulses meaningfully
+                    _set_live_amplitude(amp)
+                    self._set_speaking_amplitude(amp)
+                    stream.write(chunk.reshape(-1, 1))
+                    idx += chunk_size
         except Exception as e:
-            print(f"[tts_worker] sd.play failed: {e!r}")
+            print(f"[tts_worker] OutputStream failed ({e!r}) — using sd.play fallback")
+            try:
+                if not self._muted():
+                    sd.play(audio_np, samplerate=sample_rate)
+                    sd.wait()
+            except Exception as e2:
+                print(f"[tts_worker] sd.play fallback failed: {e2!r}")
+        finally:
             _set_live_amplitude(0.0)
-            return
-
-        # Walk amplitude profile in real time.
-        start = time.time()
-        chunk_dt = chunk_size / float(sample_rate)
-        for i in range(n_chunks):
-            target_t = start + i * chunk_dt
-            wait = target_t - time.time()
-            if wait > 0:
-                time.sleep(wait)
-            _set_live_amplitude(float(amplitudes[i]))
-            if self._stop_evt.is_set():
-                try:
-                    sd.stop()
-                except Exception:
-                    pass
-                break
-
-        # Wait for playback to actually finish, then drop amplitude.
-        try:
-            sd.wait()
-        except Exception:
-            pass
-        _set_live_amplitude(0.0)
+            self._set_speaking_amplitude(0.0)
 
     def _speak_pyttsx3(self, text: str, emotion: str, intensity: float) -> None:
         rate, volume = _emotion_to_rate_volume(emotion, intensity)
@@ -459,6 +514,18 @@ class TTSWorker:
             pass
 
     def stop(self) -> None:
+        """Stop current speech immediately — but ONLY if mute is the cause.
+
+        The only legitimate reasons to interrupt Ava mid-sentence are:
+          1. User said "mute" / "stop talking" → g["_tts_muted"] = True
+          2. Process shutdown via shutdown()
+
+        Any other caller invoking stop() is a bug — we no-op so a stray
+        focus-change handler can't cut Ava off mid-word.
+        """
+        if not self._muted() and not self._stop_evt.is_set():
+            print("[tts_worker] stop() called without mute — ignoring (audio protected)")
+            return
         try:
             if self._engine_type == "kokoro" and self._sd is not None:
                 self._sd.stop()
@@ -467,6 +534,7 @@ class TTSWorker:
         except Exception:
             pass
         _set_live_amplitude(0.0)
+        self._set_speaking_state(False, 0.0)
 
     def shutdown(self) -> None:
         self._stop_evt.set()
@@ -502,12 +570,21 @@ _singleton: Optional[TTSWorker] = None
 _singleton_lock = threading.Lock()
 
 
-def get_tts_worker() -> TTSWorker:
-    """Return process-wide TTSWorker singleton, creating it lazily."""
+def get_tts_worker(g: Optional[dict[str, Any]] = None) -> TTSWorker:
+    """Return process-wide TTSWorker singleton, creating it lazily.
+
+    `g` is optional but recommended on first call so the worker can publish
+    _tts_speaking / _tts_amplitude to globals. If passed on a later call the
+    worker late-binds via attach_globals().
+    """
     global _singleton
     if _singleton is not None:
+        if g is not None and _singleton._g is None:
+            _singleton.attach_globals(g)
         return _singleton
     with _singleton_lock:
         if _singleton is None:
-            _singleton = TTSWorker()
+            _singleton = TTSWorker(g=g)
+        elif g is not None and _singleton._g is None:
+            _singleton.attach_globals(g)
     return _singleton

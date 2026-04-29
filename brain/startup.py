@@ -505,7 +505,7 @@ def run_startup(g: dict[str, Any]) -> None:
     print("[startup] step: TTS worker (COM-isolated thread)")
     try:
         from brain.tts_worker import get_tts_worker
-        _tts_worker = get_tts_worker()
+        _tts_worker = get_tts_worker(g)
         g["_tts_worker"] = _tts_worker
         print(f"[tts_worker] available={_tts_worker.available} voice={_tts_worker.voice_name()}")
     except Exception as e:
