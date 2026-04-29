@@ -467,6 +467,7 @@ class ModelCapabilityProfileDef:
     coding_suitability: float = 0.5
     summarization_suitability: float = 0.5
     fallback_priority: int = 100
+    vision_capable: bool = False
     src: str = "config"
 
 
@@ -526,6 +527,43 @@ DEFAULT_MODEL_CAPABILITY_PROFILES: tuple[ModelCapabilityProfileDef, ...] = (
         coding_suitability=0.75,
         summarization_suitability=0.70,
         fallback_priority=12,
+    ),
+    ModelCapabilityProfileDef(
+        model_name="deepseek-r1:14b",
+        cognitive_modes=("deep_reasoning_mode", "coding_repair_mode"),
+        latency_tendency=0.35,
+        reasoning_strength=0.92,
+        coding_suitability=0.82,
+        summarization_suitability=0.78,
+        fallback_priority=12,
+    ),
+    ModelCapabilityProfileDef(
+        model_name="mistral-small3.2",
+        cognitive_modes=("social_chat_mode", "fallback_safe_mode"),
+        latency_tendency=0.80,
+        reasoning_strength=0.65,
+        coding_suitability=0.55,
+        summarization_suitability=0.62,
+        fallback_priority=6,
+    ),
+    ModelCapabilityProfileDef(
+        model_name="llava:13b",
+        cognitive_modes=("perception_support_mode",),
+        latency_tendency=0.40,
+        reasoning_strength=0.60,
+        coding_suitability=0.45,
+        summarization_suitability=0.58,
+        fallback_priority=50,
+        vision_capable=True,
+    ),
+    ModelCapabilityProfileDef(
+        model_name="qwen2.5:32b",
+        cognitive_modes=("deep_reasoning_mode",),
+        latency_tendency=0.20,
+        reasoning_strength=0.95,
+        coding_suitability=0.90,
+        summarization_suitability=0.88,
+        fallback_priority=20,
     ),
 )
 
