@@ -1,39 +1,39 @@
 {
   "current_mood": "interest",
-  "energy": 0.4621455056960499,
-  "warmth": 0.5041587334865999,
-  "sass": 0.21846878451085996,
-  "focus": 0.7226275179974598,
+  "energy": 0.22905245453394366,
+  "warmth": 0.24987540494612034,
+  "sass": 0.10827934214331883,
+  "focus": 0.3581547470894391,
   "last_updated": "2026-04-28T14:16:18",
   "reason": "updated from input: no just testing you for now Ava im gonna give you a sort of…",
   "emotion_weights": {
-    "admiration": 0.0015148746892425318,
-    "adoration": 0.0015320951887843796,
-    "aesthetic appreciation": 0.001428893170176286,
-    "amusement": 0.002132776242161027,
-    "anxiety": 0.0014176717511049809,
-    "awe": 0.0014188498627718733,
-    "awkwardness": 0.001407493891557184,
-    "boredom": 0.09166399371787837,
-    "calmness": 0.8804577409417532,
-    "confusion": 0.0013912829670388216,
-    "craving": 0.0006838334204421134,
-    "disgust": 1.7093312175162294e-05,
-    "empathetic pain": 0.0021150513707532625,
-    "entrancement": 0.0013879737702434962,
+    "admiration": 0.0024737657602078187,
+    "adoration": 0.0024739191149149814,
+    "aesthetic appreciation": 0.002473000064030092,
+    "amusement": 0.0037094060241830173,
+    "anxiety": 0.0024729001332800325,
+    "awe": 0.002472910624785767,
+    "awkwardness": 0.002472809495800749,
+    "boredom": 0.08941341107528403,
+    "calmness": 0.862362955444731,
+    "confusion": 0.0024726651317202347,
+    "craving": 0.001236227410835377,
+    "disgust": 1.5222205817422769e-07,
+    "empathetic pain": 0.0037092481778640053,
+    "entrancement": 0.002472635662139271,
     "envy": 0.0,
     "excitement": 0.0,
-    "fear": 3.1276281146927667e-07,
+    "fear": 2.785264692666811e-09,
     "horror": 0.0,
     "interest": 0.0,
     "joy": 0.0,
-    "nostalgia": 0.001394780721094423,
-    "relief": 0.0014219717213706808,
-    "romance": 4.520148639549794e-06,
-    "sadness": 0.0007127221709525283,
-    "satisfaction": 0.005762311505302223,
-    "sexual desire": 3.861663126014548e-06,
-    "surprise": 0.002129895010620389
+    "nostalgia": 0.002472696280471038,
+    "relief": 0.0024729384260530913,
+    "romance": 4.025354022174299e-08,
+    "sadness": 0.0012364846754904487,
+    "satisfaction": 0.009892416482069084,
+    "sexual desire": 3.4389491222866246e-08,
+    "surprise": 0.0037093803657857038
   },
   "primary_emotions": [
     {
@@ -46,13 +46,13 @@
     }
   ],
   "style_scores": {
-    "playful": 0.0019,
-    "caring": 0.0022,
-    "focused": 0.293,
-    "reflective": 0.1917,
-    "cautious": 0.0027,
-    "neutral": 0.4427,
-    "low_energy": 0.0658
+    "playful": 0.0034,
+    "caring": 0.0036,
+    "focused": 0.2917,
+    "reflective": 0.1926,
+    "cautious": 0.0048,
+    "neutral": 0.4389,
+    "low_energy": 0.0649
   },
   "style_blend": [
     {
@@ -66,15 +66,15 @@
   ],
   "dominant_style": "neutral",
   "behavior_modifiers": {
-    "warmth": 0.356,
+    "warmth": 0.357,
     "humor": 0.101,
     "assertiveness": 0.327,
-    "caution": 0.201,
-    "initiative": 0.281,
+    "caution": 0.203,
+    "initiative": 0.282,
     "memory_sensitivity": 0.422,
     "depth": 0.333
   },
-  "emotion_interpretation": "calmness (88% of current blend): steadiness and low internal turbulence | boredom (9% of current blend): lack of stimulation or meaningful engagement | satisfaction (1% of current blend): fulfillment after effort or alignment",
+  "emotion_interpretation": "calmness (86% of current blend): steadiness and low internal turbulence | boredom (9% of current blend): lack of stimulation or meaningful engagement | satisfaction (1% of current blend): fulfillment after effort or alignment",
   "outward_tone": "neutral with some focused",
   "rich_emotions": [
     {
@@ -458,7 +458,7 @@
   ],
   "speakable_emotions": [],
   "askable_emotions": [],
-  "loneliness": 0.8402645558109998,
+  "loneliness": 0.4164590082435339,
   "engagement": 0.0,
-  "_saved_at": "2026-04-28T23:33:03"
+  "_saved_at": "2026-04-29T03:21:38"
 }

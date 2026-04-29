@@ -65,6 +65,9 @@ def run_ava(
     )
 
     print(f"[run_ava] enter person={active_person_id} has_image={image is not None} input_chars={len(_inp)}")
+    # Set thinking flag — UI uses this to show fast blue pulse animation
+    _g["_ava_thinking"] = True
+    _g["_ava_thinking_since"] = time.time()
 
     # ── Step: dual-brain foreground signal ────────────────────────────────────
     print("[run_ava] step: dual_brain foreground start")
@@ -453,3 +456,6 @@ def run_ava(
         fallback = "Something went wrong on my side; I'm still here. Could you try that again?"
         print(f"[run_ava] exit route=error reply=fallback (no finalize)")
         return fallback, vs, ap, ["run_ava_error"], {"error": str(e), "error_type": type(e).__name__}
+    finally:
+        # Always clear thinking flag — UI relies on this to stop the thinking pulse
+        _g["_ava_thinking"] = False

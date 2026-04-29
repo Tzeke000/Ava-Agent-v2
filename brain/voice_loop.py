@@ -60,8 +60,11 @@ class VoiceLoop:
     # ── internal loop ─────────────────────────────────────────
 
     def _set_state(self, state: str) -> None:
+        prev = self._state
         self._state = state
         self._g["_voice_loop_state"] = state
+        if prev != state:
+            print(f"[voice_loop] state: {prev} → {state}")
 
     def _loop(self) -> None:
         while self._active:

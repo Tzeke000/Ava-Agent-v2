@@ -55,7 +55,10 @@
       "Bash(py -3.11 -m py_compile brain/person_onboarding.py)",
       "Bash(npx tsc *)",
       "Bash(py *)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "Bash(xargs ls *)",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); [print\\(k\\) for k in d.keys\\(\\)]\")",
+      "Bash(awk *)"
     ]
   }
 }

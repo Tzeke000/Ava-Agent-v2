@@ -1097,8 +1097,12 @@ export default function App() {
   const voiceLoopActive = Boolean((snap as Record<string, unknown>)?.voice_loop
     ? ((snap as Record<string, unknown>).voice_loop as Record<string, unknown>)?.active
     : false);
+  // Backend run_ava thinking flag — overrides everything except offline
+  const avaThinking = Boolean((snap as Record<string, unknown> | null)?.thinking);
   const orbPulseMode = backendShutdownDetected || !online
     ? "offline"
+    : avaThinking
+      ? "thinking"  // Ava is processing a chat turn — fast blue pulse
     : voiceLoopActive && voiceLoopState === "speaking"
       ? "speaking"
     : voiceLoopActive && voiceLoopState === "thinking"
@@ -1599,6 +1603,15 @@ export default function App() {
             UPTIME: {uptimeLabel}
           </div>
         </div>
+        {avaThinking && (
+          <div style={{
+            textAlign: "center", color: "#3b82f6", fontFamily: "monospace",
+            fontSize: "0.95rem", letterSpacing: "0.06em", marginTop: "0.4rem",
+            animation: "pulse 1.2s ease-in-out infinite",
+          }}>
+            Ava is thinking…
+          </div>
+        )}
         <div className="presence-last-message">{presenceStatusMessage}</div>
         <div className="presence-input-row">
           <input
@@ -1630,7 +1643,9 @@ export default function App() {
           ⚙
         </button>
         <button className="presence-camera-thumb" type="button" onClick={() => setCameraOverlayOpen(true)} aria-label="Expand camera">
-          {presenceCameraOk ? (
+          {liveFrameSrc ? (
+            <img src={liveFrameSrc} alt="camera live thumb" />
+          ) : presenceCameraOk ? (
             <img
               src={frameUrl}
               alt="camera thumb"
@@ -1653,7 +1668,8 @@ export default function App() {
       </section>
       {cameraOverlayOpen && (
         <div className="camera-overlay" onClick={() => setCameraOverlayOpen(false)}>
-          <img src={frameUrl} alt="camera expanded" />
+          {/* Prefer live frame (refreshes every 200ms) — fall back to cached annotated frame */}
+          <img src={liveFrameSrc || frameUrl} alt="camera expanded" />
         </div>
       )}
 
@@ -2112,24 +2128,78 @@ export default function App() {
                   Seen person: {personIdentity} ({personConfidencePct}%)
                 </p>
               </Section>
-              <Section title="Voice controls">
-                <button
-                  type="button"
-                  className="btn primary voice-mic-btn"
-                  disabled={inputMuted || sttListening || sttProcessing}
-                  onClick={() => void startSttListen()}
-                >
-                  {sttListening ? "Listening..." : sttProcessing ? "Processing..." : "Mic"}
-                </button>
-                <div className="row-gap">
-                  <button type="button" className="btn ghost" onClick={() => void toggleTts()}>
-                    TTS {Boolean(tts?.enabled) ? "On" : "Off"}
+              <Section title="Voice loop status">
+                {(() => {
+                  const vl = asRecord(snap?.voice_loop);
+                  const vlState = String(vl?.state ?? "passive").toLowerCase();
+                  const vlActive = Boolean(vl?.active);
+                  const stateColor: Record<string, string> = {
+                    passive: "#6b7280",
+                    listening: "#4ade80",
+                    thinking: "#3b82f6",
+                    speaking: "#a855f7",
+                  };
+                  const color = stateColor[vlState] ?? "#6b7280";
+                  return (
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "0.5rem 0" }}>
+                      <span style={{
+                        display: "inline-block", width: 14, height: 14, borderRadius: "50%",
+                        background: color, boxShadow: `0 0 12px ${color}`,
+                      }} />
+                      <span style={{ fontFamily: "monospace", fontWeight: 600, fontSize: "1rem", color }}>
+                        {vlState.toUpperCase()}
+                      </span>
+                      <span className="op-muted" style={{ marginLeft: 8 }}>
+                        {vlActive ? "loop active — always listening for wake word" : "loop inactive"}
+                      </span>
+                    </div>
+                  );
+                })()}
+              </Section>
+              <Section title="Wake word & clap detector">
+                <Kv items={[
+                  { label: "Wake word", value: String(asRecord(snap?.voice)?.wake_word_active ?? "—") },
+                  { label: "Clap detector", value: "active (always-on)" },
+                  { label: "TTS engine", value: String(tts?.engine ?? "none") },
+                ]} />
+                <div style={{ marginTop: "0.6rem" }}>
+                  <button
+                    type="button"
+                    className="op-btn"
+                    onClick={() => {
+                      postJson("/api/v1/clap/calibrate", {})
+                        .then((r) => {
+                          const rec = r as Record<string, unknown>;
+                          alert(rec.ok ? `Recalibrated. Threshold=${rec.threshold}` : `Failed: ${rec.error}`);
+                        })
+                        .catch(() => {});
+                    }}
+                  >
+                    Recalibrate Clap Detector
+                  </button>
+                </div>
+              </Section>
+              <Section title="TTS output controls">
+                <p className="op-muted" style={{ marginBottom: "0.5rem" }}>
+                  The mic is always listening. Only Ava's voice output can be muted.
+                </p>
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+                  <button type="button" className="op-btn" onClick={() => void toggleTts()}>
+                    {Boolean(tts?.enabled) ? "Mute Ava's voice" : "Unmute Ava's voice"}
+                  </button>
+                  <button
+                    type="button"
+                    className="op-btn"
+                    onClick={() => {
+                      postJson("/api/v1/tts/speak", { text: "Hello. This is a voice test." })
+                        .catch(() => {});
+                    }}
+                  >
+                    Test Voice
                   </button>
                   <span className="op-muted">
-                    {sttListening ? "Listening..." : sttProcessing ? "Processing..." : "Voice input idle"}
+                    Voice output is {Boolean(tts?.enabled) ? "ON" : "MUTED"}
                   </span>
-                  <span className="op-muted">Voice activity: {Boolean(tts?.enabled) ? "speaking ready" : "idle"}</span>
-                  <span className="op-muted">Engine: {String(tts?.engine ?? "none")}</span>
                 </div>
               </Section>
             </div>
