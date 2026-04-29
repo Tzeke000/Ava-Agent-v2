@@ -16,7 +16,9 @@ from typing import Any, Callable, Optional
 
 
 _DEFAULT_THRESHOLD = 0.4
-_CALIBRATION_MULTIPLIER = 3.0
+_CALIBRATION_MULTIPLIER = 5.0  # was 3.0 — bumped so claps must be much louder than ambient
+_MIN_THRESHOLD_FLOOR = 0.15  # never accept a calibrated threshold below this — keyboard/mouse noise
+_TRIGGER_COOLDOWN_SEC = 3.0  # ignore claps for this long after a successful double-clap trigger
 
 
 def _calibration_path(g: dict[str, Any]) -> Path:
@@ -30,7 +32,7 @@ def load_calibrated_threshold(g: dict[str, Any]) -> float:
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
             t = float(data.get("threshold") or _DEFAULT_THRESHOLD)
-            return max(0.01, min(1.0, t))
+            return max(_MIN_THRESHOLD_FLOOR, min(1.0, t))
         except Exception:
             pass
     return _DEFAULT_THRESHOLD
@@ -52,7 +54,7 @@ def calibrate_clap_threshold(g: dict[str, Any], duration_seconds: float = 2.0) -
         sd.wait()
         audio = audio.squeeze()
         ambient_rms = float(np.sqrt(np.mean(audio ** 2)))
-        threshold = max(0.05, min(0.9, ambient_rms * _CALIBRATION_MULTIPLIER))
+        threshold = max(_MIN_THRESHOLD_FLOOR, min(0.9, ambient_rms * _CALIBRATION_MULTIPLIER))
     except Exception as e:
         return {"ok": False, "error": str(e)[:200], "threshold": _DEFAULT_THRESHOLD}
 
@@ -77,6 +79,7 @@ class ClapDetector:
         self._thread: Optional[threading.Thread] = None
         self._clap_times: list[float] = []
         self._threshold: float = _DEFAULT_THRESHOLD
+        self._last_trigger_ts: float = 0.0  # cooldown gate
 
     def start(self) -> bool:
         try:
@@ -129,14 +132,18 @@ class ClapDetector:
                     return
                 if self._g.get("input_muted"):
                     return
+                now = time.monotonic()
+                # Cooldown: after a trigger, ignore all clap candidates for N seconds
+                if now - self._last_trigger_ts < _TRIGGER_COOLDOWN_SEC:
+                    return
                 rms = float(np.sqrt(np.mean(indata ** 2)))
                 if rms > self._threshold:
-                    now = time.monotonic()
                     self._clap_times.append(now)
                     self._clap_times = [t for t in self._clap_times if now - t < 3.0]
                     recent = [t for t in self._clap_times if now - t < 1.0]
                     if len(recent) >= 2:
                         self._clap_times.clear()
+                        self._last_trigger_ts = now
                         self._trigger()
 
             with sd.InputStream(
