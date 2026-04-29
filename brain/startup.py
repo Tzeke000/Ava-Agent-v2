@@ -68,6 +68,14 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_image_generator"] = None
         print(f"[image_gen] startup skipped: {e}")
 
+    # Dual-brain parallel inference (must run after connectivity)
+    try:
+        from brain.dual_brain import bootstrap_dual_brain
+        bootstrap_dual_brain(g)
+    except Exception as e:
+        g["_dual_brain"] = None
+        print(f"[dual_brain] startup skipped: {e}")
+
     # Heartbeat bootstrap
     try:
         from brain.heartbeat import bootstrap_heartbeat_runtime

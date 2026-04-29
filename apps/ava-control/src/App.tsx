@@ -781,6 +781,18 @@ export default function App() {
   const snapshotBrainGraph = asRecord(snap?.brain_graph);
   const snapshotNodesByType = asRecord(snapshotBrainGraph?.nodes_by_type);
   const toolsBlock = asRecord(snap?.tools);
+
+  // Dual-brain status from snapshot
+  const dualBrain = asRecord((snap as Record<string, unknown> | null)?.dual_brain);
+  const dbStreamA = asRecord(dualBrain?.stream_a);
+  const dbStreamB = asRecord(dualBrain?.stream_b);
+  const dbBusy = Boolean(dbStreamB?.busy);
+  const dbCurrentTask = typeof dbStreamB?.current_task === "string" ? dbStreamB.current_task : null;
+  const dbLiveThinking = Boolean(dbStreamB?.live_thinking);
+  const dbPendingInsight = Boolean(dualBrain?.pending_insight);
+  const dbQueueDepth = typeof dbStreamB?.queue_depth === "number" ? dbStreamB.queue_depth : 0;
+  const dbTasksToday = typeof dbStreamB?.tasks_today === "number" ? dbStreamB.tasks_today : 0;
+  const dbStreamABusy = Boolean(dbStreamA?.busy);
   const toolsRegistry = asRecord(toolsBlock?.tools_registry);
 
   const sendChatText = async (rawText: string) => {
@@ -1406,8 +1418,16 @@ export default function App() {
         </div>
         <div className="presence-orb-line" aria-hidden="true" />
         <div className="presence-hud-row presence-hud-row-bottom">
-          <div className="presence-hud">
-            NEURAL ACTIVITY: {Number(snapshotBrainGraph?.total_nodes ?? brainGraph.nodes.length)}
+          <div className="presence-hud" style={{
+            color: dbBusy ? "#60a5fa" : dbPendingInsight ? "#a78bfa" : dbLiveThinking ? "#2dd4bf" : undefined,
+          }}>
+            {dbPendingInsight
+              ? "READY TO SHARE"
+              : dbBusy && dbCurrentTask
+                ? `THINKING: ${dbCurrentTask}`
+                : dbLiveThinking
+                  ? "PROCESSING..."
+                  : `NEURAL ACTIVITY: ${Number(snapshotBrainGraph?.total_nodes ?? brainGraph.nodes.length)}`}
           </div>
           <div className="presence-hud">
             UPTIME: {uptimeLabel}
@@ -1933,6 +1953,78 @@ export default function App() {
               <p className="op-lead">
                 Discovery + routing. Cloud models available when internet connected.
               </p>
+
+              {/* Dual Brain Status — always shown */}
+              <Section title="Dual Brain Status">
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {/* Stream A */}
+                  <div style={{
+                    background: "#0d1117", border: `1px solid ${dbStreamABusy ? "#4ade80" : "#1e293b"}`,
+                    borderRadius: 8, padding: "0.75rem",
+                    boxShadow: dbStreamABusy ? "0 0 8px rgba(74,222,128,0.2)" : "none",
+                  }}>
+                    <div style={{ fontSize: "0.72rem", color: "#4a5568", marginBottom: 4, letterSpacing: "0.1em" }}>
+                      STREAM A — FOREGROUND
+                    </div>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <span style={{
+                        width: 10, height: 10, borderRadius: "50%", flexShrink: 0,
+                        background: dbStreamABusy ? "#4ade80" : "#2d3748",
+                        boxShadow: dbStreamABusy ? "0 0 6px #4ade80" : "none",
+                      }} />
+                      <div>
+                        <div style={{ color: "#e2e8f0", fontSize: "0.85rem" }}>
+                          {String(dbStreamA?.model ?? "ava-personal:latest")}
+                        </div>
+                        <div style={{ color: dbStreamABusy ? "#4ade80" : "#6b7280", fontSize: "0.75rem" }}>
+                          {dbStreamABusy ? "ACTIVE — speaking" : "IDLE"}
+                        </div>
+                        {Boolean(dbStreamA?.last_active) && Number(dbStreamA?.last_active) > 0 && (
+                          <div style={{ color: "#4a5568", fontSize: "0.72rem" }}>
+                            Last active {Math.round(Date.now() / 1000 - Number(dbStreamA?.last_active ?? 0))}s ago
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {/* Stream B */}
+                  <div style={{
+                    background: "#0d1117",
+                    border: `1px solid ${dbBusy ? "#3b82f6" : dbLiveThinking ? "#0d9488" : "#1e293b"}`,
+                    borderRadius: 8, padding: "0.75rem",
+                    boxShadow: dbBusy ? "0 0 8px rgba(59,130,246,0.2)" : dbLiveThinking ? "0 0 8px rgba(13,148,136,0.2)" : "none",
+                  }}>
+                    <div style={{ fontSize: "0.72rem", color: "#4a5568", marginBottom: 4, letterSpacing: "0.1em" }}>
+                      STREAM B — BACKGROUND
+                    </div>
+                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                      <span style={{
+                        width: 10, height: 10, borderRadius: "50%", flexShrink: 0, marginTop: 3,
+                        background: dbBusy ? "#3b82f6" : dbLiveThinking ? "#2dd4bf" : "#2d3748",
+                        boxShadow: dbBusy ? "0 0 6px #3b82f6" : dbLiveThinking ? "0 0 6px #2dd4bf" : "none",
+                      }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ color: "#93c5fd", fontSize: "0.85rem" }}>
+                          {String(dbStreamB?.model ?? "qwen2.5:14b")}
+                        </div>
+                        <div style={{ color: dbBusy ? "#3b82f6" : dbLiveThinking ? "#2dd4bf" : "#6b7280", fontSize: "0.75rem" }}>
+                          {dbBusy && dbCurrentTask
+                            ? `thinking: ${dbCurrentTask}`
+                            : dbLiveThinking
+                              ? "💭 Live thinking about current topic"
+                              : dbPendingInsight
+                                ? "✨ Has something to share"
+                                : "—"}
+                        </div>
+                        <div style={{ color: "#4a5568", fontSize: "0.72rem", marginTop: 2 }}>
+                          Queue: {dbQueueDepth} pending · Completed today: {dbTasksToday}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </Section>
+
               {!online ? (
                 <p className="op-muted">Not connected.</p>
               ) : (

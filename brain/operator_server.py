@@ -517,6 +517,21 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
 
+    # Dual-brain status snapshot
+    _dual_brain_block: dict[str, Any] = {
+        "stream_a": {"model": "ava-personal:latest", "busy": False, "last_active": 0.0},
+        "stream_b": {"model": "qwen2.5:14b", "busy": False, "current_task": None, "queue_depth": 0, "tasks_today": 0, "live_thinking": False},
+        "pending_insight": False,
+        "live_thought_age": None,
+    }
+    try:
+        from brain.dual_brain import get_dual_brain
+        _db_snap = get_dual_brain(host)
+        if _db_snap is not None:
+            _dual_brain_block = _db_snap.get_status()
+    except Exception:
+        pass
+
     # Connectivity snapshot block
     _connectivity_block: dict[str, Any] = {
         "online": bool(host.get("_is_online", False)),
@@ -686,6 +701,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "active_plans": active_plans_block,
         "onboarding": onboarding_block,
         "current_person": current_person_block,
+        "dual_brain": _dual_brain_block,
         "connectivity": _connectivity_block,
         "notification_count_today": _notif_count_today,
         "security": _security_block,
