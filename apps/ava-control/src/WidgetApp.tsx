@@ -7,7 +7,7 @@
  *
  * Bootstrap: Ava tracks where the widget gets moved and starts defaulting there.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import OrbCanvas from "./components/OrbCanvas";
 import { API_BASE, getJson } from "./api";
 
@@ -57,6 +57,45 @@ export default function WidgetApp() {
   const [online, setOnline] = useState(false);
   const [snap, setSnap] = useState<Record<string, unknown> | null>(null);
   const dragRef = useRef<{ startX: number; startY: number; winX: number; winY: number } | null>(null);
+
+  // Force transparent background on html/body/#root — overrides styles.css which sets --bg colour.
+  // Must run synchronously before first paint so the dark background never flashes.
+  useLayoutEffect(() => {
+    const transparent = "transparent";
+    const els = [
+      document.documentElement,
+      document.body,
+      document.getElementById("root"),
+    ];
+    const prev = els.map((el) => el ? { bg: el.style.background, bgc: el.style.backgroundColor } : null);
+
+    els.forEach((el) => {
+      if (!el) return;
+      el.style.setProperty("background", transparent, "important");
+      el.style.setProperty("background-color", transparent, "important");
+    });
+
+    // Inject a <style> tag that also beats the cascade (stylesheet specificity)
+    const tag = document.createElement("style");
+    tag.id = "widget-transparent-override";
+    tag.textContent = `
+      html, body, #root {
+        background: transparent !important;
+        background-color: transparent !important;
+        overflow: hidden !important;
+      }
+    `;
+    document.head.appendChild(tag);
+
+    return () => {
+      tag.remove();
+      els.forEach((el, i) => {
+        if (!el || !prev[i]) return;
+        el.style.background = prev[i]!.bg;
+        el.style.backgroundColor = prev[i]!.bgc;
+      });
+    };
+  }, []);
 
   // Poll snapshot
   useEffect(() => {
@@ -112,9 +151,13 @@ export default function WidgetApp() {
         width: "150px",
         height: "150px",
         background: "transparent",
+        backgroundColor: "transparent",
         overflow: "hidden",
         cursor: "grab",
         userSelect: "none",
+        position: "fixed",
+        top: 0,
+        left: 0,
       }}
     >
       <OrbCanvas
