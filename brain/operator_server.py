@@ -640,21 +640,43 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     }
     try:
         cg = host.get("_concept_graph")
+        payload: dict[str, Any] = {}
         if cg is not None and callable(getattr(cg, "get_graph_data", None)):
-            payload = cg.get_graph_data() or {}
+            try:
+                payload = cg.get_graph_data() or {}
+            except Exception:
+                payload = {}
+        # If the in-memory instance returned 0 nodes, fall back to reading the file directly
+        if not payload.get("nodes"):
+            try:
+                _cg_path = Path(host.get("BASE_DIR") or ".") / "state" / "concept_graph.json"
+                if _cg_path.is_file():
+                    payload = json.loads(_cg_path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                pass
+        if payload.get("nodes") or payload.get("stats"):
             stats = dict(payload.get("stats") or {})
-            brain_graph_block["total_nodes"] = int(stats.get("total_nodes") or len(payload.get("nodes") or []))
+            node_list = list(payload.get("nodes") or [])
+            brain_graph_block["total_nodes"] = int(stats.get("total_nodes") or len(node_list))
             brain_graph_block["total_edges"] = int(stats.get("total_edges") or len(payload.get("edges") or []))
             active_ids = host.get("_active_concept_nodes")
             if isinstance(active_ids, list):
                 brain_graph_block["active_nodes"] = len([x for x in active_ids if str(x).strip()])
             else:
                 brain_graph_block["active_nodes"] = int(stats.get("active_nodes_30s") or 0)
+            # Compute nodes_by_type from stats or raw node list
             by_type = stats.get("nodes_by_type")
             if isinstance(by_type, dict):
                 merged = dict(brain_graph_block["nodes_by_type"])
                 for k, v in by_type.items():
                     merged[str(k)] = int(v or 0)
+                brain_graph_block["nodes_by_type"] = merged
+            elif node_list:
+                merged = dict(brain_graph_block["nodes_by_type"])
+                for n in node_list:
+                    if isinstance(n, dict):
+                        t = str(n.get("type") or "topic")
+                        merged[t] = merged.get(t, 0) + 1
                 brain_graph_block["nodes_by_type"] = merged
             brain_graph_block["most_activated"] = str(stats.get("most_activated") or "")
             brain_graph_block["last_bootstrap"] = float(stats.get("last_bootstrap") or payload.get("last_bootstrap") or 0.0)

@@ -126,7 +126,19 @@ class ConceptGraph:
         }
         tmp = self.path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(self.path)
+        try:
+            tmp.replace(self.path)
+        except OSError as _e:
+            # WinError 32: file locked by another process — delete stale .tmp and retry once
+            if getattr(_e, "winerror", None) == 32 or "WinError 32" in str(_e):
+                try:
+                    tmp.unlink(missing_ok=True)
+                    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+                    tmp.replace(self.path)
+                except Exception:
+                    pass
+            else:
+                raise
 
     def add_node(self, label: str, type: NodeType, notes: str = "") -> str:
         node_id = _slugify(label)
