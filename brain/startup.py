@@ -7,13 +7,25 @@ after all module-level definitions are done.
 g is avaagent's globals() dict — all avaagent functions and constants
 are accessible through it. We write initialized objects back into g so
 avaagent's global namespace sees them.
+
+THREADING RULE: any call that invokes Ollama / LLM must run in a daemon
+thread, never on the main startup thread. The main thread must reach the
+operator_server startup within ~10 seconds of launch.
 """
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
+
+
+def _bg(name: str, fn, *args, **kwargs) -> threading.Thread:
+    """Spawn a daemon thread and start it immediately."""
+    t = threading.Thread(target=fn, args=args, kwargs=kwargs, daemon=True, name=name)
+    t.start()
+    return t
 
 
 def run_startup(g: dict[str, Any]) -> None:
@@ -24,11 +36,11 @@ def run_startup(g: dict[str, Any]) -> None:
     OWNER_PERSON_ID: str = g["OWNER_PERSON_ID"]
     DEEPFACE_AVAILABLE: bool = g["DEEPFACE_AVAILABLE"]
 
-    # Core identity + profile setup
+    print("[startup] step: identity + profiles")
     g["ensure_owner_profile"]()
     g["ensure_identity_files"]()
 
-    # Tool registry
+    print("[startup] step: tool registry")
     try:
         _tool_registry = g["ToolRegistry"]()
         g["_tool_registry"] = _tool_registry
@@ -38,7 +50,7 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_desktop_tool_registry"] = None
         print(f"[tool_registry] startup skipped: {e}")
 
-    # Visual memory
+    print("[startup] step: visual memory")
     try:
         _vm = g["VisualMemory"](BASE_DIR)
         g["_visual_memory"] = _vm
@@ -48,7 +60,7 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_visual_memory_summary"] = {"cluster_count": 0, "named_clusters": 0, "most_seen": ""}
         print(f"[visual_memory] startup skipped: {e}")
 
-    # Connectivity monitor (must run before heartbeat/routing)
+    print("[startup] step: connectivity monitor")
     try:
         from brain.connectivity import bootstrap_connectivity
         bootstrap_connectivity(g)
@@ -59,7 +71,7 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_connectivity_changed"] = False
         print(f"[connectivity] bootstrap skipped: {e}")
 
-    # Image generator
+    print("[startup] step: image generator")
     try:
         from tools.creative.image_generator import ImageGenerator
         g["_image_generator"] = ImageGenerator(g)
@@ -68,7 +80,7 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_image_generator"] = None
         print(f"[image_gen] startup skipped: {e}")
 
-    # Dual-brain parallel inference (must run after connectivity)
+    print("[startup] step: dual brain")
     try:
         from brain.dual_brain import bootstrap_dual_brain
         bootstrap_dual_brain(g)
@@ -76,50 +88,62 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_dual_brain"] = None
         print(f"[dual_brain] startup skipped: {e}")
 
-    # Heartbeat bootstrap
+    print("[startup] step: heartbeat bootstrap")
     try:
         from brain.heartbeat import bootstrap_heartbeat_runtime
         bootstrap_heartbeat_runtime(g)
     except Exception as e:
         print(f"[heartbeat] bootstrap skipped: {e}")
 
-    # Runtime presence / startup resume
+    print("[startup] step: startup resume")
     try:
         from brain.runtime_presence import bootstrap_startup_resume
         bootstrap_startup_resume(g)
     except Exception as e:
         print(f"[startup_resume] skipped: {e}")
 
-    # Concern reconciliation
+    print("[startup] step: concern reconciliation")
     try:
         from brain.concern_reconciliation import run_startup_concern_reconciliation
         run_startup_concern_reconciliation(g)
     except Exception as e:
         print(f"[concern_reconciliation] startup skipped: {e}")
 
-    # Curiosity bootstrap
+    print("[startup] step: curiosity topics bootstrap")
     try:
         g["bootstrap_curiosity_topics"](g)
     except Exception as e:
         print(f"[curiosity_topics] bootstrap skipped: {e}")
 
-    # Concept graph
+    # ── Concept graph: init object synchronously (file load only, no LLM) ────
+    # bootstrap_from_existing_memory calls mistral:7b — runs in background thread
+    print("[startup] step: concept graph init")
     try:
         from brain.concept_graph import ConceptGraph, bootstrap_from_existing_memory
         _concept_graph = ConceptGraph(BASE_DIR)
         g["_concept_graph"] = _concept_graph
-        _cg_boot = bootstrap_from_existing_memory(_concept_graph, g)
-        if isinstance(_cg_boot, dict):
-            g["_concept_graph_bootstrap_nodes"] = int(_cg_boot.get("nodes_created") or 0)
-        else:
-            g["_concept_graph_bootstrap_nodes"] = int(_cg_boot or 0)
-        _concept_graph.decay_unused_nodes(days_threshold=30)
+        g["_concept_graph_bootstrap_nodes"] = 0
+
+        def _bg_concept_bootstrap():
+            try:
+                _cg_boot = bootstrap_from_existing_memory(_concept_graph, g)
+                if isinstance(_cg_boot, dict):
+                    g["_concept_graph_bootstrap_nodes"] = int(_cg_boot.get("nodes_created") or 0)
+                else:
+                    g["_concept_graph_bootstrap_nodes"] = int(_cg_boot or 0)
+                _concept_graph.decay_unused_nodes(days_threshold=30)
+                print(f"[concept_graph] bootstrap complete nodes={g['_concept_graph_bootstrap_nodes']}")
+            except Exception as e:
+                print(f"[concept_graph] background bootstrap error: {e}")
+
+        _bg("ava-cg-bootstrap", _bg_concept_bootstrap)
+        print("[startup] step: concept graph bootstrap dispatched to background")
     except Exception as e:
         g["_concept_graph"] = None
         g["_concept_graph_bootstrap_nodes"] = 0
-        print(f"[concept_graph] bootstrap skipped: {e}")
+        print(f"[concept_graph] startup skipped: {e}")
 
-    # Fine-tune pipeline
+    print("[startup] step: finetune pipeline")
     try:
         from brain.finetune_pipeline import FineTuneManager
         _finetune_manager = FineTuneManager(BASE_DIR)
@@ -131,7 +155,7 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_finetune_status"] = {"status": "idle", "error": str(e)}
         print(f"[finetune] startup skipped: {e}")
 
-    # Deep self snapshot
+    print("[startup] step: deep self snapshot")
     try:
         from brain.deep_self import deep_self_snapshot
         g["_deep_self"] = deep_self_snapshot(g)
@@ -139,20 +163,27 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_deep_self"] = {}
         print(f"[deep_self] startup skipped: {e}")
 
-    # Self model weekly update
+    # ── Self model weekly update: calls qwen2.5:14b — background thread ───────
+    print("[startup] step: self model update (background)")
     try:
-        g["update_self_model"](g)
+        def _bg_self_model():
+            try:
+                g["update_self_model"](g)
+                print("[self_model] weekly update complete")
+            except Exception as e:
+                print(f"[self_model] weekly update error: {e}")
+        _bg("ava-self-model-update", _bg_self_model)
     except Exception as e:
         print(f"[self_model] weekly update skipped: {e}")
 
-    # Inner monologue
+    print("[startup] step: inner monologue")
     try:
         from brain.inner_monologue import start_inner_monologue
         start_inner_monologue(g)
     except Exception as e:
         print(f"[inner_monologue] startup skipped: {e}")
 
-    # History manager
+    print("[startup] step: history manager")
     try:
         from brain.history_manager import AvaHistoryManager
         g["history_manager"] = AvaHistoryManager(BASE_DIR, target_context_length=8000)
@@ -160,7 +191,7 @@ def run_startup(g: dict[str, Any]) -> None:
         g["history_manager"] = None
         print(f"[history_manager] startup skipped: {e}")
 
-    # Pickup note
+    print("[startup] step: pickup note")
     try:
         from brain.shutdown_ritual import load_pickup_note
         g["pickup_note"] = load_pickup_note()
@@ -168,7 +199,7 @@ def run_startup(g: dict[str, Any]) -> None:
         g["pickup_note"] = None
         print(f"[shutdown_ritual] pickup note load skipped: {e}")
 
-    # Profiles seed + identity
+    print("[startup] step: profiles + identity + selftest")
     g["seed_default_profiles"]()
     from brain.identity_loader import load_ava_identity
     g["_AVA_IDENTITY_BLOCK"] = load_ava_identity()
@@ -177,7 +208,7 @@ def run_startup(g: dict[str, Any]) -> None:
     print_startup_selftest(g)
     g["_write_ava_pid_file"]()
 
-    # Self narrative
+    print("[startup] step: self narrative")
     from brain.beliefs import SELF_NARRATIVE_PATH, save_self_narrative, load_self_narrative
     if not SELF_NARRATIVE_PATH.exists():
         save_self_narrative(load_self_narrative())
@@ -186,21 +217,36 @@ def run_startup(g: dict[str, Any]) -> None:
         load_self_narrative()
         print("[beliefs] self-narrative loaded")
 
-    # Goal system + vectorstore + memory decay + life rhythm
+    print("[startup] step: goal system")
     g["load_goal_system"]()
-    g["init_vectorstore"]()
+
+    # ── Vectorstore: embed_query call blocks on nomic-embed-text — background ─
+    print("[startup] step: vectorstore init (background)")
+    try:
+        def _bg_vectorstore():
+            try:
+                g["init_vectorstore"]()
+            except Exception as e:
+                print(f"[vectorstore] background init error: {e}")
+        _bg("ava-vectorstore-init", _bg_vectorstore)
+    except Exception as e:
+        print(f"[vectorstore] background dispatch failed: {e}")
+
+    print("[startup] step: memory decay tick")
     try:
         from brain.memory import decay_tick
         decay_tick(g)
         print("[memory] decay tick complete")
     except Exception as e:
         print(f"[memory] decay tick failed: {e}")
+
+    print("[startup] step: life rhythm schedule")
     try:
         g["_schedule_life_rhythm_on_startup"]()
     except Exception as e:
         print(f"[life_rhythm] schedule failed: {e}")
 
-    # Health check
+    print("[startup] step: health check")
     try:
         from brain.health import run_system_health_check
         _health_state = run_system_health_check(g, kind="startup")
@@ -208,14 +254,14 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as e:
         print(f"[health] startup check failed: {e}")
 
-    # Face model
+    print("[startup] step: face labels")
     g["load_face_labels"]()
     if DEEPFACE_AVAILABLE:
         print("[face] DeepFace ready")
     else:
         print("[face] DeepFace unavailable - skipping face model load")
 
-    # Mood initialization
+    print("[startup] step: mood init")
     if not MOOD_PATH.exists():
         g["save_mood"](g["enrich_mood_state"](g["default_mood"]()))
     else:
@@ -243,7 +289,7 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as e:
         print(f"[mood_carryover] skipped: {e}")
 
-    # State file initialization
+    print("[startup] step: state file init")
     ACTIVE_PERSON_PATH: Path = g["ACTIVE_PERSON_PATH"]
     SELF_MODEL_PATH: Path = g["SELF_MODEL_PATH"]
     INITIATIVE_STATE_PATH: Path = g["INITIATIVE_STATE_PATH"]
@@ -269,7 +315,7 @@ def run_startup(g: dict[str, Any]) -> None:
     if not EXPRESSION_STATE_PATH.exists():
         g["save_expression_state"](g["default_expression_state"]())
 
-    # TTS engine
+    print("[startup] step: TTS engine")
     try:
         from brain.tts_engine import TTSEngine
         _tts = TTSEngine()
@@ -280,7 +326,7 @@ def run_startup(g: dict[str, Any]) -> None:
         g["tts_engine_name"] = "none"
     g["tts_enabled"] = False
 
-    # Phase 57: wake word detector
+    print("[startup] step: wake word detector")
     try:
         from brain.wake_word import WakeWordDetector
         def _on_wake_word() -> None:
@@ -293,7 +339,7 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_wake_word_detector"] = None
         print(f"[wake_word] startup skipped: {e}")
 
-    # Phase 62: clap detector
+    print("[startup] step: clap detector")
     try:
         from brain.clap_detector import ClapDetector
         def _on_clap() -> None:
@@ -306,7 +352,7 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_clap_detector"] = None
         print(f"[clap_detect] startup skipped: {e}")
 
-    # Phase 76: LLaVA vision check
+    print("[startup] step: LLaVA vision check")
     try:
         from brain.scene_understanding import _pick_llava_model
         _llava_model = _pick_llava_model()
@@ -320,7 +366,7 @@ def run_startup(g: dict[str, Any]) -> None:
         print(f"[llava] check failed: {e}")
         g["_llava_model_name"] = None
 
-    # Phase 74: voice loop (STT → LLM → TTS)
+    print("[startup] step: voice loop")
     try:
         from brain.voice_loop import start_voice_loop
         _vl_ok = start_voice_loop(g)
@@ -328,12 +374,18 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as e:
         print(f"[voice_loop] startup skipped: {e}")
 
-    # Phase 100: milestone reflection (runs once, on first start after phase 100)
+    # ── Milestone 100: calls qwen2.5:14b — background thread, runs once ───────
+    print("[startup] step: milestone 100 check (background)")
     try:
-        from brain.milestone_100 import run_milestone_if_needed
-        run_milestone_if_needed(g)
-    except Exception as _m100_e:
-        print(f"[milestone_100] skipped: {_m100_e}")
+        def _bg_milestone():
+            try:
+                from brain.milestone_100 import run_milestone_if_needed
+                run_milestone_if_needed(g)
+            except Exception as e:
+                print(f"[milestone_100] background error: {e}")
+        _bg("ava-milestone-100", _bg_milestone)
+    except Exception as e:
+        print(f"[milestone_100] dispatch skipped: {e}")
 
     print("Ava running...")
     print(f"Base dir: {BASE_DIR}")
