@@ -104,14 +104,15 @@ def _load_mood_block(host: dict[str, Any]) -> dict[str, Any]:
 def _schedule_graceful_shutdown(delay_seconds: float = 1.0) -> None:
     def _shutdown() -> None:
         time.sleep(max(0.1, float(delay_seconds or 1.0)))
+        print(f"[EXIT] _schedule_graceful_shutdown firing — sending SIGINT to pid={os.getpid()}")
         try:
             import signal
-
             os.kill(os.getpid(), signal.SIGINT)
             return
-        except Exception:
-            pass
+        except Exception as _e:
+            print(f"[EXIT] os.kill SIGINT failed: {_e} — falling back to os._exit(0)")
         try:
+            print("[EXIT] os._exit(0) called from _schedule_graceful_shutdown")
             os._exit(0)
         except Exception:
             pass
@@ -1371,8 +1372,9 @@ def create_app():
                 pid_path.unlink()
         except Exception:
             pass
-        threading.Timer(1.0, os._exit, args=[0]).start()
-        threading.Timer(1.2, signal.raise_signal, args=[signal.SIGTERM]).start()
+        print(f"[EXIT] /api/v1/shutdown: scheduling os._exit(0) in 1.0s and SIGTERM in 1.2s")
+        threading.Timer(1.0, lambda: (print("[EXIT] os._exit(0) from /api/v1/shutdown Timer"), os._exit(0))).start()
+        threading.Timer(1.2, lambda: (print("[EXIT] signal.raise_signal(SIGTERM) from /api/v1/shutdown Timer"), signal.raise_signal(signal.SIGTERM))).start()
         return {"ok": True, "goodbye": goodbye, "note_saved": note_saved}
 
     @app.post("/api/v1/style")
