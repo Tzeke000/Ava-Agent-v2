@@ -199,6 +199,39 @@ def try_fetch_model_card_digest(model_name: str) -> Optional[dict[str, Any]]:
         return None
 
 
+_PREFS_PATH: Optional[str] = None
+_PREFS_LOCK = threading.Lock()
+
+
+def _track_model_preference(
+    selected: str, mode: str, online: bool, g: dict[str, Any]
+) -> None:
+    """Bootstrap: record which model was chosen for which mode. Ava's preferences emerge from this data."""
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+        base = _Path(g.get("BASE_DIR") or ".")
+        path = base / "state" / "model_preferences.json"
+        with _PREFS_LOCK:
+            prefs: dict[str, Any] = {}
+            if path.is_file():
+                try:
+                    prefs = _json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            key = f"{mode}:{'cloud' if online else 'local'}"
+            counts = prefs.get("counts") or {}
+            counts[key] = counts.get(key, {})
+            counts[key][selected] = int(counts[key].get(selected) or 0) + 1
+            prefs["counts"] = counts
+            prefs["last_selected"] = selected
+            prefs["last_mode"] = mode
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(_json.dumps(prefs, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _neutral_entry(model_name: str, *, available: bool = True) -> ModelCapabilityEntry:
     return ModelCapabilityEntry(
         model_name=model_name,
@@ -213,15 +246,30 @@ def _neutral_entry(model_name: str, *, available: bool = True) -> ModelCapabilit
     )
 
 
+def _is_internet_available(g: Optional[dict[str, Any]]) -> bool:
+    """Fast read of connectivity state — no blocking call."""
+    if g is None:
+        return False
+    return bool(g.get("_is_online", False))
+
+
 def build_runtime_capability_registry(
     available: Optional[frozenset[str]],
     profiles: tuple[ModelCapabilityProfileDef, ...],
+    g: Optional[dict[str, Any]] = None,
 ) -> list[ModelCapabilityEntry]:
-    """Merge config profiles with discovered tag names not present in config (neutral profile)."""
+    """Merge config profiles with discovered tag names not present in config (neutral profile).
+    When offline (g._is_online == False), profiles with requires_internet=True are excluded.
+    """
+    online = _is_internet_available(g)
     entries: dict[str, ModelCapabilityEntry] = {}
     for p in profiles:
         name = str(p.model_name).strip()
         if not name:
+            continue
+        # Phase cloud-routing: exclude internet-required models when offline
+        needs_inet = bool(getattr(p, "requires_internet", False))
+        if needs_inet and not online:
             continue
         avail = True if available is None else name in available
         entries[name] = ModelCapabilityEntry(
@@ -631,8 +679,17 @@ def build_model_routing_result(
     social_res = _social_switch_resistance(soc, cfg)
 
     available, discovery_source = discover_available_model_tags(force=False)
-    registry = build_runtime_capability_registry(available, profiles)
+    _g_dict = g if isinstance(g, dict) else {}
+    online = _is_internet_available(_g_dict)
+    registry = build_runtime_capability_registry(available, profiles, g=_g_dict)
     reg_by_name = _registry_map(registry)
+
+    # Cloud routing rules: social_chat and memory_maintenance always stay local
+    if winner == SOCIAL_CHAT_MODE:
+        signals.append("social_chat_force_local")
+    if winner == MEMORY_MAINTENANCE_MODE:
+        signals.append("memory_maintenance_force_local")
+    # For deep_reasoning + coding online → cloud models are now in registry
 
     # Fallback should win only when: no mode > 0.40, explicit recovery context, or capability uncertainty.
     score_social = float(scores.get(SOCIAL_CHAT_MODE, 0.0) or 0.0)
@@ -812,6 +869,7 @@ def build_model_routing_result(
 
     reason = (
         f"mode={winner} score={win_score:.3f} margin={margin:.3f} transition={routing_transition}; "
+        f"online={online} cloud_eligible={online and winner not in (SOCIAL_CHAT_MODE, MEMORY_MAINTENANCE_MODE)}; "
         f"switch_explain={switch_reason_explain or '-'} "
         f"no_switch_explain={no_switch_reason_explain or '-'}; "
         f"discovery={discovery_source}"
@@ -887,6 +945,9 @@ def build_model_routing_result(
         notes=notes,
         meta=meta,
     )
+
+    # Bootstrap model preference tracking — Ava develops her own sense of when cloud is worth it
+    _track_model_preference(selected, winner, online, _g_dict)
 
     discovered_compact = ",".join(available_names[:40])
     if len(discovered_compact) > 260:
@@ -976,7 +1037,8 @@ def resolve_model_for_execution_path(
         mode = MEMORY_MAINTENANCE_MODE
 
     available, discovery_source = discover_available_model_tags(force=False)
-    registry = build_runtime_capability_registry(available, profiles)
+    _fast_g: dict[str, Any] = {}
+    registry = build_runtime_capability_registry(available, profiles, g=_fast_g)
     reg_by_name = _registry_map(registry)
 
     primary_warm, warm_note = _resolve_warm_model_for_mode(mode, cfg, registry, available)

@@ -517,6 +517,15 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
 
+    # Connectivity snapshot block
+    _connectivity_block: dict[str, Any] = {
+        "online": bool(host.get("_is_online", False)),
+        "quality": str(host.get("_connection_quality") or "offline"),
+        "cloud_models_available": bool(host.get("_ollama_cloud_reachable", False)),
+        "last_check": float(host.get("_connectivity_last_check") or 0.0),
+        "changed_recently": bool(host.get("_connectivity_changed", False)),
+    }
+
     # Phase 83: notification count today
     _notif_count_today = 0
     try:
@@ -677,6 +686,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "active_plans": active_plans_block,
         "onboarding": onboarding_block,
         "current_person": current_person_block,
+        "connectivity": _connectivity_block,
         "notification_count_today": _notif_count_today,
         "security": _security_block,
         "trust_scores": (lambda: __import__("brain.trust_system", fromlist=["get_all_trust_scores"]).get_all_trust_scores(host) if True else {})() if True else {},
@@ -1669,6 +1679,85 @@ def create_app():
             "message": cmd_result["summary"],
             "result": cmd_result,
         }
+
+    # ── Connectivity + Image endpoints ───────────────────────────────────────
+
+    @app.get("/api/v1/connectivity")
+    async def connectivity_status() -> dict[str, Any]:
+        h = _g()
+        try:
+            from brain.connectivity import get_monitor
+            mon = get_monitor(h)
+            online = mon.is_online()
+            quality = mon.get_connection_quality()
+            cloud = mon.check_ollama_cloud() if online else False
+        except Exception:
+            online = bool(h.get("_is_online", False))
+            quality = str(h.get("_connection_quality") or "offline")
+            cloud = bool(h.get("_ollama_cloud_reachable", False))
+        from config.ava_tuning import DEFAULT_MODEL_CAPABILITY_PROFILES
+        cloud_models = [p.model_name for p in DEFAULT_MODEL_CAPABILITY_PROFILES if getattr(p, "requires_internet", False)]
+        return {
+            "ok": True, "online": online, "quality": quality,
+            "cloud_reachable": cloud, "cloud_models": cloud_models,
+            "changed_recently": bool(h.get("_connectivity_changed")),
+        }
+
+    @app.get("/api/v1/images/latest")
+    async def images_latest() -> dict[str, Any]:
+        h = _g()
+        path = str(h.get("_latest_image") or "")
+        if not path:
+            return {"ok": False, "error": "no image generated yet"}
+        from pathlib import Path as _P
+        p = _P(path)
+        if not p.is_file():
+            return {"ok": False, "error": "image file not found"}
+        import base64
+        data = p.read_bytes()
+        b64 = base64.b64encode(data).decode("ascii")
+        return {"ok": True, "path": path, "filename": p.name, "b64": b64, "caption": str(h.get("_latest_image_caption") or "")}
+
+    @app.get("/api/v1/images/list")
+    async def images_list() -> dict[str, Any]:
+        h = _g()
+        from pathlib import Path as _P
+        img_dir = _P(h.get("BASE_DIR") or ".") / "state" / "generated_images"
+        files = []
+        if img_dir.is_dir():
+            for f in sorted(img_dir.glob("*.png"), reverse=True)[:50]:
+                files.append({"filename": f.name, "path": str(f), "size_kb": round(f.stat().st_size / 1024, 1)})
+        return {"ok": True, "images": files}
+
+    @app.post("/api/v1/images/generate")
+    async def images_generate(request: Request) -> dict[str, Any]:
+        h = _g()
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+        prompt = str(body.get("prompt") or "").strip()
+        if not prompt:
+            return {"ok": False, "error": "prompt required"}
+        try:
+            from tools.creative.image_generator import ImageGenerator
+            gen = h.get("_image_generator") or ImageGenerator(h)
+            path = gen.generate(prompt, style=str(body.get("style") or ""))
+            return {"ok": path is not None, "path": path}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
+    @app.delete("/api/v1/images/{filename}")
+    async def images_delete(filename: str) -> dict[str, Any]:
+        h = _g()
+        from pathlib import Path as _P
+        img_dir = _P(h.get("BASE_DIR") or ".") / "state" / "generated_images"
+        p = img_dir / filename
+        if not p.is_file() or p.suffix not in (".png", ".jpg", ".jpeg"):
+            return {"ok": False, "error": "file not found or not an image"}
+        p.unlink()
+        return {"ok": True, "deleted": filename}
 
     # ── Phase 95: Privacy / Security endpoints ───────────────────────────────
 
