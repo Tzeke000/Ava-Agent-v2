@@ -528,6 +528,73 @@ def _cmd_point_at(text, m, g):
     return "", ""
 
 
+# ── Signal-bus awareness ────────────────────────────────────────────────────
+
+@_builtin(r"\bwhat (?:was )?the last thing (?:i|you) copied\b")
+def _cmd_last_clipboard(text, m, g):
+    content = str(g.get("_clipboard_content") or "").strip()
+    ctype = str(g.get("_clipboard_type") or "text")
+    if not content:
+        return "Nothing copied recently.", "calm"
+    # Trim to a speakable summary.
+    snippet = content[:160]
+    return f"You copied {ctype}: {snippet}", "neutral"
+
+
+@_builtin(r"\bwhat am i (?:working on|doing)\b|\bwhat(?:'s|s)? on (?:my |the )?screen\b")
+def _cmd_screen_context(text, m, g):
+    ctx = str(g.get("_screen_context") or "").strip()
+    title = str(g.get("_active_window_title") or "").strip()
+    if not ctx and not title:
+        return "Nothing tracked yet.", "calm"
+    if title and ctx:
+        # Friendly phrasing per context.
+        verb_map = {
+            "coding": "coding in",
+            "browsing": "browsing in",
+            "watching": "watching in",
+            "listening": "listening in",
+            "gaming": "playing in",
+            "file_management": "looking at files in",
+            "productivity": "working in",
+            "idle": "idle on",
+            "general": "in",
+        }
+        verb = verb_map.get(ctx, "in")
+        return f"Looks like you're {verb} {title[:60]}.", "neutral"
+    return f"Screen: {ctx or 'unknown'}.", "neutral"
+
+
+@_builtin(r"\bwhat signals have you noticed\b|\bwhat have you (?:seen|noticed)\b")
+def _cmd_signal_recap(text, m, g):
+    try:
+        from brain.signal_bus import get_signal_bus
+        bus = get_signal_bus()
+        if bus is None:
+            return "I'm not tracking signals right now.", "neutral"
+        stats = bus.stats()
+    except Exception:
+        return "Can't read the signal bus.", "neutral"
+    fc = stats.get("fire_count") or {}
+    if not fc:
+        return "Nothing notable.", "calm"
+    parts = []
+    if fc.get("clipboard_changed"):
+        parts.append(f"{fc['clipboard_changed']} clipboard change{'s' if fc['clipboard_changed'] != 1 else ''}")
+    if fc.get("window_changed"):
+        parts.append(f"{fc['window_changed']} window switch{'es' if fc['window_changed'] != 1 else ''}")
+    if fc.get("face_appeared"):
+        parts.append(f"face appeared {fc['face_appeared']} time{'s' if fc['face_appeared'] != 1 else ''}")
+    if fc.get("expression_changed"):
+        parts.append(f"{fc['expression_changed']} expression change{'s' if fc['expression_changed'] != 1 else ''}")
+    if fc.get("app_installed"):
+        parts.append(f"{fc['app_installed']} install signal{'s' if fc['app_installed'] != 1 else ''}")
+    if not parts:
+        # Fall back to whatever else is in the count dict.
+        parts = [f"{v} {k}" for k, v in list(fc.items())[:5]]
+    return "I noticed " + ", ".join(parts) + ".", "curiosity"
+
+
 # ── Custom commands loaded at runtime ────────────────────────────────────────
 
 class _CustomCommand:

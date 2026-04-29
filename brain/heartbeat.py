@@ -509,6 +509,42 @@ def _run_heartbeat_tick(
         if mode == HeartbeatMode.LEARNING_REVIEW:
             st.meta["last_learning_review_wall"] = now
 
+    # ── Signal bus consumption ────────────────────────────────────────────────
+    # Ava notices things that fired since the last tick. Like turning her head
+    # to look at peripheral motion. We consume them all here so other parts of
+    # the tick can read them, then they're marked seen.
+    try:
+        from brain.signal_bus import (
+            get_signal_bus,
+            SIGNAL_CLIPBOARD_CHANGED,
+            SIGNAL_ACTIVE_WINDOW_CHANGED,
+            SIGNAL_NEW_APP_INSTALLED,
+            SIGNAL_FACE_APPEARED,
+            SIGNAL_FACE_LOST,
+            SIGNAL_FACE_CHANGED,
+            SIGNAL_EXPRESSION_CHANGED,
+        )
+        _bus = get_signal_bus()
+        if _bus is not None:
+            _unseen = _bus.consume()
+            _unseen_types = {s["type"] for s in _unseen}
+            if _unseen:
+                _summary = ", ".join(sorted(_unseen_types))
+                print(f"[heartbeat] noticed {len(_unseen)} signals: {_summary}")
+            g["_heartbeat_last_signal_types"] = sorted(_unseen_types)
+            g["_heartbeat_last_signal_count"] = len(_unseen)
+            # Log clipboard / window awareness in a compact form.
+            if SIGNAL_CLIPBOARD_CHANGED in _unseen_types:
+                _clip_type = str(g.get("_clipboard_type") or "text")
+                print(f"[heartbeat] clipboard: {_clip_type} copied")
+            if SIGNAL_ACTIVE_WINDOW_CHANGED in _unseen_types:
+                _ctx = str(g.get("_screen_context") or "general")
+                print(f"[heartbeat] context: {_ctx}")
+            if SIGNAL_NEW_APP_INSTALLED in _unseen_types:
+                print("[heartbeat] new app/dir detected — discoverer rescan triggered")
+    except Exception as _se:
+        print(f"[heartbeat] signal_bus consume error: {_se}")
+
     # Dual-brain task scheduling — all background inference goes through Stream B
     try:
         from brain.dual_brain import get_dual_brain

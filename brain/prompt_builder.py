@@ -411,6 +411,37 @@ Respond as Ava.
                     injected += f"\n\nVOICE TONE: {label}{qhint}"
         except Exception:
             pass
+        # Ambient context from the signal bus — what's been happening on the
+        # machine. Read non-destructively so the heartbeat tick still sees
+        # signals as "unseen".
+        try:
+            from brain.signal_bus import (
+                get_signal_bus,
+                SIGNAL_CLIPBOARD_CHANGED,
+                SIGNAL_ACTIVE_WINDOW_CHANGED,
+            )
+            bus = get_signal_bus()
+            extras: list[str] = []
+            now = time.time()
+            screen_ctx = str(_g.get("_screen_context") or "").strip()
+            if screen_ctx:
+                extras.append(f"SCREEN CONTEXT: {screen_ctx}")
+            window_title = str(_g.get("_active_window_title") or "").strip()
+            if window_title:
+                extras.append(f"ACTIVE WINDOW: {window_title[:80]}")
+            if bus is not None:
+                clip_ts = float(bus.peek(SIGNAL_CLIPBOARD_CHANGED) or 0.0)
+                if clip_ts > 0 and (now - clip_ts) < 300:
+                    clip_type = str(_g.get("_clipboard_type") or "text")
+                    clip_preview = str(_g.get("_clipboard_content") or "")[:80].replace("\n", " ")
+                    extras.append(f"RECENT: clipboard ({clip_type}) {clip_preview!r}")
+                win_ts = float(bus.peek(SIGNAL_ACTIVE_WINDOW_CHANGED) or 0.0)
+                if win_ts > 0 and (now - win_ts) < 60 and window_title:
+                    extras.append(f"RECENT: just switched windows")
+            if extras:
+                injected += "\n\n" + "\n".join(extras)
+        except Exception:
+            pass
         if messages and isinstance(messages[0], SystemMessage):
             messages[0].content = injected + "\n\n" + messages[0].content
         else:
