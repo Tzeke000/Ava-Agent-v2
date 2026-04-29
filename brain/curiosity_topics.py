@@ -296,6 +296,13 @@ def pursue_curiosity(topic_row: dict[str, Any], g: dict[str, Any]) -> str:
     except Exception:
         pass
 
+    # Step 3.5: record learning
+    try:
+        from brain.learning_tracker import record_learning
+        record_learning(topic, learning, "curiosity_pursuit", 0.7, g)
+    except Exception:
+        pass
+
     # Step 4: update topic state
     try:
         _update_topic_after_pursuit(topic, learning, base_dir)
