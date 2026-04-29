@@ -300,6 +300,13 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as e:
         print(f"[voice_loop] startup skipped: {e}")
 
+    # Phase 100: milestone reflection (runs once, on first start after phase 100)
+    try:
+        from brain.milestone_100 import run_milestone_if_needed
+        run_milestone_if_needed(g)
+    except Exception as _m100_e:
+        print(f"[milestone_100] skipped: {_m100_e}")
+
     print("Ava running...")
     print(f"Base dir: {BASE_DIR}")
     print(f"Profiles dir: {g['PROFILES_DIR']}")
