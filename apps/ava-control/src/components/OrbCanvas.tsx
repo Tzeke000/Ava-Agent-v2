@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import * as THREE from "three";
 
 interface OrbProps {
@@ -81,7 +81,7 @@ function createGlowTex(color: string): THREE.Texture {
   return new THREE.CanvasTexture(c);
 }
 
-export default function OrbCanvas({ emotion, state, size = 320, shapeOverride, amplitude = 0 }: OrbProps) {
+function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude = 0 }: OrbProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const disposeRef = useRef<()=>void>(()=>{});
 
@@ -314,3 +314,18 @@ export default function OrbCanvas({ emotion, state, size = 320, shapeOverride, a
     <div ref={mountRef} style={{ width:size, height:size, display:"flex", alignItems:"center", justifyContent:"center", background:"transparent", overflow:"visible", flexShrink:0 }} />
   );
 }
+
+// React.memo with shallow prop equality. The Three.js scene is expensive to
+// initialize, and the snapshot poll causes the parent App to re-render every
+// 5s — but as long as emotion/state/size/shapeOverride/amplitude are unchanged
+// we want to skip re-rendering this component entirely.
+const OrbCanvas = memo(OrbCanvasInner, (prev, next) => (
+  prev.emotion === next.emotion &&
+  prev.emotionColor === next.emotionColor &&
+  prev.state === next.state &&
+  (prev.size ?? 320) === (next.size ?? 320) &&
+  prev.shapeOverride === next.shapeOverride &&
+  Math.abs((prev.amplitude ?? 0) - (next.amplitude ?? 0)) < 0.05
+));
+
+export default OrbCanvas;
