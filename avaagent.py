@@ -7795,4 +7795,22 @@ print(
     f"[gradio] UI http://{_ava_gr_host}:{_ava_gr_port}/ "
     f"(set AVA_GRADIO_OPEN=1 to auto-open browser; operator API is separate)"
 )
-demo.launch(server_name=_ava_gr_host, server_port=_ava_gr_port, inbrowser=_ava_gr_open)
+try:
+    demo.launch(server_name=_ava_gr_host, server_port=_ava_gr_port, inbrowser=_ava_gr_open)
+except KeyboardInterrupt:
+    print("[ava] shutdown requested")
+except Exception as _ava_fatal_e:
+    import traceback as _tb
+    _ava_tb = _tb.format_exc()
+    print("[FATAL] Ava crashed:")
+    print(_ava_tb)
+    try:
+        _crash_path = Path("state/crash_log.txt")
+        _crash_path.parent.mkdir(exist_ok=True)
+        with open(_crash_path, "a", encoding="utf-8") as _cf:
+            _cf.write(f"\n=== CRASH {time.ctime()} ===\n")
+            _cf.write(_ava_tb)
+        print(f"[FATAL] crash log written to {_crash_path}")
+    except Exception:
+        pass
+    input("Press enter to exit...")

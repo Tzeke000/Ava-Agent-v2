@@ -50,25 +50,45 @@ def _heartbeat_loop(g: dict[str, Any]) -> None:
             print(f"[background_tick] heartbeat error: {e}")
 
 
-def _video_capture_loop(g: dict[str, Any]) -> None:
+def _video_frame_capture_thread(g: dict[str, Any]) -> None:
+    import cv2
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("[video_capture] camera not available")
+        return
+    print("[video_capture] camera opened, streaming at 15fps")
     while True:
-        time.sleep(_VIDEO_INTERVAL)
         try:
-            vm = g.get("_video_memory")
-            if vm is None:
-                continue
-            # Skip if camera manager not available
-            from brain.frame_store import read_live_frame_with_meta, LIVE_CACHE_MAX_AGE_SEC
-            meta = read_live_frame_with_meta(max_age=LIVE_CACHE_MAX_AGE_SEC)
-            frame = meta.frame
-            if frame is None:
-                continue
-            expression = str(g.get("_current_expression") or "")
-            gaze = str(g.get("_gaze_region") or "")
-            vm.add_frame(frame, expression=expression, gaze=gaze)
-        except Exception:
-            # Silent — frame capture errors should never spam logs
-            pass
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                vm = g.get("_video_memory")
+                et = g.get("_expression_detector")
+                ez = g.get("_eye_tracker")
+                expression = ""
+                gaze = ""
+                if et and getattr(et, "available", False):
+                    try:
+                        expr = et.detect_expression(frame)
+                        if expr:
+                            expression = expr.get("dominant", "")
+                    except Exception:
+                        pass
+                if ez and getattr(ez, "available", False) and getattr(ez, "calibrated", False):
+                    try:
+                        gaze = ez.get_gaze_region(frame) or ""
+                    except Exception:
+                        pass
+                if vm:
+                    vm.add_frame(frame, expression=expression, gaze=gaze)
+            time.sleep(_VIDEO_INTERVAL)
+        except Exception as e:
+            print(f"[video_capture] error: {e}")
+            time.sleep(2)
+            try:
+                cap.release()
+            except Exception:
+                pass
+            cap = cv2.VideoCapture(0)
 
 
 def bootstrap_background_ticks(g: dict[str, Any]) -> None:
@@ -80,7 +100,7 @@ def bootstrap_background_ticks(g: dict[str, Any]) -> None:
         print("[background_ticks] heartbeat tick thread started (every 30s)")
 
     if not g.get("_background_video_thread_started"):
-        t2 = threading.Thread(target=_video_capture_loop, args=(g,), daemon=True, name="ava-bg-video-capture")
+        t2 = threading.Thread(target=_video_frame_capture_thread, args=(g,), daemon=True, name="ava-bg-video-capture")
         t2.start()
         g["_background_video_thread_started"] = True
         print("[background_ticks] video frame capture thread started (~15 fps)")
