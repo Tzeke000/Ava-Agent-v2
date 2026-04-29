@@ -93,15 +93,6 @@ def read_live_frame_with_meta(
         cache_age = now - _buffer_ts
         if cache_age <= max_age:
             freshness = classify_acquisition_freshness(True, cache_age)
-            if freshness == "stale":
-                print(
-                    f"[frame_store] stale_frame_served_from_cache age_s={cache_age:.3f} "
-                    f"(within max_age={max_age} but above AGING_MAX_AGE_SEC={AGING_MAX_AGE_SEC})"
-                )
-            print(
-                f"[frame_store] serve_cache age_s={cache_age:.3f} freshness={freshness} "
-                f"max_age={max_age}"
-            )
             return LiveFrameResult(
                 frame=_buffer_frame,
                 capture_ts=float(_buffer_ts),
@@ -128,7 +119,6 @@ def read_live_frame_with_meta(
             frame=None, capture_ts=0.0, age_sec=-1.0, freshness="unavailable", origin="none"
         )
 
-    print(f"[frame_store] camera opened device={device_index} (read attempt)")
     ok = False
     frame = None
     try:
@@ -139,10 +129,6 @@ def read_live_frame_with_meta(
     if ok and frame is not None:
         _buffer_frame = frame
         _buffer_ts = now
-        print(
-            f"[frame_store] frame_read_ok device={device_index} capture_ts={now:.3f} "
-            f"freshness=fresh age_s=0.000 origin=device"
-        )
         return LiveFrameResult(
             frame=frame,
             capture_ts=now,
