@@ -525,6 +525,20 @@ def _run_heartbeat_tick(
     except Exception:
         pass
 
+    # Phase 75: auto fine-tune check (every 14 days if 50+ new turns)
+    _FT_CHECK_INTERVAL = 14 * 24 * 3600
+    _last_ft_check = float(st.meta.get("last_finetune_check_wall") or 0)
+    if (now - _last_ft_check) >= _FT_CHECK_INTERVAL:
+        try:
+            mgr = g.get("_finetune_manager")
+            if mgr is not None and callable(getattr(mgr, "schedule_finetune", None)):
+                started = mgr.schedule_finetune(interval_days=14)
+                if started:
+                    print("[heartbeat] auto fine-tune scheduled (50+ new turns since last run)")
+            st.meta["last_finetune_check_wall"] = now
+        except Exception:
+            pass
+
     # Phase 45: weekly concept graph decay
     _WEEK_SECONDS = 7 * 24 * 3600
     _last_decay = float(st.meta.get("last_concept_decay_wall") or 0)

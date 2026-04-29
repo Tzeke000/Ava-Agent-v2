@@ -20,6 +20,8 @@ const TABS = [
   { id: "finetune" as const, label: "Finetune" },
   { id: "workbench" as const, label: "Workbench" },
   { id: "plans" as const, label: "Plans" },
+  { id: "emil" as const, label: "Emil" },
+  { id: "proposals" as const, label: "Proposals" },
   { id: "identity" as const, label: "Identity" },
   { id: "debug" as const, label: "Debug" },
 ];
@@ -226,6 +228,15 @@ export default function App() {
   const [planGoalInput, setPlanGoalInput] = useState("");
   const [planMsg, setPlanMsg] = useState("");
 
+  const [emilStatus, setEmilStatus] = useState<Record<string, unknown> | null>(null);
+  const [emilSendMsg, setEmilSendMsg] = useState("");
+  const [emilSendInput, setEmilSendInput] = useState("");
+  const [emilBusy, setEmilBusy] = useState(false);
+
+  const [proposals, setProposals] = useState<Record<string, unknown>[] | null>(null);
+  const [proposalMsg, setProposalMsg] = useState("");
+  const [proposalsBusy, setProposalsBusy] = useState(false);
+
   const [apiCallLog, setApiCallLog] = useState<ApiLogEntry[]>([]);
   const [lastChatResponse, setLastChatResponse] = useState<Record<string, unknown> | null>(null);
   const [lastSnapshotRaw, setLastSnapshotRaw] = useState<Snapshot | null>(null);
@@ -427,6 +438,29 @@ export default function App() {
     if (tab !== "plans") return;
     void fetchPlans();
   }, [tab, fetchPlans]);
+
+  useEffect(() => {
+    if (tab !== "emil") return;
+    getJson("/api/v1/emil/status").then((d) => setEmilStatus(d as Record<string, unknown>)).catch(() => {});
+  }, [tab]);
+
+  const fetchProposals = useCallback(async () => {
+    setProposalsBusy(true);
+    try {
+      const d = await getJson("/api/v1/identity/proposals");
+      const r = d as Record<string, unknown>;
+      setProposals((r.proposals as Record<string, unknown>[]) ?? []);
+    } catch {
+      // keep stale
+    } finally {
+      setProposalsBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab !== "proposals") return;
+    void fetchProposals();
+  }, [tab, fetchProposals]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
@@ -781,8 +815,21 @@ export default function App() {
     .find((m) => String(m.role ?? "") === "assistant")?.content ?? "";
   const ttsSpeaking = Boolean(tts?.tts_speaking);
   const ttsAmplitude = Number(tts?.tts_amplitude ?? 0);
+  // Phase 74: voice_loop state drives orb when active
+  const voiceLoopState = String((snap as Record<string, unknown>)?.voice_loop
+    ? ((snap as Record<string, unknown>).voice_loop as Record<string, unknown>)?.state ?? "passive"
+    : "passive");
+  const voiceLoopActive = Boolean((snap as Record<string, unknown>)?.voice_loop
+    ? ((snap as Record<string, unknown>).voice_loop as Record<string, unknown>)?.active
+    : false);
   const orbPulseMode = backendShutdownDetected || !online
     ? "offline"
+    : voiceLoopActive && voiceLoopState === "speaking"
+      ? "speaking"
+    : voiceLoopActive && voiceLoopState === "thinking"
+      ? "thinking"
+    : voiceLoopActive && voiceLoopState === "listening"
+      ? "listening"
     : ttsSpeaking
       ? "speaking"
       : Boolean(tts?.enabled)
@@ -1870,6 +1917,93 @@ export default function App() {
                     );
                   })
                 )}
+              </Section>
+            </div>
+          )}
+
+          {tab === "emil" && (
+            <div className="op-pane">
+              <h1 className="op-h1">Emil</h1>
+              <p className="op-lead">Emil is Ava's sibling AI on port 5877. They share knowledge, not identity.</p>
+              <Section title="Status">
+                <button type="button" className="btn ghost" style={{ marginBottom: "8px" }}
+                  onClick={() => {
+                    setEmilBusy(true);
+                    postJson("/api/v1/emil/ping", {})
+                      .then((d) => { setEmilStatus(d as Record<string, unknown>); setEmilBusy(false); })
+                      .catch(() => setEmilBusy(false));
+                  }} disabled={emilBusy}>Ping Emil</button>
+                {emilStatus ? (
+                  <div style={{ fontSize: "0.9em" }}>
+                    <p><strong>Online:</strong> <span style={{ color: emilStatus.online ? "#4ade80" : "#f87171" }}>{emilStatus.online ? "yes" : "no"}</span></p>
+                    <p><strong>Last contact:</strong> {emilStatus.last_contact ? new Date(Number(emilStatus.last_contact) * 1000).toLocaleString() : "never"}</p>
+                    <p><strong>Shared topics:</strong> {Array.isArray(emilStatus.shared_topics) && emilStatus.shared_topics.length > 0 ? (emilStatus.shared_topics as string[]).join(", ") : "(none yet)"}</p>
+                  </div>
+                ) : <p className="op-muted">Not loaded — click Ping Emil.</p>}
+              </Section>
+              <Section title="Send message to Emil">
+                <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+                  <input className="op-input" placeholder="Message…" value={emilSendInput}
+                    onChange={(e) => setEmilSendInput(e.target.value)} style={{ flex: 1 }} />
+                  <button type="button" className="btn primary" disabled={emilBusy || !emilSendInput.trim()}
+                    onClick={async () => {
+                      setEmilBusy(true); setEmilSendMsg("");
+                      try {
+                        const r = await postJson("/api/v1/emil/send", { message: emilSendInput.trim() }) as Record<string, unknown>;
+                        setEmilSendMsg(r.ok ? `Emil replied: ${String(r.reply || "(no reply)")}` : `Error: ${String(r.error || "unknown")}`);
+                        setEmilSendInput("");
+                      } catch (e) { setEmilSendMsg(e instanceof Error ? e.message : String(e)); }
+                      finally { setEmilBusy(false); }
+                    }}>Send</button>
+                </div>
+                {emilSendMsg && <p className="op-note">{emilSendMsg}</p>}
+              </Section>
+            </div>
+          )}
+
+          {tab === "proposals" && (
+            <div className="op-pane">
+              <h1 className="op-h1">Identity Proposals</h1>
+              <p className="op-lead">Ava proposes additions to her own identity. You review and approve or ignore.</p>
+              <Section title={`Pending proposals (${proposals?.length ?? 0})`}>
+                <button type="button" className="btn ghost" style={{ marginBottom: "8px" }}
+                  onClick={() => void fetchProposals()} disabled={proposalsBusy}>Refresh</button>
+                {proposalMsg && <p className="op-note">{proposalMsg}</p>}
+                {!proposals ? <p className="op-muted">Loading…</p>
+                  : proposals.length === 0 ? <p className="op-muted">No pending proposals yet. Ava will propose identity additions as she learns.</p>
+                  : proposals.map((prop, idx) => {
+                    const p = prop as Record<string, unknown>;
+                    const ts = Number(p.ts || 0);
+                    return (
+                      <div key={idx} style={{ border: "1px solid #2a2a3a", borderRadius: "6px", padding: "12px", marginBottom: "8px" }}>
+                        <p style={{ fontSize: "0.85em", color: "#a78bfa", marginBottom: "4px" }}>
+                          {ts > 0 ? new Date(ts * 1000).toLocaleString() : ""}
+                          {" · "}
+                          <span style={{ color: String(p.status) === "pending" ? "#fbbf24" : "#4ade80" }}>{String(p.status)}</span>
+                        </p>
+                        <p style={{ fontSize: "0.9em", color: "#d1d5db", marginBottom: "8px" }}>{String(p.text || "")}</p>
+                        {String(p.status) === "pending" && (
+                          <button type="button" className="btn primary" style={{ fontSize: "0.8em", padding: "3px 10px" }}
+                            onClick={async () => {
+                              setProposalsBusy(true); setProposalMsg("");
+                              try {
+                                const r = await postJson("/api/v1/identity/proposals/approve", { text: p.text }) as Record<string, unknown>;
+                                setProposalMsg(r.ok ? "Approved and applied to identity." : `Error: ${String(r.error || "unknown")}`);
+                                void fetchProposals();
+                              } catch (e) { setProposalMsg(e instanceof Error ? e.message : String(e)); }
+                              finally { setProposalsBusy(false); }
+                            }}>Approve</button>
+                        )}
+                      </div>
+                    );
+                  })
+                }
+              </Section>
+              <Section title="Active identity extensions">
+                <p className="op-note">Extensions loaded from <code>state/identity_extensions.md</code> and injected into all prompts.</p>
+                <pre className="identity-ro" style={{ fontSize: "0.8em" }}>
+                  {String((snap as Record<string, unknown>)?.identity_extensions || "(none yet)")}
+                </pre>
               </Section>
             </div>
           )}

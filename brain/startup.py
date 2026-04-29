@@ -278,6 +278,28 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_clap_detector"] = None
         print(f"[clap_detect] startup skipped: {e}")
 
+    # Phase 76: LLaVA vision check
+    try:
+        from brain.scene_understanding import _pick_llava_model
+        _llava_model = _pick_llava_model()
+        if _llava_model:
+            print(f"[llava] {_llava_model} available — scene understanding active")
+            g["_llava_model_name"] = _llava_model
+        else:
+            print("[llava] no llava model found — scene understanding disabled")
+            g["_llava_model_name"] = None
+    except Exception as e:
+        print(f"[llava] check failed: {e}")
+        g["_llava_model_name"] = None
+
+    # Phase 74: voice loop (STT → LLM → TTS)
+    try:
+        from brain.voice_loop import start_voice_loop
+        _vl_ok = start_voice_loop(g)
+        print(f"[voice_loop] started={_vl_ok}")
+    except Exception as e:
+        print(f"[voice_loop] startup skipped: {e}")
+
     print("Ava running...")
     print(f"Base dir: {BASE_DIR}")
     print(f"Profiles dir: {g['PROFILES_DIR']}")
