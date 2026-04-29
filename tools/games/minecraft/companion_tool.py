@@ -103,7 +103,30 @@ def _get_session_history(params: dict[str, Any], g: dict[str, Any]) -> dict[str,
     return {"ok": True, "sessions": sessions, "count": len(sessions)}
 
 
+def _remember_location(params: dict[str, Any], g: dict[str, Any]) -> dict[str, Any]:
+    """Phase 97: Remember a named Minecraft location."""
+    from tools.games.minecraft.world_memory import get_world_memory
+    wm = get_world_memory(g)
+    wm.remember_location(
+        str(params.get("name") or ""),
+        float(params.get("x") or 0),
+        float(params.get("y") or 64),
+        float(params.get("z") or 0),
+        str(params.get("description") or ""),
+    )
+    return {"ok": True, "name": params.get("name")}
+
+
+def _world_summary(params: dict[str, Any], g: dict[str, Any]) -> dict[str, Any]:
+    """Phase 97: Get world memory summary."""
+    from tools.games.minecraft.world_memory import get_world_memory
+    wm = get_world_memory(g)
+    return {"ok": True, "summary": wm.get_world_summary()}
+
+
 register_tool("minecraft_greet_player", "Greet a player who joined the server. Detects if it's Zeke.", 1, _greet_player)
 register_tool("minecraft_share_discovery", "Share a discovery with the server via chat.", 1, _share_discovery)
 register_tool("minecraft_warn_threat", "Warn nearby players of a threat.", 1, _warn_threat)
 register_tool("minecraft_session_history", "Get Minecraft session history.", 1, _get_session_history)
+register_tool("minecraft_remember_location", "Remember a named location in the Minecraft world.", 1, _remember_location)
+register_tool("minecraft_world_summary", "Get a summary of Ava's Minecraft world knowledge.", 1, _world_summary)
