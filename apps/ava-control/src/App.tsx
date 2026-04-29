@@ -210,6 +210,9 @@ export default function App() {
   const brainZoomTransformRef = useRef(d3.zoomIdentity);
   const brainRenderRef = useRef<BrainGraphRender | null>(null);
   const brainSimulationRef = useRef<d3.Simulation<BrainRenderNode, undefined> | null>(null);
+  const brainInitDoneRef = useRef(false);
+  const lastBrainInitCountRef = useRef(0);
+  const brainInitSvgRef = useRef<SVGSVGElement | null>(null);
   const firedEdgesRef = useRef<Map<string, number>>(new Map());
   const [brainStatsBar, setBrainStatsBar] = useState({ nodes: 0, edges: 0, active: 0, mostConnected: "—" });
   const [finetuneStatus, setFinetuneStatus] = useState<Record<string, unknown>>({});
@@ -457,9 +460,11 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [poll]);
 
-  // Live camera feed — polls /api/v1/camera/live_frame at ~5fps when on status tab
+  // Live camera feed — polls /api/v1/camera/live_frame at ~5fps. Always running,
+  // not gated by active tab, so any view that displays the camera always has a
+  // fresh frame ready.
   useEffect(() => {
-    if (tab !== "status" || !online) {
+    if (!online) {
       setLiveFrameSrc(null);
       return;
     }
@@ -472,7 +477,6 @@ export default function App() {
           if (r.ok && r.b64) {
             setLiveFrameSrc(`data:image/jpeg;base64,${r.b64}`);
           } else {
-            // Stale frame or camera unavailable — clear so placeholder shows
             setLiveFrameSrc(null);
           }
         }
@@ -481,7 +485,7 @@ export default function App() {
     };
     timeoutId = window.setTimeout(fetchFrame, 0);
     return () => { active = false; window.clearTimeout(timeoutId); };
-  }, [tab, online]);
+  }, [online]);
 
   // Phase 63: WebSocket real-time transport (with REST fallback)
   useEffect(() => {
@@ -724,10 +728,27 @@ export default function App() {
       const nodes = Array.isArray(res.nodes) ? res.nodes : [];
       const edges = Array.isArray(res.edges) ? res.edges : [];
       pushEvent(`Brain graph fetch success: nodes=${nodes.length}, edges=${edges.length}`);
-      setBrainGraph({
-        nodes,
-        edges,
-        stats: res.stats ?? {},
+      // Stabilize: keep the previous reference if data is effectively unchanged.
+      // This stops the D3 init effect from firing on every poll.
+      setBrainGraph((prev) => {
+        if (prev.nodes.length === nodes.length && prev.edges.length === edges.length) {
+          let same = true;
+          for (let i = 0; i < nodes.length; i++) {
+            const a = nodes[i];
+            const b = prev.nodes[i];
+            if (
+              !b ||
+              a.id !== b.id ||
+              a.label !== b.label ||
+              Math.abs(Number(a.weight || 0) - Number(b.weight || 0)) > 0.05
+            ) {
+              same = false;
+              break;
+            }
+          }
+          if (same) return prev;
+        }
+        return { nodes, edges, stats: res.stats ?? {} };
       });
       console.log("[brain] /api/v1/brain/graph", { nodes: nodes.length, edges: edges.length });
     } catch (e) {
@@ -1149,10 +1170,36 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [tab, brainGraph.nodes, brainGraph.edges, brainActive.active_nodes.length]);
 
+  // When leaving the brain tab, clear the init flag so re-entering rebuilds
+  useEffect(() => {
+    if (tab !== "brain") {
+      brainInitDoneRef.current = false;
+      brainRenderRef.current = null;
+      brainInitSvgRef.current = null;
+      brainSimulationRef.current?.stop();
+      brainSimulationRef.current = null;
+    }
+  }, [tab]);
+
   useEffect(() => {
     if (tab !== "brain") return;
     if (!brainSvgRef.current) return;
     if (!brainGraph.nodes.length) return;
+
+    // Decide whether to do a full re-init or skip (already initialized & stable)
+    const currentCount = brainGraph.nodes.length;
+    const lastCount = lastBrainInitCountRef.current;
+    const sameSvg = brainInitSvgRef.current === brainSvgRef.current;
+    const renderExists = brainRenderRef.current !== null;
+    const majorChange = Math.abs(currentCount - lastCount) > 10;
+    const needsFullInit =
+      !brainInitDoneRef.current || !renderExists || !sameSvg || majorChange;
+
+    if (!needsFullInit) {
+      // Skip full reinit. The simulation continues running, the SVG stays intact,
+      // and the active-node highlight effect (next useEffect) handles minor visual updates.
+      return;
+    }
 
     brainSimulationRef.current?.stop();
     brainRenderRef.current = null;
@@ -1267,6 +1314,9 @@ export default function App() {
 
       brainSimulationRef.current = sim;
       brainRenderRef.current = { g, link, node, ring, labels, nodes, links };
+      brainInitDoneRef.current = true;
+      brainInitSvgRef.current = svgEl;
+      lastBrainInitCountRef.current = brainGraph.nodes.length;
     });
 
     return () => {
