@@ -245,8 +245,6 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(snap_runtime, dict):
         snap_runtime = {}
 
-    _gr_port = os.environ.get("AVA_GRADIO_SERVER_PORT", "7860").strip() or "7860"
-    _gr_host = os.environ.get("AVA_GRADIO_SERVER_NAME", "127.0.0.1").strip() or "127.0.0.1"
     _op_port = os.environ.get("AVA_OPERATOR_HTTP_PORT", "5876").strip() or "5876"
 
     ribbon = {
@@ -263,7 +261,6 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "routing_override": str(host.get("_routing_model_override") or "")[:120],
         "concerns_top": str(getattr(perception, "top_active_concern", "") or "")[:120],
         "nuance_tone": str(getattr(perception, "nuance_tone", "") or "")[:120],
-        "gradio_url": f"http://{_gr_host}:{_gr_port}/",
         "operator_http_url": f"http://127.0.0.1:{_op_port}/",
     }
 
@@ -2077,4 +2074,4 @@ def start_operator_http_background(host: dict[str, Any], chat_fn: Callable[..., 
 
     t = threading.Thread(target=_run, name="ava-operator-http", daemon=True)
     t.start()
-    print(f"[operator_http] listening on http://{host_bind}:{port} (Gradio UI may still be on :7860)")
+    print(f"[operator_http] listening on http://{host_bind}:{port}")
