@@ -16,13 +16,26 @@ class STTEngine:
         self._init_model()
 
     def _init_model(self) -> None:
+        # Whisper base: better accuracy than tiny especially for short phrases.
+        # Try GPU first (cuda + float16), fall back to CPU int8.
         try:
             from faster_whisper import WhisperModel  # type: ignore
-            self._model = WhisperModel("tiny", device="cpu", compute_type="int8")
-            self._available = True
-        except Exception:
+        except Exception as e:
+            print(f"[stt_engine] faster_whisper import failed: {e!r}")
             self._model = None
             self._available = False
+            return
+        for device, compute in (("cuda", "float16"), ("cpu", "int8")):
+            try:
+                self._model = WhisperModel("base", device=device, compute_type=compute)
+                self._available = True
+                self._device = device
+                print(f"[stt_engine] Whisper base loaded device={device} compute={compute}")
+                return
+            except Exception as e:
+                print(f"[stt_engine] base on {device} failed ({e!r}) — trying next")
+        self._model = None
+        self._available = False
 
     def is_available(self) -> bool:
         return bool(self._available and self._model is not None)
@@ -73,7 +86,7 @@ class STTEngine:
     # ── VAD helper ─────────────────────────────────────────────
 
     @staticmethod
-    def _has_speech(audio, sample_rate: int = 16000, rms_threshold: float = 0.015, min_speech_seconds: float = 0.5) -> bool:
+    def _has_speech(audio, sample_rate: int = 16000, rms_threshold: float = 0.008, min_speech_seconds: float = 0.3) -> bool:
         """Return True if audio contains detectable speech above threshold."""
         try:
             import numpy as np
@@ -98,7 +111,7 @@ class STTEngine:
         max_seconds: float = 12.0,
         silence_seconds: float = 1.5,
         sample_rate: int = 16000,
-        rms_threshold: float = 0.015,
+        rms_threshold: float = 0.008,
     ) -> dict | None:
         """
         Opens microphone, streams 100ms blocks, stops when silence_seconds
@@ -185,7 +198,12 @@ class STTEngine:
             return {"text": None, "confidence": 0.0}
 
         try:
-            segments, info = self._model.transcribe(str(wav_path), language="en", vad_filter=True)
+            segments, info = self._model.transcribe(
+                str(wav_path),
+                language="en",
+                vad_filter=True,
+                beam_size=5,  # better accuracy than greedy default
+            )
             parts = []
             avg_logprob_sum = 0.0
             seg_count = 0

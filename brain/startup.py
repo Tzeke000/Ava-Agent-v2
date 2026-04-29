@@ -316,6 +316,22 @@ def run_startup(g: dict[str, Any]) -> None:
     print("[startup] step: face labels")
     g["load_face_labels"]()
 
+    # InsightFace GPU engine (additive — face_recognizer remains the fallback).
+    # Init in a background thread because buffalo_l weights download can take
+    # 30-60s on first run and we don't want to block startup.
+    print("[startup] step: insight_face GPU engine (background)")
+    try:
+        def _bg_insight_face():
+            try:
+                from brain.insight_face_engine import bootstrap_insight_face
+                bootstrap_insight_face(g)
+            except Exception as e:
+                print(f"[insight_face] background init error: {e!r}")
+        _bg("ava-insight-face-init", _bg_insight_face)
+    except Exception as e:
+        g["_insight_face"] = None
+        print(f"[insight_face] dispatch failed: {e}")
+
     print("[startup] step: mood init")
     if not MOOD_PATH.exists():
         g["save_mood"](g["enrich_mood_state"](g["default_mood"]()))

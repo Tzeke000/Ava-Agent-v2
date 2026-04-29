@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as d3 from "d3";
+import ForceGraph3D from "3d-force-graph";
 import { API_BASE, ApiLogEntry, getJson, getText, postJson, registerApiLogger } from "./api";
 import { JsonBlock, Kv, Section } from "./components/Ui";
 import OrbCanvas from "./components/OrbCanvas";
@@ -206,6 +207,13 @@ export default function App() {
     firing_paths: [],
   });
   const [selectedBrainNode, setSelectedBrainNode] = useState<BrainNode | null>(null);
+  // 3D brain graph (3d-force-graph). The container div is the mount point;
+  // fgRef holds the constructed ForceGraph3D instance so we can update data
+  // without rebuilding the WebGL scene.
+  const brainGraph3DContainerRef = useRef<HTMLDivElement | null>(null);
+  const brainGraph3DInstanceRef = useRef<any>(null);
+  const [brainGraphSyncing, setBrainGraphSyncing] = useState<boolean>(false);
+  // Legacy 2D refs kept for typing — unused now but referenced in stale effects.
   const brainSvgRef = useRef<SVGSVGElement | null>(null);
   const brainZoomTransformRef = useRef(d3.zoomIdentity);
   const brainRenderRef = useRef<BrainGraphRender | null>(null);
@@ -309,6 +317,9 @@ export default function App() {
   const [liveTtsSpeaking, setLiveTtsSpeaking] = useState<boolean>(false);
   const liveTtsSpeakingRef = useRef<boolean>(false);
   liveTtsSpeakingRef.current = liveTtsSpeaking;
+  // Inner thought cross-fade: hold the displayed thought, fade in new ones.
+  const [displayedThought, setDisplayedThought] = useState<string>("");
+  const [thoughtVisible, setThoughtVisible] = useState<boolean>(false);
   const prevOnlineRef = useRef<boolean | null>(null);
   const appStartedAtRef = useRef(Date.now());
   const connectStartRef = useRef(Date.now());
@@ -494,6 +505,37 @@ export default function App() {
     timeoutId = window.setTimeout(tick, 0);
     return () => { active = false; window.clearTimeout(timeoutId); };
   }, [online]);
+
+  // Inner-thought cross-fade animation. When the snapshot reports a new
+  // current_thought, fade out the old one over 1s, swap, then fade in over 1s
+  // and hold for 8s. Idempotent if the thought string doesn't change.
+  // Read inline so this effect doesn't depend on a downstream declaration.
+  const _innerLifeThoughtFromSnap = String(
+    ((snap as Record<string, unknown> | null)?.inner_life as Record<string, unknown> | undefined)
+      ?.current_thought ?? ""
+  ).trim();
+  useEffect(() => {
+    if (!_innerLifeThoughtFromSnap) {
+      setThoughtVisible(false);
+      return;
+    }
+    if (_innerLifeThoughtFromSnap === displayedThought) {
+      setThoughtVisible(true);
+      return;
+    }
+    setThoughtVisible(false);
+    const swap = window.setTimeout(() => {
+      setDisplayedThought(_innerLifeThoughtFromSnap);
+      setThoughtVisible(true);
+    }, 1000);
+    const fadeOut = window.setTimeout(() => {
+      setThoughtVisible(false);
+    }, 9000);
+    return () => {
+      window.clearTimeout(swap);
+      window.clearTimeout(fadeOut);
+    };
+  }, [_innerLifeThoughtFromSnap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Live camera feed — polls /api/v1/camera/live_frame at ~5fps. Always running,
   // not gated by active tab, so any view that displays the camera always has a
@@ -1091,18 +1133,47 @@ export default function App() {
   const selectedProposalId = wbProposals.length ? String(wbProposals[0].proposal_id ?? "") : "";
   const vision = asRecord(snap?.vision);
   const perception = asRecord(vision?.perception);
-  const personIdentity =
+  // Live person info — prefer the snap.current_person block populated by
+  // runtime_presence (InsightFace cache → fallback face_recognition). Falls
+  // back to the legacy perception fields only if current_person is empty.
+  const currentPersonBlock = asRecord(snap?.current_person);
+  const currentPersonName = String(currentPersonBlock?.display_name ?? "").trim();
+  const currentPersonConf = Number(currentPersonBlock?.confidence ?? 0);
+  const currentPersonIsZeke = Boolean(currentPersonBlock?.is_zeke);
+  const currentPersonTimeAtMachineRaw = Number(currentPersonBlock?.time_at_machine ?? 0);
+  const personIdentity = currentPersonName ||
     String(perception?.resolved_face_identity ?? "").trim() ||
     String(perception?.stable_face_identity ?? "").trim() ||
     String(perception?.recognized_text ?? "").trim() ||
     "Unknown";
-  const personConfidenceRaw = Number(perception?.interpretation_confidence ?? 0);
+  const personConfidenceRaw = currentPersonName
+    ? currentPersonConf
+    : Number(perception?.interpretation_confidence ?? 0);
   const personConfidencePct = Number.isFinite(personConfidenceRaw)
     ? Math.max(0, Math.min(100, Math.round(personConfidenceRaw * 100)))
     : 0;
-  const sceneSummary = String(perception?.scene_compact_summary ?? "").trim() || "No scene summary yet.";
-  const moodLine =
-    String(perception?.face_status ?? "").trim() || String(ribbon?.nuance_tone ?? "").trim() || "Neutral / steady";
+  const personConfidencePctOneDp = Number.isFinite(personConfidenceRaw)
+    ? (Math.max(0, Math.min(1, personConfidenceRaw)) * 100).toFixed(1)
+    : "0.0";
+  const personTimeAtMachineLabel = (() => {
+    const s = Math.max(0, Math.round(currentPersonTimeAtMachineRaw));
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return m > 0 ? `${m}m ${r}s at machine` : `${r}s at machine`;
+  })();
+  const rawSceneSummary = String(perception?.scene_compact_summary ?? "").trim();
+  const sceneSummary = rawSceneSummary || "Observing…";
+  const sceneIsObserving = !rawSceneSummary;
+  // Mood line — read from snap.mood.mood_label (always fresh on snapshot).
+  const moodLabelLive = String(mood?.mood_label ?? "").trim();
+  const moodLine = moodLabelLive ||
+    String(perception?.face_status ?? "").trim() ||
+    String(ribbon?.nuance_tone ?? "").trim() ||
+    "Neutral / steady";
+
+  // Inner thought — fades through the chat with cross-fade animation.
+  const innerLifeBlock = asRecord(snap?.inner_life);
+  const currentInnerThought = String(innerLifeBlock?.current_thought ?? "").trim();
   const primaryEmotion = String(mood?.primary_emotion ?? "calmness").toLowerCase();
   const orbVisual = EMOTION_VISUALS[primaryEmotion] ?? EMOTION_VISUALS.calmness;
   // Connectivity-aware orb color: dims and cools when offline
@@ -1127,6 +1198,8 @@ export default function App() {
   // so the orb reacts immediately when Kokoro starts/stops audio.
   const ttsSpeaking = Boolean(tts?.tts_speaking) || liveTtsSpeaking;
   const ttsAmplitude = Math.max(Number(tts?.tts_amplitude ?? 0), liveTtsAmp);
+  // Energy from raw_mood drives orb breathing rate.
+  const moodEnergy = Math.max(0, Math.min(1, Number(asRecord(mood?.raw_mood)?.energy ?? 0.5)));
   // Phase 74: voice_loop state drives orb when active
   const voiceLoopState = String((snap as Record<string, unknown>)?.voice_loop
     ? ((snap as Record<string, unknown>).voice_loop as Record<string, unknown>)?.state ?? "passive"
@@ -1211,181 +1284,113 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [tab, brainGraph.nodes, brainGraph.edges, brainActive.active_nodes.length]);
 
-  // When leaving the brain tab, clear the init flag so re-entering rebuilds
+  // ── 3D brain graph (3d-force-graph) ──────────────────────────────────────
+  // Initialize ONCE when the brain tab first becomes visible. Data updates
+  // happen via .graphData() in a separate effect — we never tear down the
+  // WebGL scene on data changes, so the graph never dims or "loads in".
   useEffect(() => {
-    if (tab !== "brain") {
-      brainInitDoneRef.current = false;
-      brainRenderRef.current = null;
-      brainInitSvgRef.current = null;
-      brainSimulationRef.current?.stop();
-      brainSimulationRef.current = null;
+    if (tab !== "brain") return;
+    if (!brainGraph3DContainerRef.current) return;
+    if (brainGraph3DInstanceRef.current) return;  // already initialized
+
+    const colors: Record<string, string> = {
+      person: "#ed64a6",
+      memory: "#9f7aea",
+      topic: "#4299e1",
+      emotion: "#f5c518",
+      curiosity: "#00d4d4",
+      self: "#68d391",
+      opinion: "#ecc94b",
+      event: "#ff6b00",
+    };
+
+    try {
+      // 3d-force-graph's typings declare the constructor result as non-callable
+      // on the instance; the documented runtime API is `ForceGraph3D()(domEl)`.
+      // Cast via a local any to suppress the TS check.
+      const FG: any = ForceGraph3D as any;
+      const fg = FG()(brainGraph3DContainerRef.current as HTMLElement)
+        .backgroundColor("rgba(0,0,0,0)")
+        .nodeLabel((node: any) => {
+          const t = String(node.type || "node");
+          const lbl = String(node.label || node.id || "");
+          const w = Number(node.weight || 0).toFixed(2);
+          return `${t}: ${lbl} (w=${w})`;
+        })
+        .nodeColor((node: any) => {
+          const t = String(node.type || "");
+          if (node.color) return String(node.color);
+          return colors[t] || "#888888";
+        })
+        .nodeVal((node: any) => 1 + Number(node.weight || 0) * 4)
+        .linkColor(() => "rgba(255,255,255,0.18)")
+        .linkWidth(0.5)
+        .linkDirectionalParticles(1)
+        .linkDirectionalParticleSpeed(0.005)
+        .linkOpacity(0.4)
+        .onNodeClick((node: any) => {
+          setSelectedBrainNode(node as BrainNode);
+        });
+      brainGraph3DInstanceRef.current = fg;
+    } catch (e) {
+      console.error("[brain-3d] init failed", e);
     }
   }, [tab]);
 
+  // Push graph data into the 3D scene whenever it changes. Never blanks the
+  // canvas — the graph just morphs to the new node/edge set.
   useEffect(() => {
-    if (tab !== "brain") return;
-    if (!brainSvgRef.current) return;
-    if (!brainGraph.nodes.length) return;
-
-    // Decide whether to do a full re-init or skip (already initialized & stable)
-    const currentCount = brainGraph.nodes.length;
-    const lastCount = lastBrainInitCountRef.current;
-    const sameSvg = brainInitSvgRef.current === brainSvgRef.current;
-    const renderExists = brainRenderRef.current !== null;
-    const majorChange = Math.abs(currentCount - lastCount) > 10;
-    const needsFullInit =
-      !brainInitDoneRef.current || !renderExists || !sameSvg || majorChange;
-
-    if (!needsFullInit) {
-      // Skip full reinit. The simulation continues running, the SVG stays intact,
-      // and the active-node highlight effect (next useEffect) handles minor visual updates.
-      return;
+    const fg = brainGraph3DInstanceRef.current;
+    if (!fg) return;
+    setBrainGraphSyncing(true);
+    try {
+      fg.graphData({
+        nodes: brainGraph.nodes.map((n) => ({ ...n })),
+        links: brainGraph.edges.map((e) => ({ ...e })),
+      });
+    } catch (e) {
+      console.error("[brain-3d] graphData failed", e);
+    } finally {
+      // Quick clear — the sync indicator only flashes briefly.
+      window.setTimeout(() => setBrainGraphSyncing(false), 250);
     }
+  }, [brainGraph]);
 
-    brainSimulationRef.current?.stop();
-    brainRenderRef.current = null;
-    brainZoomTransformRef.current = d3.zoomIdentity;
-
-    const svgEl = brainSvgRef.current;
-    let cancelled = false;
-    const init = window.requestAnimationFrame(() => {
-      if (cancelled) return;
-      const svg = d3.select(svgEl);
-      svg.selectAll("*").remove();
-      const width = svgEl.clientWidth || 900;
-      const height = svgEl.clientHeight || 620;
-      svg.attr("viewBox", `0 0 ${width} ${height}`);
-      const g = svg.append("g");
-
-      const nodes = brainGraph.nodes.map((n) => ({ ...n })) as BrainRenderNode[];
-      const links = brainGraph.edges.map((e) => ({ ...e })) as BrainRenderEdge[];
-      const zoom = d3.zoom<SVGSVGElement, unknown>().scaleExtent([0.3, 2.5]).on("zoom", (event) => {
-        brainZoomTransformRef.current = event.transform;
-        g.attr("transform", event.transform.toString());
+  // Active node pulse highlighting on the 3D graph.
+  useEffect(() => {
+    const fg = brainGraph3DInstanceRef.current;
+    if (!fg) return;
+    try {
+      fg.nodeColor((node: any) => {
+        const t = String(node.type || "");
+        const baseColors: Record<string, string> = {
+          person: "#ed64a6", memory: "#9f7aea", topic: "#4299e1",
+          emotion: "#f5c518", curiosity: "#00d4d4", self: "#68d391",
+          opinion: "#ecc94b", event: "#ff6b00",
+        };
+        const isActive = activeBrainIdSet.has(String(node.id));
+        if (isActive) return "#ffffff";
+        return node.color || baseColors[t] || "#888888";
       });
-      svg.call(zoom);
-      g.attr("transform", brainZoomTransformRef.current.toString());
-      svg.call(zoom.transform, brainZoomTransformRef.current);
+    } catch { /* ignore */ }
+  }, [activeBrainIdSet]);
 
-      const link = g
-        .append("g")
-        .selectAll("line")
-        .data(links)
-        .enter()
-        .append("line")
-        .attr("stroke-width", 1.5)
-        .attr("stroke", (d: any) => {
-          const source = typeof d.source === "string" ? d.source : d.source.id;
-          const srcNode = nodes.find((n) => n.id === source);
-          return srcNode?.color || "#485264";
-        })
-        .attr("stroke-opacity", (d) => Math.max(0.2, Math.min(0.9, Number(d.strength || 0.2))))
-        .attr("class", "brain-link");
-
-      const ring = g
-        .append("g")
-        .selectAll("circle")
-        .data(nodes)
-        .enter()
-        .append("circle")
-        .attr("r", (d) => 11 + Math.max(0, Math.min(22, Number(d.weight || 0) * 22)))
-        .attr("fill", "none")
-        .attr("class", "brain-node-ring")
-        .attr("stroke", (d) => d.color || "#4299e1");
-
-      const node = g
-        .append("g")
-        .selectAll("circle")
-        .data(nodes)
-        .enter()
-        .append("circle")
-        .attr("r", (d) => 8 + Math.max(0, Math.min(22, Number(d.weight || 0) * 22)))
-        .attr("fill", (d) => d.color || "#4299e1")
-        .attr("class", "brain-node")
-        .on("click", (_, d) => setSelectedBrainNode(d as BrainNode))
-        .on("dblclick", (_, d) => {
-          const id = String(d.id);
-          link.classed("dim", (ln: any) => {
-            const s = typeof ln.source === "string" ? ln.source : ln.source.id;
-            const t = typeof ln.target === "string" ? ln.target : ln.target.id;
-            return s !== id && t !== id;
-          });
-        });
-
-      const labels = g
-        .append("g")
-        .selectAll("text")
-        .data(nodes)
-        .enter()
-        .append("text")
-        .attr("fill", "#dbe6f5")
-        .attr("font-size", 8)
-        .attr("class", "brain-label")
-        .text((d) => (d.label.length > 16 ? `${d.label.slice(0, 16)}…` : d.label));
-
-      const sim = d3
-        .forceSimulation(nodes)
-        .force("link", d3.forceLink(links).id((d: any) => d.id).distance(95))
-        .force("charge", d3.forceManyBody().strength(-210))
-        .force("center", d3.forceCenter(width * 0.4, height * 0.5))
-        .alpha(1)
-        .alphaTarget(0)
-        .restart();
-
-      const paintPositions = () => {
-        link
-          .attr("x1", (d: any) => (typeof d.source === "string" ? 0 : (d.source.x ?? 0)))
-          .attr("y1", (d: any) => (typeof d.source === "string" ? 0 : (d.source.y ?? 0)))
-          .attr("x2", (d: any) => (typeof d.target === "string" ? 0 : (d.target.x ?? 0)))
-          .attr("y2", (d: any) => (typeof d.target === "string" ? 0 : (d.target.y ?? 0)));
-        node.attr("cx", (d) => d.x ?? 0).attr("cy", (d) => d.y ?? 0);
-        ring.attr("cx", (d) => d.x ?? 0).attr("cy", (d) => d.y ?? 0);
-        labels.attr("x", (d) => d.x ?? 0).attr("y", (d) => (d.y ?? 0) + 18).attr("text-anchor", "middle");
-      };
-
-      sim.on("tick", paintPositions);
-      sim.on("end", () => {
-        for (const n of nodes) {
-          n.fx = n.x ?? 0;
-          n.fy = n.y ?? 0;
-        }
-        sim.stop();
-        paintPositions();
-      });
-
-      brainSimulationRef.current = sim;
-      brainRenderRef.current = { g, link, node, ring, labels, nodes, links };
-      brainInitDoneRef.current = true;
-      brainInitSvgRef.current = svgEl;
-      lastBrainInitCountRef.current = brainGraph.nodes.length;
-    });
-
-    return () => {
-      cancelled = true;
-      window.cancelAnimationFrame(init);
-      brainSimulationRef.current?.stop();
-    };
-  }, [brainGraph, tab]);
-
+  // Resize the 3D graph when the window or container changes size.
   useEffect(() => {
     if (tab !== "brain") return;
-    const render = brainRenderRef.current;
-    if (!render) return;
-    const now = Date.now();
-    render.node
-      .classed("active", (d) => activeBrainIdSet.has(String(d.id)))
-      .classed("pulse", (d) => activeBrainIdSet.has(String(d.id)));
-    render.ring.classed("active", (d) => activeBrainIdSet.has(String(d.id)));
-
-    render.link.classed("recent", (d: any) => {
-      const source = typeof d.source === "string" ? d.source : d.source.id;
-      const target = typeof d.target === "string" ? d.target : d.target.id;
-      const key = `${String(source)}->${String(target)}::${String(d.relationship || "")}`;
-      const fromStream = firedEdgesRef.current.get(key) ?? 0;
-      const fromData = Number(d.last_fired || 0) * 1000;
-      return Math.max(fromStream, fromData) > 0 && now - Math.max(fromStream, fromData) <= 5000;
-    });
-  }, [tab, activeBrainIdSet, brainActive.firing_paths]);
+    const fg = brainGraph3DInstanceRef.current;
+    const container = brainGraph3DContainerRef.current;
+    if (!fg || !container) return;
+    const resize = () => {
+      try {
+        fg.width(container.clientWidth);
+        fg.height(container.clientHeight);
+      } catch { /* ignore */ }
+    };
+    resize();
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, [tab]);
 
   useEffect(() => {
     if (tab !== "brain") return;
@@ -1612,6 +1617,7 @@ export default function App() {
               state={shutdownInProgress ? "offline" : (orbPulseMode as any)}
               size={320}
               amplitude={ttsAmplitude}
+              energy={moodEnergy}
             />
             {/* Offline overlay text */}
             {connOffline && (
@@ -1845,19 +1851,52 @@ export default function App() {
                         state={shutdownInProgress ? "offline" : (orbPulseMode as any)}
                         size={120}
                         amplitude={ttsAmplitude}
+                        energy={moodEnergy}
                       />
                     </div>
                     <div className="chat-orb-label">{primaryEmotion}</div>
                   </div>
                   <Section title="Awareness">
-                    <Kv
-                      items={[
-                        { label: "Seen person", value: personIdentity },
-                        { label: "Confidence", value: `${personConfidencePct}%` },
-                        { label: "Scene", value: sceneSummary },
-                        { label: "Emotion / mood", value: moodLine },
-                      ]}
-                    />
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span className="op-muted" style={{ minWidth: 96 }}>Seen person</span>
+                        <span style={{ color: "#dbe6f5" }}>{personIdentity}</span>
+                        {currentPersonIsZeke && (
+                          <span style={{
+                            padding: "1px 8px", borderRadius: 999,
+                            background: "rgba(56, 161, 105, 0.18)",
+                            color: "#38d390", fontSize: 11, fontWeight: 600,
+                            letterSpacing: "0.05em",
+                          }}>ZEKE</span>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <span className="op-muted" style={{ minWidth: 96 }}>Confidence</span>
+                        <span style={{ color: "#dbe6f5" }}>{personConfidencePctOneDp}%</span>
+                      </div>
+                      {currentPersonName && (
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <span className="op-muted" style={{ minWidth: 96 }}>Time</span>
+                          <span style={{ color: "#a3b1c0" }}>{personTimeAtMachineLabel}</span>
+                        </div>
+                      )}
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <span className="op-muted" style={{ minWidth: 96 }}>Scene</span>
+                        <span style={{ color: sceneIsObserving ? "#7a8aa3" : "#dbe6f5", fontStyle: sceneIsObserving ? "italic" : "normal" }}>
+                          {sceneSummary}
+                          {sceneIsObserving && (
+                            <span className="thought-cursor" style={{
+                              display: "inline-block", marginLeft: 4,
+                              animation: "thoughtBlink 1s steps(2) infinite",
+                            }}>▌</span>
+                          )}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <span className="op-muted" style={{ minWidth: 96 }}>Emotion</span>
+                        <span style={{ color: "#dbe6f5" }}>{moodLine}</span>
+                      </div>
+                    </div>
                   </Section>
                 </aside>
                 <section className="chat-main-panel">
@@ -1889,6 +1928,24 @@ export default function App() {
                         <span className="typing-dot" />
                         <span className="typing-dot" />
                         <span className="typing-text">Ava is thinking...</span>
+                      </div>
+                    )}
+                    {/* Inner thought — fades in, holds 8s, fades out. */}
+                    {displayedThought && (
+                      <div
+                        className="inner-thought"
+                        style={{
+                          marginTop: 12,
+                          padding: "8px 12px",
+                          fontStyle: "italic",
+                          color: "#7a8aa3",
+                          fontSize: 13,
+                          opacity: thoughtVisible ? 0.85 : 0,
+                          transition: "opacity 1s ease-in-out",
+                          letterSpacing: "0.01em",
+                        }}
+                      >
+                        💭 {displayedThought}
                       </div>
                     )}
                   </div>
@@ -1925,20 +1982,36 @@ export default function App() {
           {tab === "brain" && (
             <div className="op-pane op-pane-brain">
               <div className="brain-layout">
-                <div className="brain-canvas-wrap">
+                <div className="brain-canvas-wrap" style={{ position: "relative" }}>
                   <div className="brain-stats-bar">
                     NODES: {brainStatsBar.nodes} EDGES: {brainStatsBar.edges} ACTIVE: {brainStatsBar.active} MOST CONNECTED:{" "}
                     {brainStatsBar.mostConnected}
                   </div>
-                  {brainLoading && (
-                    <div className="brain-loading-overlay">Loading brain graph...</div>
-                  )}
-                  {!brainLoading && brainGraph.nodes.length === 0 && (
-                    <div className="brain-loading-overlay empty">
-                      {brainGraphError ? `Graph fetch failed: ${brainGraphError}` : "Graph empty — run bootstrap in console"}
+                  {/* Sync indicator — small text top-right; never dims the graph. */}
+                  {(brainGraphSyncing || brainLoading) && (
+                    <div style={{
+                      position: "absolute", top: 8, right: 12, zIndex: 5,
+                      fontSize: 11, color: "#7eb6ff", letterSpacing: "0.05em",
+                      pointerEvents: "none",
+                    }}>
+                      Syncing…
                     </div>
                   )}
-                  <svg ref={brainSvgRef} className="brain-canvas" />
+                  {brainGraphError && brainGraph.nodes.length === 0 && (
+                    <div style={{
+                      position: "absolute", top: "40%", left: 0, right: 0,
+                      textAlign: "center", color: "#a3b1c0", zIndex: 4,
+                      pointerEvents: "none",
+                    }}>
+                      Graph fetch failed: {brainGraphError}
+                    </div>
+                  )}
+                  {/* 3D WebGL graph mount. Drag = rotate, right-drag = pan, scroll = zoom. */}
+                  <div
+                    ref={brainGraph3DContainerRef}
+                    className="brain-canvas"
+                    style={{ width: "100%", height: 620, background: "transparent", borderRadius: 6 }}
+                  />
                   <div className="brain-legend">
                     <h4>NODE TYPES</h4>
                     {BRAIN_NODE_TYPES.map((entry) => (
@@ -2154,6 +2227,7 @@ export default function App() {
                   state={shutdownInProgress ? "offline" : (orbPulseMode as any)}
                   size={220}
                   amplitude={ttsAmplitude}
+                  energy={moodEnergy}
                 />
               </div>
               <Section title="What Ava sees">

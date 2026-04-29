@@ -73,6 +73,14 @@ function getTtsAmplitude(snap: Record<string, unknown> | null): number {
   return Number(tts?.tts_amplitude ?? 0);
 }
 
+function getEnergy(snap: Record<string, unknown> | null): number {
+  if (!snap) return 0.5;
+  const mood = snap.mood as Record<string, unknown> | undefined;
+  const raw = mood?.raw_mood as Record<string, unknown> | undefined;
+  const e = Number(raw?.energy ?? 0.5);
+  return Math.max(0, Math.min(1, isFinite(e) ? e : 0.5));
+}
+
 // Save widget drag position back to the state file via operator API
 function savePosition(x: number, y: number): void {
   fetch(`${API_BASE}/api/v1/widget/position`, {
@@ -169,6 +177,7 @@ export default function WidgetApp() {
   const [emotion, emotionColor] = getEmotion(snap);
   const orbState = getOrbState(snap, online);
   const ttsAmplitude = getTtsAmplitude(snap);
+  const moodEnergy = getEnergy(snap);
 
   // Phase 49: pointer morph when Ava is pointing at something
   const widgetBlock = snap?.widget as Record<string, unknown> | undefined;
@@ -198,6 +207,7 @@ export default function WidgetApp() {
         size={150}
         shapeOverride={shapeOverride}
         amplitude={ttsAmplitude}
+        energy={moodEnergy}
       />
     </div>
   );
