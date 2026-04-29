@@ -313,6 +313,56 @@ export default function App() {
     return () => registerApiLogger(null);
   }, []);
 
+  // Widget orb: show when main window minimizes, hide when restored
+  useEffect(() => {
+    let unlistenFocus: (() => void) | null = null;
+    let unlistenBlur: (() => void) | null = null;
+
+    const setupWidgetListeners = async () => {
+      try {
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        const mainWin = getCurrentWindow();
+
+        const showWidget = async () => {
+          try {
+            const widget = await WebviewWindow.getByLabel("widget");
+            if (widget) await widget.show();
+          } catch { /* widget window may not exist in dev */ }
+        };
+
+        const hideWidget = async () => {
+          try {
+            const widget = await WebviewWindow.getByLabel("widget");
+            if (widget) await widget.hide();
+          } catch { /* widget window may not exist in dev */ }
+        };
+
+        // Tauri v2: listen to focus events to detect minimize/restore
+        unlistenBlur = await mainWin.listen("tauri://blur", async () => {
+          // Brief delay then check if actually minimized
+          await new Promise((r) => setTimeout(r, 150));
+          try {
+            const minimized = await mainWin.isMinimized();
+            if (minimized) showWidget();
+          } catch { showWidget(); } // fallback: show on any blur
+        });
+
+        unlistenFocus = await mainWin.listen("tauri://focus", () => {
+          hideWidget();
+        });
+      } catch {
+        // Not running inside Tauri (dev browser) — no-op
+      }
+    };
+
+    void setupWidgetListeners();
+    return () => {
+      unlistenFocus?.();
+      unlistenBlur?.();
+    };
+  }, []);
+
   const refreshSnapshotOnly = useCallback(async () => {
     setPollErr("");
     try {

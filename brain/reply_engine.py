@@ -6,12 +6,27 @@ reply guards, tool execution, and delegates to turn_handler for finalization.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 _RUN_AVA_TUNING_SOURCE_LOGGED = False
+_PROMPT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="ava-prompt")
+
+
+def _with_timeout(fn, timeout: float, fallback=None, label: str = ""):
+    """Run fn() in a thread; return fallback if it exceeds timeout seconds."""
+    try:
+        fut = _PROMPT_EXECUTOR.submit(fn)
+        return fut.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        print(f"[run_ava] timeout ({timeout}s) in {label} — using fallback")
+        return fallback
+    except Exception as e:
+        print(f"[run_ava] error in {label}: {e!r}")
+        return fallback
 
 
 def run_ava(
@@ -37,10 +52,7 @@ def run_ava(
 
     if not _RUN_AVA_TUNING_SOURCE_LOGGED:
         _RUN_AVA_TUNING_SOURCE_LOGGED = True
-        print(
-            "[run_ava] tuning layer: config/ava_tuning.py "
-            "(summarize_tuning_config() for a full snapshot)"
-        )
+        print("[run_ava] tuning layer: config/ava_tuning.py")
 
     active_person_id = active_person_id or _av.get_active_person_id()
     _inp = (user_input or "").strip()
@@ -52,7 +64,24 @@ def run_ava(
         k in _u_low for k in ("yes do it", "go ahead", "yes, do it", "go ahead and do it")
     )
 
-    # Gaze-to-screen: detect when user is pointing at something with their eyes
+    print(f"[run_ava] enter person={active_person_id} has_image={image is not None} input_chars={len(_inp)}")
+
+    # ── Step: dual-brain foreground signal ────────────────────────────────────
+    print("[run_ava] step: dual_brain foreground start")
+    _db = None
+    try:
+        from brain.dual_brain import get_dual_brain
+        _db = get_dual_brain(_g)
+        if _db is not None:
+            _db.mark_foreground_start()
+            _live = _db.get_live_thought()
+            if _live:
+                _g["_dual_brain_live_thought"] = _live
+    except Exception:
+        _db = None
+
+    # ── Step: gaze-to-screen trigger check ───────────────────────────────────
+    print("[run_ava] step: gaze trigger check")
     try:
         _gaze_triggers = ("look at", "see that", "that thing", "over there",
                           "right there", "this one", "that one")
@@ -70,55 +99,55 @@ def run_ava(
     except Exception:
         pass
 
-    # Dual-brain: mark foreground busy (pauses Stream B) and harvest live thought
-    _db = None
     try:
-        from brain.dual_brain import get_dual_brain
-        _db = get_dual_brain(_g)
-        if _db is not None:
-            _db.mark_foreground_start()
-            _live = _db.get_live_thought()
-            if _live:
-                _g["_dual_brain_live_thought"] = _live
-    except Exception:
-        _db = None
-
-    print(
-        f"[run_ava] enter person={active_person_id} has_image={image is not None} "
-        f"input_chars={len(_inp)}"
-    )
-
-    try:
-        # Connectivity change notification — inject into context so Ava can acknowledge naturally
+        # ── Step: connectivity notice ─────────────────────────────────────────
+        print("[run_ava] step: connectivity check")
         _conn_changed = bool(_g.get("_connectivity_changed"))
         if _conn_changed:
             _conn_to = str(_g.get("_connectivity_changed_to") or "")
             _g["_connectivity_changed"] = False
             if _conn_to == "online":
-                _g["_connectivity_notice"] = (
-                    "SYSTEM: Internet connection restored. Cloud models now available."
-                )
+                _g["_connectivity_notice"] = "SYSTEM: Internet connection restored. Cloud models now available."
             else:
-                _g["_connectivity_notice"] = (
-                    "SYSTEM: Internet connection lost. Switching to local models only."
-                )
+                _g["_connectivity_notice"] = "SYSTEM: Internet connection lost. Switching to local models only."
 
-        # Phases 79-80: onboarding and profile refresh trigger detection
+        # ── Step: morning briefing (background only — never blocks main thread) ─
+        print("[run_ava] step: morning briefing check")
+        if not _g.get("_morning_briefing_checked"):
+            _g["_morning_briefing_checked"] = True
+            try:
+                from brain.morning_briefing import should_brief
+                if should_brief(_g):
+                    # Run briefing generation in background thread — result stored for next turn
+                    import threading as _mb_thread
+                    def _bg_briefing():
+                        try:
+                            from brain.morning_briefing import deliver_briefing
+                            _b = deliver_briefing(_g)
+                            if _b:
+                                _g["_pending_morning_briefing"] = _b
+                        except Exception as _be:
+                            print(f"[run_ava] morning briefing bg error: {_be}")
+                    _mb_thread.Thread(target=_bg_briefing, daemon=True, name="ava-morning-brief").start()
+            except Exception as _mb_e:
+                print(f"[run_ava] morning briefing check error: {_mb_e}")
+
+        # ── Step: onboarding trigger detection ───────────────────────────────
+        print("[run_ava] step: onboarding trigger check")
         try:
             from brain.person_onboarding import (
                 detect_onboarding_trigger, detect_refresh_trigger,
                 start_onboarding, run_onboarding_step, refresh_profile,
             )
-            # Phase 80: refresh trigger
             if detect_refresh_trigger(_inp) and _g.get("_onboarding_flow") is None:
                 _ref = refresh_profile(active_person_id, _g)
-                if _ref.get("action") == "retake_photos":
-                    _ref_reply = "Sure, let me update your profile. Let's start with some fresh photos."
-                else:
-                    _ref_reply = "I've noted the update. Is there anything specific you'd like me to know?"
+                _ref_reply = (
+                    "Sure, let me update your profile. Let's start with some fresh photos."
+                    if _ref.get("action") == "retake_photos"
+                    else "I've noted the update. Is there anything specific you'd like me to know?"
+                )
                 _ap = _av.load_profile_by_id(active_person_id)
                 return finalize_ava_turn(user_input, _ref_reply, {}, _ap, [], turn_route="profile_refresh")
-            # Phase 79: new onboarding trigger
             _ob_triggered, _ob_name = detect_onboarding_trigger(_inp)
             if _ob_triggered and _g.get("_onboarding_flow") is None:
                 _ob_person_id = f"person_{uuid.uuid4().hex[:8]}"
@@ -128,32 +157,22 @@ def run_ava(
         except Exception as _ob_e:
             print(f"[run_ava] onboarding trigger check error: {_ob_e}")
 
-        # Phase 84: optional morning briefing (first interaction of new day)
-        if not _g.get("_morning_briefing_checked"):
-            _g["_morning_briefing_checked"] = True
-            try:
-                from brain.morning_briefing import should_brief, deliver_briefing
-                if should_brief(_g):
-                    _briefing = deliver_briefing(_g)
-                    if _briefing:
-                        _g["_pending_morning_briefing"] = _briefing
-            except Exception as _mb_e:
-                print(f"[run_ava] morning briefing check error: {_mb_e}")
-
-        # Phase 79: if onboarding flow is active, route through it
+        # ── Step: onboarding flow routing ─────────────────────────────────────
         if _g.get("_onboarding_flow") is not None:
+            print("[run_ava] step: onboarding flow step")
             try:
+                from brain.person_onboarding import run_onboarding_step
                 _ob_result = run_onboarding_step(_inp, _g)
                 if _ob_result is not None:
                     _ob_reply, _ob_stage, _ob_done = _ob_result
                     _ap = _av.load_profile_by_id(active_person_id)
-                    return finalize_ava_turn(
-                        user_input, _ob_reply, {}, _ap, [], turn_route="onboarding"
-                    )
+                    return finalize_ava_turn(user_input, _ob_reply, {}, _ap, [], turn_route="onboarding")
             except Exception as _ob_e:
                 print(f"[run_ava] onboarding step error: {_ob_e}")
                 _g["_onboarding_flow"] = None
 
+        # ── Step: concern reconciliation ──────────────────────────────────────
+        print("[run_ava] step: concern reconciliation")
         try:
             from brain.concern_reconciliation import mark_concern_user_dismissed
             _redir = _av._user_redirected_topic(user_input)
@@ -165,13 +184,14 @@ def run_ava(
         except Exception:
             pass
 
+        print("[run_ava] step: load active profile")
         active_profile = _av.load_profile_by_id(active_person_id)
 
+        # ── Step: shutdown / inner life / guard routes ────────────────────────
+        print("[run_ava] step: special route checks")
         if is_shutdown_trigger(user_input):
             ritual_goodbye = scrub_visible_reply(run_shutdown_ritual(_g))
-            return finalize_ava_turn(
-                user_input, ritual_goodbye, {}, active_profile, [], turn_route="shutdown_ritual"
-            )
+            return finalize_ava_turn(user_input, ritual_goodbye, {}, active_profile, [], turn_route="shutdown_ritual")
 
         if _av._is_thinking_or_topic_prompt(user_input):
             from brain.inner_monologue import current_thought as inner_current_thought, get_conversation_starter as inner_get_conversation_starter
@@ -186,9 +206,7 @@ def run_ava(
             reply = thought or starter or (
                 f"I have been wondering about {topic_line}." if topic_line else "I have been reflecting on our recent conversations."
             )
-            return finalize_ava_turn(
-                user_input, scrub_visible_reply(reply), {}, active_profile, [], turn_route="inner_life_prompt"
-            )
+            return finalize_ava_turn(user_input, scrub_visible_reply(reply), {}, active_profile, [], turn_route="inner_life_prompt")
 
         from brain.persona_switcher import should_deflect, get_blocked_reply, get_deflect_reply
         from brain.trust_manager import is_blocked
@@ -199,7 +217,7 @@ def run_ava(
                 expression_status="—", memory_preview="", turn_route="blocked",
                 visual_truth_trusted=False, vision_status="blocked_policy",
             )
-            print(f"[run_ava] exit route=blocked reply_chars={len(reply)} (no finalize)")
+            print(f"[run_ava] exit route=blocked")
             return reply, vs, active_profile, [], {}
 
         if should_deflect(active_profile, user_input):
@@ -209,7 +227,7 @@ def run_ava(
                 expression_status="—", memory_preview="", turn_route="deflect",
                 visual_truth_trusted=False, vision_status="deflect",
             )
-            print(f"[run_ava] exit route=deflect reply_chars={len(reply)} (no finalize)")
+            print(f"[run_ava] exit route=deflect")
             return reply, vs, active_profile, [], {}
 
         if is_selfstate_query(user_input):
@@ -225,11 +243,8 @@ def run_ava(
                 pass
             narrative = _av._load_self_narrative_snippet()
             reply = scrub_visible_reply(
-                build_selfstate_reply(
-                    _g, user_input, image, active_profile,
-                    active_goal=active_goal_txt or None,
-                    narrative_snippet=narrative,
-                )
+                build_selfstate_reply(_g, user_input, image, active_profile,
+                                      active_goal=active_goal_txt or None, narrative_snippet=narrative)
             )
             return finalize_ava_turn(user_input, reply, {}, active_profile, [], turn_route="selfstate")
 
@@ -241,21 +256,43 @@ def run_ava(
             ai_reply = _av._apply_repetition_control(ai_reply, user_input, active_profile["person_id"], source="chat")
             return finalize_ava_turn(user_input, ai_reply, visual, active_profile, actions, turn_route="camera_identity")
 
+        # ── Step: depth classification ────────────────────────────────────────
+        print("[run_ava] step: classify reply depth")
         _depth = _av.classify_reply_depth(user_input, _g)
-        if _depth == "fast":
-            _g["reply_path_selected"] = "fast"
-            _g["reply_path_reason"] = "classify_reply_depth_fast"
-        else:
-            _g["reply_path_selected"] = "deep"
-            _g["reply_path_reason"] = "classify_reply_depth_deep"
         use_fast_path = _depth == "fast"
-        if use_fast_path:
-            messages, visual, active_profile = build_prompt_fast(user_input, image=image, active_person_id=active_person_id)
-            print("[run_ava] llm_invoke start path=fast")
-        else:
-            messages, visual, active_profile = build_prompt(user_input, image=image, active_person_id=active_person_id)
-            print("[run_ava] llm_invoke start path=deep")
+        _g["reply_path_selected"] = "fast" if use_fast_path else "deep"
+        _g["reply_path_reason"] = f"classify_reply_depth_{_depth}"
 
+        # ── Step: prompt building (with 10s timeout) ──────────────────────────
+        print(f"[run_ava] step: build prompt path={'fast' if use_fast_path else 'deep'}")
+        _build_fn = (
+            lambda: build_prompt_fast(user_input, image=image, active_person_id=active_person_id)
+            if use_fast_path
+            else lambda: build_prompt(user_input, image=image, active_person_id=active_person_id)
+        )
+        _prompt_result = _with_timeout(
+            (lambda: build_prompt_fast(user_input, image=image, active_person_id=active_person_id))
+            if use_fast_path
+            else (lambda: build_prompt(user_input, image=image, active_person_id=active_person_id)),
+            timeout=30.0,  # prompt building can take time for deep path
+            fallback=None,
+            label="build_prompt",
+        )
+        if _prompt_result is None:
+            # Prompt build timed out — fall back to minimal prompt
+            print("[run_ava] step: prompt build timed out, using minimal fallback")
+            from langchain_core.messages import HumanMessage, SystemMessage
+            messages = [
+                SystemMessage(content=str(_av.SYSTEM_PROMPT or "")),
+                HumanMessage(content=user_input),
+            ]
+            visual = {}
+            active_profile = _av.load_profile_by_id(active_person_id)
+        else:
+            messages, visual, active_profile = _prompt_result
+
+        # ── Step: model selection ─────────────────────────────────────────────
+        print("[run_ava] step: model selection")
         try:
             _invoke_llm = llm
             try:
@@ -283,11 +320,15 @@ def run_ava(
                         print(f"[run_ava] phase25_routing_model={_route_model}")
             except Exception:
                 pass
+
+            # ── Step: LLM call ────────────────────────────────────────────────
+            print(f"[run_ava] step: llm invoke model={getattr(_invoke_llm, 'model', '?')}")
             result = _invoke_llm.invoke(messages)
             raw_reply = getattr(result, "content", str(result)).strip()
             if not raw_reply:
                 raw_reply = "I'm here."
-            print(f"[run_ava] llm_invoke ok reply_raw_chars={len(raw_reply)}")
+            print(f"[run_ava] step: llm response received reply_chars={len(raw_reply)}")
+
             # Phase 44: self-evaluation
             try:
                 from brain.model_evaluator import get_evaluator
@@ -300,6 +341,8 @@ def run_ava(
             raw_reply = f"I hit an internal error: {e}"
             print(f"[run_ava] llm_invoke failed: {e!r}")
 
+        # ── Step: action blocks + guardrails ──────────────────────────────────
+        print("[run_ava] step: process action blocks")
         person_id = active_profile["person_id"]
         ai_reply, actions = _av.process_ava_action_blocks(raw_reply, person_id, latest_user_input=user_input)
 
@@ -328,6 +371,8 @@ def run_ava(
         if tool_actions:
             actions = list(actions or []) + tool_actions
 
+        # ── Step: curiosity + opinions ────────────────────────────────────────
+        print("[run_ava] step: curiosity update")
         try:
             from brain.curiosity_topics import add_topic as add_curiosity_topic, mark_resolved as mark_curiosity_resolved, add_topic_from_conversation
             from brain.opinions import get_opinion, form_opinion
@@ -339,24 +384,23 @@ def run_ava(
                     form_opinion(_t, user_input[:300], _g)
                 if "answered" in user_input.lower() or "resolved" in user_input.lower():
                     mark_curiosity_resolved(_t, _g)
-            # Phase 89: extract implicit curiosity from conversation
             add_topic_from_conversation(user_input, _g)
         except Exception:
             pass
 
-        # Phase 84: prepend morning briefing to first response of the day
+        # Phase 84: prepend morning briefing if ready (result from background thread)
         _mb_pending = str(_g.pop("_pending_morning_briefing", "") or "").strip()
         if _mb_pending:
             ai_reply = f"{_mb_pending}\n\n{ai_reply}"
 
-        # Phase 92: apply emotional expression style
+        # ── Step: emotional style + quality ──────────────────────────────────
+        print("[run_ava] step: expression style + quality check")
         try:
             from brain.expression_style import apply_emotional_style
             ai_reply = apply_emotional_style(ai_reply, _g)
         except Exception:
             pass
 
-        # Phase 96: conversation quality check (with one regeneration attempt)
         try:
             from brain.response_quality import response_quality_check
             ai_reply, _quality_issues = response_quality_check(ai_reply, _inp, {}, _g)
@@ -365,23 +409,19 @@ def run_ava(
         except Exception:
             pass
 
-        # Dual-brain: weave in background insights + release foreground
+        # ── Step: dual-brain handoff ──────────────────────────────────────────
+        print("[run_ava] step: handoff_insight_to_foreground")
         try:
             if _db is not None:
                 ai_reply = _db.handoff_insight_to_foreground(ai_reply, _inp)
                 _db.mark_foreground_end()
-                # Store last reply for self-critique
                 _g["_last_ai_reply"] = ai_reply[:500]
-                # Submit self-critique to stream B (non-blocking)
                 _db.submit("self_critique", payload={"last_reply": ai_reply[:400], "user_input": _inp[:200]})
         except Exception:
             pass
 
         _vroute = isinstance(visual, dict) and visual.get("turn_route")
-        print(
-            f"[run_ava] exit route={_vroute or 'llm'} via finalize actions={len(actions)} "
-            f"path={'fast' if use_fast_path else 'deep'}"
-        )
+        print(f"[run_ava] step: finalize_ava_turn route={_vroute or 'llm'} path={'fast' if use_fast_path else 'deep'}")
         return finalize_ava_turn(
             user_input, ai_reply, visual, active_profile, actions, turn_route=_vroute or "llm"
         )
@@ -389,7 +429,6 @@ def run_ava(
     except Exception as e:
         import traceback
         print(f"[run_ava] exception (fallback turn): {e!r}\n{traceback.format_exc()}")
-        # Always release foreground on exception
         try:
             if _db is not None:
                 _db.mark_foreground_end()

@@ -711,6 +711,24 @@ def build_model_routing_result(
     mode_fallback_name = (cfg.global_fallback_model or "").strip()
     explicit_fallback = mode_fallback_name or (cfg.default_model or "").strip()
 
+    # Cloud-first routing: when online + cloud reachable, prefer cloud for
+    # reasoning/coding/fallback. Social and memory always stay local.
+    _LOCAL_ONLY_MODES = frozenset({SOCIAL_CHAT_MODE, MEMORY_MAINTENANCE_MODE})
+    _CLOUD_PREFERRED: dict[str, str] = {
+        DEEP_REASONING_MODE: "kimi-k2.6:cloud",
+        CODING_REPAIR_MODE:  "qwen3.5:cloud",
+        FALLBACK_SAFE_MODE:  "minimax-m2.7:cloud",
+    }
+    _cloud_ok = online and bool(_g_dict.get("_ollama_cloud_reachable"))
+    _cloud_preferred_model: str | None = None
+    if _cloud_ok and winner not in _LOCAL_ONLY_MODES and not override_model:
+        _preferred_cloud = _CLOUD_PREFERRED.get(winner)
+        if _preferred_cloud and (available is None or _preferred_cloud in (available or frozenset())):
+            _cloud_preferred_model = _preferred_cloud
+            primary_warm = _preferred_cloud
+            warm_note = f"cloud_preferred_for_{winner}"
+            signals.append(f"cloud_preferred={_preferred_cloud}")
+
     if override_model:
         candidate_model = override_model
         warm_note = "user_override_model_tag"
@@ -869,7 +887,7 @@ def build_model_routing_result(
 
     reason = (
         f"mode={winner} score={win_score:.3f} margin={margin:.3f} transition={routing_transition}; "
-        f"online={online} cloud_eligible={online and winner not in (SOCIAL_CHAT_MODE, MEMORY_MAINTENANCE_MODE)}; "
+        f"online={online} cloud_preferred={_cloud_preferred_model or 'no'}; "
         f"switch_explain={switch_reason_explain or '-'} "
         f"no_switch_explain={no_switch_reason_explain or '-'}; "
         f"discovery={discovery_source}"
