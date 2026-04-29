@@ -517,6 +517,14 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
 
+    # Phase 83: notification count today
+    _notif_count_today = 0
+    try:
+        from tools.system.notification_tool import get_notification_count_today
+        _notif_count_today = get_notification_count_today(host)
+    except Exception:
+        pass
+
     mood_block = _load_mood_block(host)
     style_block = _load_style(host)
     deep_self_block = {}
@@ -656,6 +664,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "active_plans": active_plans_block,
         "onboarding": onboarding_block,
         "current_person": current_person_block,
+        "notification_count_today": _notif_count_today,
         "system_stats": system_stats,
         "mood": mood_block,
         "style": style_block,
