@@ -405,3 +405,102 @@ def apply_runtime_presence_to_perception_state(state: Any, bundle: Any) -> None:
         }
     m["heartbeat_status_summary"] = str(rp.heartbeat_status_summary or "")[:260]
     state.runtime_presence_meta = m
+
+
+# ── Phase 82: Multi-person awareness ──────────────────────────────────────────
+
+_PERSON_CHANGE_COOLDOWN = 10.0  # seconds before acknowledging a face change
+
+
+def tick_multi_person_awareness(g: dict[str, Any]) -> dict[str, Any]:
+    """
+    Called from heartbeat. Checks current recognized face and updates who is at the machine.
+    Returns current_person block for snapshot.
+    """
+    try:
+        from pathlib import Path as _Path
+        from brain.face_recognizer import get_recognizer
+        from brain.frame_store import read_live_frame_with_meta
+
+        base_dir = _Path(g.get("BASE_DIR") or ".")
+        rec = get_recognizer(base_dir)
+        if not rec.available:
+            return _empty_person_block(g)
+
+        meta = read_live_frame_with_meta()
+        frame = meta.frame
+        if frame is None:
+            return _empty_person_block(g)
+
+        person_id, confidence = rec.get_best_match(frame)
+        g["_face_recognizer_last_person_id"] = person_id
+        g["_face_recognizer_last_confidence"] = confidence
+
+        prev_person = g.get("_current_person_at_machine") or "unknown"
+        now = time.time()
+
+        if person_id != prev_person and confidence > 0.5:
+            last_change = float(g.get("_last_face_change_ts") or 0)
+            if (now - last_change) > _PERSON_CHANGE_COOLDOWN:
+                g["_last_face_change_ts"] = now
+                g["_current_person_at_machine"] = person_id
+                g["_person_appeared_at"] = now
+                if prev_person and prev_person != "unknown":
+                    g["_person_transition_note"] = f"Person changed: {prev_person} → {person_id}"
+                else:
+                    g["_person_transition_note"] = f"Person appeared: {person_id}"
+                print(f"[multi_person] face change {prev_person} → {person_id} conf={confidence:.2f}")
+
+        appeared_at = float(g.get("_person_appeared_at") or now)
+        time_at_machine = now - appeared_at
+
+        return _build_person_block(g, person_id, confidence, time_at_machine, base_dir)
+
+    except Exception as e:
+        print(f"[multi_person] tick error: {e}")
+        return _empty_person_block(g)
+
+
+def _empty_person_block(g: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "person_id": g.get("_current_person_at_machine") or "unknown",
+        "display_name": "Unknown",
+        "confidence": 0.0,
+        "time_at_machine": 0.0,
+        "is_zeke": False,
+    }
+
+
+def _build_person_block(
+    g: dict[str, Any], person_id: str, confidence: float,
+    time_at_machine: float, base_dir: "Path",
+) -> dict[str, Any]:
+    import json as _json
+    display_name = person_id
+    try:
+        p_path = base_dir / "profiles" / f"{person_id}.json"
+        if p_path.is_file():
+            data = _json.loads(p_path.read_text(encoding="utf-8"))
+            display_name = str(data.get("name") or person_id)
+    except Exception:
+        pass
+
+    owner = str(g.get("OWNER_PERSON_ID") or "zeke")
+    return {
+        "person_id": person_id,
+        "display_name": display_name,
+        "confidence": round(confidence, 3),
+        "time_at_machine": round(time_at_machine, 1),
+        "is_zeke": person_id == owner,
+        "transition_note": str(g.get("_person_transition_note") or ""),
+    }
+
+
+def get_current_person_block(g: dict[str, Any]) -> dict[str, Any]:
+    """Returns the most recent person block without triggering a new frame capture."""
+    base_dir = Path(g.get("BASE_DIR") or ".")
+    person_id = str(g.get("_current_person_at_machine") or "unknown")
+    confidence = float(g.get("_face_recognizer_last_confidence") or 0.0)
+    appeared_at = float(g.get("_person_appeared_at") or time.time())
+    time_at_machine = time.time() - appeared_at
+    return _build_person_block(g, person_id, confidence, time_at_machine, base_dir)
