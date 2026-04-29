@@ -1561,13 +1561,44 @@ def create_app():
         return FileResponse(str(path), media_type="image/jpeg")
 
     @app.get("/api/v1/chat/history")
-    def chat_history() -> dict[str, Any]:
+    def chat_history(limit: int = 200) -> dict[str, Any]:
+        """
+        Returns the most recent chat turns. Prefers the persisted jsonl file
+        (state/chat_history.jsonl) so the UI hydrates across restarts; falls
+        back to in-memory canonical history if the file is empty/missing.
+        """
         h = _g()
+        try:
+            limit = max(1, min(2000, int(limit)))
+        except Exception:
+            limit = 200
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+            base = h.get("BASE_DIR")
+            if base is not None:
+                hist_path = _Path(base) / "state" / "chat_history.jsonl"
+                if hist_path.is_file():
+                    rows: list[dict[str, Any]] = []
+                    with hist_path.open("r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                rows.append(_json.loads(line))
+                            except Exception:
+                                continue
+                    if rows:
+                        return {"ok": True, "messages": rows[-limit:], "source": "jsonl"}
+        except Exception as e:
+            print(f"[chat_history] jsonl read failed: {e}")
+
         hist_fn = h.get("_get_canonical_history") or h.get("get_canonical_history")
         if callable(hist_fn):
             try:
                 rows = list(hist_fn())
-                return {"ok": True, "messages": rows[-200:]}
+                return {"ok": True, "messages": rows[-limit:], "source": "canonical"}
             except Exception as e:
                 return {"ok": False, "error": str(e)}
         return {"ok": False, "error": "no_history_fn", "messages": []}

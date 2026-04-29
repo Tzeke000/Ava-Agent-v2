@@ -445,11 +445,18 @@ def tick_multi_person_awareness(g: dict[str, Any]) -> dict[str, Any]:
                 g["_last_face_change_ts"] = now
                 g["_current_person_at_machine"] = person_id
                 g["_person_appeared_at"] = now
+                g["_current_person_is_zeke"] = (person_id == str(g.get("OWNER_PERSON_ID") or "zeke"))
                 if prev_person and prev_person != "unknown":
                     g["_person_transition_note"] = f"Person changed: {prev_person} → {person_id}"
                 else:
                     g["_person_transition_note"] = f"Person appeared: {person_id}"
                 print(f"[multi_person] face change {prev_person} → {person_id} conf={confidence:.2f}")
+                # Wire face-detection greeting (best-effort, never fail the tick).
+                try:
+                    from brain.proactive_triggers import maybe_greet_on_face_detection
+                    maybe_greet_on_face_detection(g, person_id, prev_person)
+                except Exception as _ge:
+                    print(f"[multi_person] greet hook error: {_ge}")
 
         appeared_at = float(g.get("_person_appeared_at") or now)
         time_at_machine = now - appeared_at

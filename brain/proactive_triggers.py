@@ -3,11 +3,29 @@ Phase 14 — adaptive proactive trigger evaluation (recommendation-only).
 
 Produces conservative trigger recommendations from structured perception/memory/pattern
 signals. This module does not generate speech and does not force initiative actions.
+
+Also exposes two runtime hooks invoked by the live system:
+
+  - maybe_greet_on_face_detection(g, person_id, prev_person)
+        Called by runtime_presence when a face transition lands. If the person
+        is Zeke and we haven't greeted in 30+ minutes, generate a short
+        greeting via Stream B and speak it through the TTS worker.
+
+  - proactive_check(g)
+        Called from heartbeat each tick. If Zeke is present, has been quiet
+        3+ minutes, and Stream B parked an insight on dual_brain, deliver it
+        once (with a 10-min cooldown).
+
+Both helpers fail closed — any error is swallowed so the heartbeat / face
+tick never breaks because a bonus speech could not be produced.
 """
 from __future__ import annotations
 
+import threading
+import time
 import traceback
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional
 
 from config.ava_tuning import PROACTIVE_CONFIG
 
@@ -352,3 +370,167 @@ def _evaluate_proactive_triggers_inner(
         f"suppressed={bool(result.suppression_reason)}"
     )
     return result
+
+
+# ── Runtime greeting + proactive helpers ─────────────────────────────────────
+
+_GREET_COOLDOWN_SEC = 1800.0  # 30 minutes between greetings of the same person
+_PROACTIVE_QUIET_SEC = 180.0  # require 3+ minutes of silence
+_PROACTIVE_COOLDOWN = 600.0   # 10 minutes between proactive utterances
+
+
+def _speak_via_worker(g: dict[str, Any], text: str, emotion: str = "joy", intensity: float = 0.6) -> bool:
+    """Speak via the TTS worker if available + tts_enabled. Returns True on dispatch."""
+    if not text or not text.strip():
+        return False
+    if not bool(g.get("tts_enabled", False)):
+        return False
+    worker = g.get("_tts_worker")
+    if worker is None or not getattr(worker, "available", False):
+        return False
+    try:
+        worker.speak_with_emotion(text.strip(), emotion=emotion, intensity=intensity, blocking=False)
+        return True
+    except Exception as e:
+        print(f"[proactive] worker.speak failed: {e!r}")
+        return False
+
+
+def _generate_greeting_async(g: dict[str, Any], person_id: str, prev_person: str) -> None:
+    """Generate a greeting via Stream B and speak it. Runs on a daemon thread
+    so the face-detection tick never blocks waiting on Ollama."""
+    def _run() -> None:
+        try:
+            now = time.time()
+            last_seen = float(g.get("_last_seen_ts_" + person_id) or 0)
+            time_away = now - last_seen if last_seen > 0 else 0.0
+            mood_label = "calm"
+            try:
+                load_mood = g.get("load_mood")
+                if callable(load_mood):
+                    m = load_mood() or {}
+                    mood_label = str(m.get("current_mood") or "calm")
+            except Exception:
+                pass
+
+            # Prefer dual-brain Stream B (qwen2.5:14b / cloud) for the greeting.
+            try:
+                from brain.dual_brain import get_dual_brain
+                from brain.ollama_lock import with_ollama
+                from langchain_ollama import ChatOllama
+                from langchain_core.messages import HumanMessage
+                db = get_dual_brain(g)
+                model = db.get_thinking_model() if db is not None else "qwen2.5:14b"
+            except Exception:
+                from brain.ollama_lock import with_ollama
+                from langchain_ollama import ChatOllama
+                from langchain_core.messages import HumanMessage
+                model = "qwen2.5:14b"
+
+            prompt = (
+                f"You are Ava, an AI companion to Zeke. You just saw him appear at the camera.\n"
+                f"Your current mood: {mood_label}.\n"
+                + (f"Time since you last saw him: {time_away/60:.0f} minutes.\n" if time_away > 0 else "")
+                + "Greet him warmly in ONE short sentence (under 12 words). "
+                "Don't say 'hello there'. Match how a close friend would greet him."
+            )
+            llm = ChatOllama(model=model, temperature=0.8, num_predict=50)
+            try:
+                result = with_ollama(
+                    lambda: llm.invoke([HumanMessage(content=prompt)]),
+                    label=f"greeting:{model}",
+                )
+                greeting = str(getattr(result, "content", str(result))).strip()
+            except Exception as e:
+                print(f"[proactive] greeting llm error: {e!r} — using fallback")
+                greeting = "Hey Zeke."
+
+            # Sanity strip
+            greeting = greeting.replace('"', "").replace("Ava:", "").strip()
+            if len(greeting) > 120:
+                greeting = greeting[:120].rsplit(" ", 1)[0] + "."
+            if not greeting:
+                greeting = "Hey Zeke."
+
+            # Speak
+            spoke = _speak_via_worker(g, greeting, emotion="joy", intensity=0.7)
+            g["_last_greeted_ts"] = time.time()
+            g["_last_greeted_person"] = person_id
+            g["_last_greeting_text"] = greeting
+            g["_last_seen_ts_" + person_id] = time.time()
+            print(f"[proactive] greeted person={person_id} spoke={spoke} text={greeting!r}")
+        except Exception as e:
+            print(f"[proactive] greeting thread error: {e!r}\n{traceback.format_exc()[:400]}")
+
+    threading.Thread(target=_run, daemon=True, name="ava-greet").start()
+
+
+def maybe_greet_on_face_detection(g: dict[str, Any], person_id: str, prev_person: str) -> None:
+    """Called by runtime_presence on face change. Greets Zeke at most every 30 min."""
+    try:
+        owner = str(g.get("OWNER_PERSON_ID") or "zeke")
+        if person_id != owner:
+            # Only greet the owner for now. Other people get the transition note only.
+            g["_last_seen_ts_" + str(person_id)] = time.time()
+            return
+        last_greeted = float(g.get("_last_greeted_ts") or 0)
+        if (time.time() - last_greeted) < _GREET_COOLDOWN_SEC:
+            return
+        _generate_greeting_async(g, person_id, prev_person)
+    except Exception as e:
+        print(f"[proactive] maybe_greet error: {e!r}")
+
+
+def proactive_check(g: dict[str, Any]) -> Optional[str]:
+    """Heartbeat-tick gate for unprompted speech.
+
+    Conditions (all must be true):
+      - tts_enabled
+      - Zeke is the current person at the machine
+      - last user message > 3 minutes ago
+      - last proactive utterance > 10 minutes ago
+      - dual_brain has parked an insight worth sharing
+    """
+    try:
+        if not bool(g.get("tts_enabled", False)):
+            return None
+        owner = str(g.get("OWNER_PERSON_ID") or "zeke")
+        current = str(g.get("_current_person_at_machine") or "")
+        if current != owner:
+            return None
+        now = time.time()
+        last_msg = float(g.get("_last_user_message_ts") or 0)
+        if (now - last_msg) < _PROACTIVE_QUIET_SEC:
+            return None
+        last_proactive = float(g.get("_last_proactive_ts") or 0)
+        if (now - last_proactive) < _PROACTIVE_COOLDOWN:
+            return None
+        # Only speak if Stream B has something to share.
+        try:
+            from brain.dual_brain import get_dual_brain
+            db = get_dual_brain(g)
+            insight = None
+            if db is not None:
+                insight = getattr(db, "_background_insight", None)
+                # Atomically take it if present.
+                if insight is not None:
+                    with db._lock:  # type: ignore[attr-defined]
+                        insight = db._background_insight
+                        db._background_insight = None
+        except Exception:
+            insight = None
+        if not isinstance(insight, dict):
+            return None
+        content = str(insight.get("content") or "").strip()
+        if not content:
+            return None
+        # Soft opener so it doesn't feel like a system notification.
+        opener = f"Hey — {content[:140]}".rstrip()
+        spoke = _speak_via_worker(g, opener, emotion="curiosity", intensity=0.5)
+        g["_last_proactive_ts"] = now
+        g["_last_proactive_text"] = opener
+        print(f"[proactive] spoke={spoke} text={opener!r}")
+        return opener
+    except Exception as e:
+        print(f"[proactive] check error: {e!r}")
+        return None

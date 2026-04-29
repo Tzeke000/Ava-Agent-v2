@@ -15,6 +15,29 @@ from typing import Any
 _RUN_AVA_TUNING_SOURCE_LOGGED = False
 _PROMPT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="ava-prompt")
 
+# Simple greetings / mood checks — bypass full pipeline for sub-5s response
+_SIMPLE_PATTERNS = (
+    "how are you", "how do you feel", "what are you doing",
+    "hey ava", "hello ava", "hi ava", "hello", "hi ", "hey ",
+    "what's up", "whats up", "sup ava",
+    "good morning", "good afternoon", "good evening", "good night",
+    "how is your day", "how's it going", "hows it going",
+    "what are you thinking", "you there", "you awake", "you up",
+)
+
+
+def _is_simple_question(text: str) -> bool:
+    t = (text or "").lower().strip()
+    if not t:
+        return False
+    if len(t.split()) > 15:
+        return False
+    # Strip trailing punctuation for matching
+    t = t.rstrip("?!.,").strip()
+    if t in ("hi", "hey", "hello", "yo"):
+        return True
+    return any(p in t for p in _SIMPLE_PATTERNS)
+
 
 def _with_timeout(fn, timeout: float, fallback=None, label: str = ""):
     """Run fn() in a thread; return fallback if it exceeds timeout seconds."""
@@ -64,24 +87,37 @@ def run_ava(
         k in _u_low for k in ("yes do it", "go ahead", "yes, do it", "go ahead and do it")
     )
 
-    print(f"[run_ava] enter person={active_person_id} has_image={image is not None} input_chars={len(_inp)}")
+    _t_start = time.time()  # used to time every step
+
+    def _elapsed() -> str:
+        return f"{time.time()-_t_start:.2f}s"
+
+    print(f"[perf] run_ava start person={active_person_id} has_image={image is not None} input_chars={len(_inp)}")
     # Set thinking flag — UI uses this to show fast blue pulse animation
     _g["_ava_thinking"] = True
     _g["_ava_thinking_since"] = time.time()
 
     # ── Step: dual-brain foreground signal ────────────────────────────────────
-    print("[run_ava] step: dual_brain foreground start")
+    print(f"[perf] pre-dual-brain {_elapsed()}")
     _db = None
     try:
         from brain.dual_brain import get_dual_brain
         _db = get_dual_brain(_g)
         if _db is not None:
             _db.mark_foreground_start()
+            # Tell Stream B to drop what it's doing — Zeke is talking to us.
+            # The Ollama lock will serialize anyway, but pausing Stream B first
+            # frees the GPU faster for the foreground model.
+            try:
+                _db.pause_background_now()
+            except Exception:
+                pass
             _live = _db.get_live_thought()
             if _live:
                 _g["_dual_brain_live_thought"] = _live
     except Exception:
         _db = None
+    print(f"[perf] post-dual-brain {_elapsed()}")
 
     # ── Step: gaze-to-screen trigger check ───────────────────────────────────
     print("[run_ava] step: gaze trigger check")
@@ -103,8 +139,88 @@ def run_ava(
         pass
 
     try:
+        # ── FAST PATH: simple greetings / mood checks ────────────────────────
+        # Bypass workspace.tick, episodic search, concept graph, vector retrieval,
+        # privacy scan, dual-brain, etc. Just identity + mood + last 2 messages
+        # + LLM. Target: sub-5-second response for "hey ava" style inputs.
+        if _is_simple_question(_inp):
+            print(f"[run_ava] FAST PATH: simple question (t={time.time()-_t_start:.2f}s)")
+            try:
+                from langchain_core.messages import HumanMessage
+                # Mood
+                _mood_label = "calm"
+                try:
+                    _m = _av.load_mood()
+                    _mood_label = str(_m.get("primary_emotion") or _m.get("current_mood") or "calm")
+                except Exception:
+                    pass
+                # Last 2 turns from canonical history
+                _last_msgs_str = ""
+                try:
+                    _hist = list(_av._get_canonical_history())[-4:]
+                    _last_msgs_str = "\n".join(
+                        f"{m.get('role', 'user')}: {str(m.get('content') or '')[:200]}"
+                        for m in _hist
+                        if isinstance(m, dict)
+                    )
+                except Exception:
+                    pass
+                # Identity (truncated for speed)
+                _identity = str(_g.get("_AVA_IDENTITY_BLOCK") or "")[:500]
+                _person_name = ""
+                try:
+                    _profile_for_fp = _av.load_profile_by_id(active_person_id)
+                    _person_name = str(_profile_for_fp.get("name") or "").strip()
+                except Exception:
+                    _profile_for_fp = None
+                _addressee = f" Talking to {_person_name}." if _person_name else ""
+                _simple_prompt = (
+                    f"You are Ava — a local adaptive AI companion to Zeke.{_addressee}\n"
+                    f"Identity: {_identity}\n"
+                    f"Current mood: {_mood_label}.\n"
+                    f"Recent conversation:\n{_last_msgs_str}\n\n"
+                    f"User just said: {user_input}\n"
+                    f"Respond naturally and warmly in 1-3 sentences. Don't add any tool blocks or formatting."
+                )
+                _fast_model = str(_av.LLM_MODEL or "ava-personal:latest")
+                print(f"[perf] fast pre-llm-init {_elapsed()}")
+                _llm_fast = ChatOllama(model=_fast_model, temperature=0.7)
+                print(f"[perf] fast post-llm-init {_elapsed()}")
+                from brain.ollama_lock import with_ollama
+                print(f"[perf] fast pre-invoke {_elapsed()} model={_fast_model}")
+                _fp_result = with_ollama(
+                    lambda: _llm_fast.invoke([HumanMessage(content=_simple_prompt)]),
+                    label=f"fast:{_fast_model}",
+                )
+                _g["_last_invoked_model"] = _fast_model
+                print(f"[perf] fast post-invoke {_elapsed()}")
+                _reply_text = (getattr(_fp_result, "content", str(_fp_result)) or "").strip()
+                if not _reply_text:
+                    _reply_text = "I'm here."
+                _reply_text = scrub_visible_reply(_reply_text)
+                print(f"[run_ava] FAST PATH complete in {time.time()-_t_start:.2f}s reply_chars={len(_reply_text)}")
+                # Append assistant reply to canonical history so the next turn sees it
+                try:
+                    _canon_after = list(_av._get_canonical_history())
+                    _canon_after.append({"role": "assistant", "content": _reply_text})
+                    _av._set_canonical_history(_canon_after)
+                except Exception:
+                    pass
+                # Build minimal visual payload + active profile and return
+                _vis_fast = default_visual_payload(
+                    face_status="—", recognition_status="—",
+                    expression_status="—", memory_preview="",
+                    turn_route="fast_simple", visual_truth_trusted=False,
+                    vision_status="fast_path",
+                )
+                if _profile_for_fp is None:
+                    _profile_for_fp = _av.load_profile_by_id(active_person_id)
+                return _reply_text, _vis_fast, _profile_for_fp, [], {"fast_path": True}
+            except Exception as _fpe:
+                print(f"[run_ava] FAST PATH error: {_fpe!r} — falling through to normal path")
+
         # ── Step: connectivity notice ─────────────────────────────────────────
-        print("[run_ava] step: connectivity check")
+        print(f"[perf] pre-connectivity {_elapsed()}")
         _conn_changed = bool(_g.get("_connectivity_changed"))
         if _conn_changed:
             _conn_to = str(_g.get("_connectivity_changed_to") or "")
@@ -260,14 +376,14 @@ def run_ava(
             return finalize_ava_turn(user_input, ai_reply, visual, active_profile, actions, turn_route="camera_identity")
 
         # ── Step: depth classification ────────────────────────────────────────
-        print("[run_ava] step: classify reply depth")
+        print(f"[run_ava] step: classify reply depth (t={time.time()-_t_start:.2f}s)")
         _depth = _av.classify_reply_depth(user_input, _g)
         use_fast_path = _depth == "fast"
         _g["reply_path_selected"] = "fast" if use_fast_path else "deep"
         _g["reply_path_reason"] = f"classify_reply_depth_{_depth}"
 
         # ── Step: prompt building (with 30s timeout) ──────────────────────────
-        print(f"[run_ava] step: build prompt path={'fast' if use_fast_path else 'deep'}")
+        print(f"[perf] pre-build-prompt {_elapsed()} path={'fast' if use_fast_path else 'deep'}")
         if use_fast_path:
             _prompt_callable = lambda: build_prompt_fast(user_input, image=image, active_person_id=active_person_id)
         else:
@@ -292,6 +408,7 @@ def run_ava(
             messages, visual, active_profile = _prompt_result
 
         # ── Step: model selection ─────────────────────────────────────────────
+        print(f"[perf] post-build-prompt {_elapsed()}")
         print("[run_ava] step: model selection")
         try:
             _invoke_llm = llm
@@ -321,13 +438,20 @@ def run_ava(
             except Exception:
                 pass
 
-            # ── Step: LLM call ────────────────────────────────────────────────
-            print(f"[run_ava] step: llm invoke model={getattr(_invoke_llm, 'model', '?')}")
-            result = _invoke_llm.invoke(messages)
+            # ── Step: LLM call (serialized via Ollama lock) ───────────────────
+            _used_model_label = getattr(_invoke_llm, 'model', '?')
+            print(f"[perf] pre-invoke {_elapsed()} model={_used_model_label}")
+            from brain.ollama_lock import with_ollama
+            result = with_ollama(
+                lambda: _invoke_llm.invoke(messages),
+                label=f"main:{_used_model_label}",
+            )
+            _g["_last_invoked_model"] = str(_used_model_label)
+            print(f"[perf] post-invoke {_elapsed()} model={_used_model_label}")
             raw_reply = getattr(result, "content", str(result)).strip()
             if not raw_reply:
                 raw_reply = "I'm here."
-            print(f"[run_ava] step: llm response received reply_chars={len(raw_reply)}")
+            print(f"[run_ava] step: llm response received reply_chars={len(raw_reply)} (t={_elapsed()})")
 
             # Phase 44: self-evaluation
             try:
@@ -421,7 +545,7 @@ def run_ava(
             pass
 
         _vroute = isinstance(visual, dict) and visual.get("turn_route")
-        print(f"[run_ava] step: finalize_ava_turn route={_vroute or 'llm'} path={'fast' if use_fast_path else 'deep'}")
+        print(f"[run_ava] step: finalize_ava_turn route={_vroute or 'llm'} path={'fast' if use_fast_path else 'deep'} (t={time.time()-_t_start:.2f}s)")
         return finalize_ava_turn(
             user_input, ai_reply, visual, active_profile, actions, turn_route=_vroute or "llm"
         )

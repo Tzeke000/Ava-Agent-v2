@@ -3,6 +3,7 @@ Periodic background ticks for systems that need to run independently of conversa
 
 - Heartbeat tick every 30s (so snapshot has fresh heartbeat data without chat activity)
 - Video frame capture every ~67ms (15 fps) — feeds the VideoMemory rolling buffer
+- Clipboard monitor every 2s (publishes _clipboard_content / _clipboard_type to globals)
 - All threads are daemon, all calls are wrapped in try/except.
 """
 from __future__ import annotations
@@ -14,6 +15,8 @@ from typing import Any
 
 _HB_INTERVAL = 30.0
 _VIDEO_INTERVAL = 1.0 / 15.0  # 15 fps
+_CLIPBOARD_INTERVAL = 2.0
+_CODE_HINTS = ("def ", "class ", "import ", "function ", "const ", "var ", "let ", "{\n", "}\n")
 
 
 def _heartbeat_loop(g: dict[str, Any]) -> None:
@@ -98,8 +101,47 @@ def _video_frame_capture_thread(g: dict[str, Any]) -> None:
             cap = cv2.VideoCapture(0)
 
 
+def _clipboard_monitor_loop(g: dict[str, Any]) -> None:
+    """Poll the system clipboard every _CLIPBOARD_INTERVAL seconds.
+
+    Publishes:
+      g["_clipboard_content"]      first 500 chars of the latest clipboard text
+      g["_clipboard_type"]         one of "url", "code", "text"
+      g["_clipboard_changed_ts"]   wall time of last change
+    Errors are swallowed (clipboard race conditions on Windows are common).
+    """
+    try:
+        import pyperclip  # type: ignore
+    except Exception as e:
+        print(f"[clipboard] pyperclip unavailable: {e!r}")
+        return
+    last = ""
+    while True:
+        try:
+            current = pyperclip.paste()
+        except Exception:
+            time.sleep(_CLIPBOARD_INTERVAL)
+            continue
+        try:
+            if isinstance(current, str) and current.strip() and current != last:
+                last = current
+                snippet = current[:500]
+                g["_clipboard_content"] = snippet
+                g["_clipboard_changed_ts"] = time.time()
+                low = current.lower().lstrip()
+                if low.startswith("http://") or low.startswith("https://"):
+                    g["_clipboard_type"] = "url"
+                elif any(kw in current for kw in _CODE_HINTS):
+                    g["_clipboard_type"] = "code"
+                else:
+                    g["_clipboard_type"] = "text"
+        except Exception:
+            pass
+        time.sleep(_CLIPBOARD_INTERVAL)
+
+
 def bootstrap_background_ticks(g: dict[str, Any]) -> None:
-    """Start the heartbeat tick thread and the video capture thread."""
+    """Start the heartbeat tick thread, video capture thread, and clipboard monitor."""
     if not g.get("_background_hb_thread_started"):
         t1 = threading.Thread(target=_heartbeat_loop, args=(g,), daemon=True, name="ava-bg-heartbeat")
         t1.start()
@@ -111,3 +153,9 @@ def bootstrap_background_ticks(g: dict[str, Any]) -> None:
         t2.start()
         g["_background_video_thread_started"] = True
         print("[background_ticks] video frame capture thread started (~15 fps)")
+
+    if not g.get("_background_clipboard_thread_started"):
+        t3 = threading.Thread(target=_clipboard_monitor_loop, args=(g,), daemon=True, name="ava-bg-clipboard")
+        t3.start()
+        g["_background_clipboard_thread_started"] = True
+        print("[background_ticks] clipboard monitor thread started (every 2s)")

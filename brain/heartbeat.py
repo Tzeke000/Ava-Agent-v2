@@ -528,6 +528,14 @@ def _run_heartbeat_tick(
     except Exception:
         pass
 
+    # Proactive check — unprompted speech when Zeke is present, quiet, and
+    # Stream B has something insight-worthy to share.
+    try:
+        from brain.proactive_triggers import proactive_check
+        proactive_check(g)
+    except Exception as _pe:
+        print(f"[heartbeat] proactive_check error: {_pe}")
+
     # Attention monitoring — eye tracker checks every 30 seconds
     _ATTENTION_INTERVAL = 30.0
     _last_attention = float(st.meta.get("last_attention_check_wall") or 0)
