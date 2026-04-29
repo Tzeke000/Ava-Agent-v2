@@ -30,8 +30,23 @@ def _bg(name: str, fn, *args, **kwargs) -> threading.Thread:
 
 def run_startup(g: dict[str, Any]) -> None:
     """Initialize all Ava subsystems. g = globals() from avaagent.py."""
+    # Guard: prevent double-execution if the module is somehow imported twice
+    if g.get("_STARTUP_COMPLETE"):
+        print("[startup] already complete — skipping duplicate run")
+        return
+
     BASE_DIR: Path = g["BASE_DIR"]
     STATE_DIR: Path = g["STATE_DIR"]
+
+    # Clear any stale restart flag left from a previous session so the watchdog
+    # doesn't see it and immediately launch a second avaagent instance.
+    _restart_flag = BASE_DIR / "state" / "restart_requested.flag"
+    try:
+        if _restart_flag.is_file():
+            _restart_flag.unlink()
+            print("[startup] cleared stale restart_requested.flag")
+    except Exception as _rf_e:
+        print(f"[startup] could not clear restart flag: {_rf_e}")
     MOOD_PATH: Path = g["MOOD_PATH"]
     OWNER_PERSON_ID: str = g["OWNER_PERSON_ID"]
     DEEPFACE_AVAILABLE: bool = g["DEEPFACE_AVAILABLE"]
@@ -441,6 +456,7 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as e:
         print(f"[background_ticks] startup skipped: {e}")
 
+    g["_STARTUP_COMPLETE"] = True
     print("Ava running...")
     print(f"Base dir: {BASE_DIR}")
     print(f"Profiles dir: {g['PROFILES_DIR']}")

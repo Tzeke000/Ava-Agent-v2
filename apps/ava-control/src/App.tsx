@@ -456,13 +456,13 @@ export default function App() {
             const msg = JSON.parse(ev.data as string);
             if (msg.type === "snapshot" && msg.data) {
               setSnap(msg.data as Snapshot);
-              setOnline(true);
+              // online state is authoritative from REST poll only — WS never sets it
             } else if (msg.type === "delta") {
               setSnap((prev) => prev ? { ...prev, ...Object.fromEntries(Object.entries(msg).filter(([k]) => k !== "type")) } : prev);
             }
           } catch { /* ignore parse errors */ }
         };
-        ws.onerror = () => setOnline(false);
+        ws.onerror = () => { /* silent — REST poll is authoritative for online state */ };
         ws.onclose = () => {
           ws = null;
           if (reconnectId) clearTimeout(reconnectId);

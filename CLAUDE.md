@@ -20,9 +20,13 @@ voice, and a concept graph brain.
 
 \- Always run py\_compile to verify before building
 
-\- Build app with: cd apps\\ava-control \&\& npm run tauri:build
+\- Development (hot-reload): start\_ava\_dev.bat — Vite HMR, no exe rebuild
+
+\- Production build: cd apps\\ava-control \&\& npm run tauri:build
 
 \- Push to GitHub with: git add -A \&\& git commit -m "..." \&\& git push origin master
+
+\- No Gradio — only port 5876 (operator HTTP). Tauri is the only UI.
 
 
 
