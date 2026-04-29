@@ -49,8 +49,6 @@ def run_startup(g: dict[str, Any]) -> None:
         print(f"[startup] could not clear restart flag: {_rf_e}")
     MOOD_PATH: Path = g["MOOD_PATH"]
     OWNER_PERSON_ID: str = g["OWNER_PERSON_ID"]
-    DEEPFACE_AVAILABLE: bool = g["DEEPFACE_AVAILABLE"]
-
     print("[startup] step: identity + profiles")
     g["ensure_owner_profile"]()
     g["ensure_identity_files"]()
@@ -317,10 +315,6 @@ def run_startup(g: dict[str, Any]) -> None:
 
     print("[startup] step: face labels")
     g["load_face_labels"]()
-    if DEEPFACE_AVAILABLE:
-        print("[face] DeepFace ready")
-    else:
-        print("[face] DeepFace unavailable - skipping face model load")
 
     print("[startup] step: mood init")
     if not MOOD_PATH.exists():

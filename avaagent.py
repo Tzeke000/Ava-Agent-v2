@@ -4,7 +4,6 @@ import cv2
 import warnings
 import random
 import re
-import subprocess as _sp
 import atexit
 import tempfile
 import threading
@@ -41,7 +40,6 @@ from brain.selfstate import is_selfstate_query, build_selfstate_reply
 from brain.health_runtime import print_startup_selftest
 from brain.history_manager import AvaHistoryManager
 from brain.initiative_sanity import desaturate_candidate_scores, sanitize_candidate_result
-from brain.vision import analyze_face_emotion_detailed
 from brain.profile_manager import (
     DEFAULT_ALIASES,
     looks_like_phrase_profile,
@@ -103,16 +101,7 @@ from brain.session import (
     load_session_state, save_session_state, bump_session_message_count,
 )
 
-try:
-    _check = _sp.run(
-        ["py", "-3.12", "-c", "from deepface import DeepFace"],
-        capture_output=True,
-        timeout=15,
-    )
-    DEEPFACE_AVAILABLE = _check.returncode == 0
-except Exception:
-    DEEPFACE_AVAILABLE = False
-DeepFace = None  # not imported in this interpreter — handled via Python 3.12 subprocess
+DEEPFACE_AVAILABLE = False  # DeepFace removed — expression detection uses brain/expression_detector.py
 
 
 def _safe_float(v, d=0.0) -> float:
@@ -2765,40 +2754,33 @@ def map_emotion_to_soft_signal(emotion: str) -> str:
     }
     return mapping.get(e, e or "unknown")
 
-def _deepface_via_py312(face_bgr_image) -> dict:
+def analyze_expression(image) -> dict:
+    """Expression analysis via brain/expression_detector.py (MediaPipe). Returns ok/reason dict."""
+    if image is None:
+        return {"ok": False, "reason": "no_image"}
     try:
-        data = analyze_face_emotion_detailed(face_bgr_image)
-        if not data:
-            return {"ok": False, "reason": "subprocess_error"}
-        dominant = (data.get("dominant") or "unknown")
-        dominant = str(dominant).lower() if dominant else "unknown"
-        emotions = data.get("emotions") or {}
-        conf = float(emotions.get(dominant, 0.0)) / 100.0 if dominant in emotions else 0.0
+        from brain.expression_detector import get_expression_detector
+        ed = get_expression_detector()
+        if ed is None or not ed.available:
+            return {"ok": False, "reason": "expression_detector_unavailable"}
+        result = ed.detect_expression(image)
+        if not result:
+            return {"ok": False, "reason": "no_face"}
+        dominant = str(result.get("dominant") or "unknown").lower()
+        conf = float(result.get(dominant, 0.0)) if dominant in result else 0.0
         return {
             "ok": True,
             "raw_emotion": dominant,
             "confidence": max(0.0, min(1.0, conf)),
             "soft_signal": map_emotion_to_soft_signal(dominant),
-            "emotions": emotions,
+            "emotions": {k: v for k, v in result.items() if k != "dominant"},
         }
-    except Exception as e:
-        return {"ok": False, "reason": f"deepface_subprocess_error: {e}"}
-
-def analyze_expression(image) -> dict:
-    if image is None:
-        return {"ok": False, "reason": "no_image"}
-    crop = extract_face_crop(image)
-    if crop is None:
-        return {"ok": False, "reason": "no_face"}
-    try:
-        face_bgr = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
-        return _deepface_via_py312(face_bgr)
     except Exception as e:
         return {"ok": False, "reason": f"analysis_error: {e}"}
 
 def update_expression_state(image, recognized_person_id=None, visual_truth_trusted: bool = True) -> dict:
     state = load_expression_state()
-    state["available"] = DEEPFACE_AVAILABLE
+    state["available"] = True
     state["recognized_person_id"] = recognized_person_id
     face_visible = extract_face_crop(image) is not None
     state["visible_face"] = face_visible
@@ -2831,7 +2813,7 @@ def update_expression_state(image, recognized_person_id=None, visual_truth_trust
         state["confidence"] = 0.0
         state["stability"] = 0.0
         reason = analysis.get("reason", "unknown")
-        state["note"] = "DeepFace unavailable" if reason == "deepface_unavailable" else f"Expression unavailable: {reason}"
+        state["note"] = f"Expression unavailable: {reason}"
         save_expression_state(state)
         return state
 
@@ -2874,8 +2856,6 @@ def get_expression_status_text(state: dict | None = None) -> str:
     state = state or load_expression_state()
     if not state.get("visible_face"):
         return "No visible face"
-    if not DEEPFACE_AVAILABLE:
-        return "Expression sensing unavailable (install DeepFace)"
     current = state.get("current_expression", "unknown")
     conf = round(float(state.get("confidence", 0.0)) * 100, 1)
     stab = round(float(state.get("stability", 0.0)) * 100, 1)
@@ -4023,8 +4003,6 @@ def expression_prompt_text(state: dict | None = None, perception=None) -> str:
         )
     if not state.get("visible_face"):
         return "No face is currently visible, so there is no usable expression signal."
-    if not DEEPFACE_AVAILABLE:
-        return "Expression sensing is unavailable right now. Do not infer feelings from facial expressions."
     current = state.get("current_expression", "unknown")
     raw = state.get("raw_emotion", "unknown")
     conf = round(float(state.get("confidence", 0.0)) * 100, 1)
