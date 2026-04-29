@@ -1,6 +1,6 @@
 # AVA HANDOFF
-**Last updated:** April 28, 2026  
-**Session scope:** Phases 44–100 (ALL COMPLETE — MILESTONE REACHED)
+**Last updated:** April 29, 2026
+**Session scope:** Post-Phase-100 stabilization + upgrade pass — Gradio removal, dual-brain inference, eye tracking, voice-loop hardening, dev hot-reload, cloud models, image generation, widget polish, fast-path simple Q&A, TTS thread safety.
 
 ---
 
@@ -8,28 +8,30 @@
 
 Ava Agent v2 is a local-first desktop AI companion running on:
 
-- **Python 3.11** + **Ollama** (local LLMs, no cloud required)
-- **FastAPI** operator server at `http://127.0.0.1:5876`
-- **Tauri v2** + **React** + **Three.js** desktop app (`apps/ava-control`)
-- **Gradio** UI fallback (if Tauri is not built)
+- **Python 3.11** + **Ollama** (local LLMs, optional cloud models via Ollama Cloud)
+- **FastAPI** operator server at `http://127.0.0.1:5876` (HTTP + WebSocket)
+- **Tauri v2** + **React 18** + **Three.js** desktop app (`apps/ava-control`)
+- **No Gradio** — Tauri is the only UI. Port 5876 is the only HTTP control plane.
 
-She has emotions, memory, vision, voice, concept graph, episodic memory, self-modification proposals, and a self-aware identity system. All 25 phases planned for this session (44–68) are implemented and pushed.
+She has emotions, memory, vision (live camera + eye tracking + expression detection), voice (always-on STT + TTS), concept graph, episodic memory, dual-brain parallel inference, self-modification proposals, trust system, and a self-aware identity system.
+
+All 100 phases are complete. This session focused on stability fixes and the "upgrade pass" features layered on top.
 
 ---
 
 ## Start Ava
 
 ```bash
-# Standard launch (starts agent + watchdog)
+# Production launch (packaged exe + watchdog)
 start_ava_desktop.bat
+
+# Dev mode (Vite HMR — instant frontend hot-reload, no exe rebuild)
+start_ava_dev.bat
 
 # Operator API
 http://127.0.0.1:5876
 
-# Tauri app (if built)
-apps/ava-control/src-tauri/target/release/ava-control.exe
-
-# Build Tauri app
+# Build packaged Tauri exe
 cd apps\ava-control && npm run tauri:build
 
 # Compile check (always before build)
@@ -39,24 +41,29 @@ py -3.11 -m py_compile <file.py>
 git add -A && git commit -m "message" && git push origin master
 ```
 
+`start_ava_dev.bat` starts `avaagent.py` minimized, waits for `:5876`, starts the watchdog, then runs `npm run tauri:dev`. Any `.tsx`/`.ts`/`.css` change refreshes instantly via Vite HMR. Only Rust / `tauri.conf.json` changes require a full `tauri:build`.
+
 ---
 
 ## Model Setup
 
 | Role | Model |
 |---|---|
-| Primary conversational | `ava-personal:latest` (fine-tuned, Phase 44 promoted) |
+| Primary conversational | `ava-personal:latest` (fine-tuned) |
+| Foreground stream (dual-brain) | `ava-personal:latest` |
+| Background stream (dual-brain) | `qwen2.5:14b` / `kimi-k2.6:cloud` |
 | Deep reasoning | `qwen2.5:14b` |
 | Maintenance/evaluation | `mistral:7b` |
 | Embeddings | `nomic-embed-text` |
+| Cloud (when online) | `kimi-k2.6:cloud`, `qwen3.5:cloud`, `glm-5.1:cloud`, `minimax-m2.7:cloud` (via `ollama_cloud` src) |
 
-**Phase 44 routing fix:** The fast-path in `avaagent.py` previously called `_pick_fast_model_fallback()` first (which hardcodes `mistral:7b`), bypassing the Phase 25 routing result that correctly selects `ava-personal:latest` for social chat. Fixed by checking `_route_model` first.
+`brain/connectivity.py` polls `1.1.1.1`/`8.8.8.8` on a 30s cache. When offline, cloud models are filtered out of routing (`requires_internet=True`). Routing prefers cloud for deep_reasoning_mode when online.
 
 ---
 
 ## Bootstrap Philosophy (CRITICAL — never violate)
 
-**NEVER choose Ava's personal preferences for her.** Every phase involving preferences, style, or identity must build a discovery mechanism — a system that lets Ava form that aspect of herself through experience. Her goals, hobbies, communication style, and emotional baseline all emerge from experience, not hardcoded defaults.
+**NEVER choose Ava's personal preferences for her.** Every system involving preferences, style, or identity must build a discovery mechanism — Ava forms that aspect of herself through experience. Goals, hobbies, communication style, expression mappings, voice rate/volume, multitasking pattern, trust thresholds — all emerge from experience, not hardcoded defaults.
 
 ---
 
@@ -68,211 +75,124 @@ git add -A && git commit -m "message" && git push origin master
 
 ---
 
-## Phases 44–68 — What Was Built
+## Post-Phase-100 Work (Apr 28–29, 2026)
 
-### Phase 44 — Ava-personal as Primary Brain + Self-evaluator
-**Commits:** `4c24f76`
+Listed newest first. Commit hashes are short SHAs.
 
-- **`avaagent.py`:** Fast-path routing fixed — `_route_model` checked before `_pick_fast_model_fallback()`. `ava-personal:latest` now routes correctly for social chat.
-- **`brain/model_evaluator.py`** (NEW): `ModelSelfEvaluator` — background thread compares ava-personal vs mistral:7b on real turns. After 5+ samples, decides `confirmed_primary` (≥0.60 win rate) or `flagged_for_review` (<0.40 at 10+). State: `state/model_eval_p44.json`.
+### Latest (Apr 29) — Voice loop, orb thinking, brain stability, camera
 
----
+| Commit | What |
+|---|---|
+| `7534621` | run_ava timeout protection on every step; orb thinking pulse driven by `_ava_thinking` flag in `reply_engine.py`; always-on voice loop; clap-detector sensitivity raised; brain tab stops re-initializing D3 on every poll; live-camera shown across all tabs |
+| `dc645d1` | Clap detector tuning: 5× ambient multiplier, 0.15 floor, 3s cooldown; voice_loop full per-step logging |
+| `1975dff` | Live camera on Vision/Brain/Chat tabs; D3 brain reinit gated (only on major node-count change); `OrbCanvas` memo'd to prevent thrash |
+| `02c9f1f` | Widget transparent background — CSS override + `backgroundColor` in `tauri.conf.json` |
+| `59eaca9` | Buffered-only live frames (no synchronous capture in HTTP path); 90s `run_ava` timeout; 5s tick timeout; voice-loop diagnostics |
+| `4ea87e8` | New tools: `widget_move_tool.py`, `app_launcher.py`, `browser_tool.py` |
+| `44bb51f` | Widget Tauri capabilities file (`apps/ava-control/src-tauri/capabilities/default.json`); minimize-detection polling; removed wrong blur fallback |
+| `97409de` | STT engine bootstrapped for voice loop; live camera feed published from background thread (not blocking HTTP) |
+| `5183e78` | Online flicker fix — 3-failure threshold + silent connecting window + 5s poll interval |
+| `aa01b5b` | `face_recognizer` thread-safe singleton (was crashing under concurrent calls); diagnostic prints on all exit paths |
+| `242ecb9` | Keepalive stability; app connection retry logic; self_model timestamp crash fixed |
+| `ae1b1fd` | Cleanup: removed DeepFace, dead imports, residual Gradio remnants; selftest fixed |
+| `ac550e7` | **Removed Gradio entirely.** WebSocket flicker fix, double-startup fix, new `start_ava_dev.bat` hot-reload mode |
+| `34da8ea` | Live camera in Vision tab; `concept_graph` save mkdirs parents; `live_frame` HTTP endpoint |
+| `5d1a180` | Camera capture persistent connection (no per-frame open/close); noisy logs suppressed; global crash handler installed |
+| `f951489` | Comprehensive bug audit + repair pass across `avaagent`, `dual_brain`, `eye_tracker`, `concept_graph`, `operator_server`, `reply_engine`, `startup` |
 
-### Phase 45 — Concept Graph Evolution
-**Commits:** `3590746`
+### Earlier post-handoff features (Apr 28)
 
-- **`brain/concept_graph.py`:** `get_related_concepts` returns `relationship` and `via` fields. Added `boost_from_usage(used_ids, ignored_ids)` — strengthens concepts Ava actually used.
-- **`brain/heartbeat.py`:** Weekly concept graph decay trigger wired in.
-- **`avaagent.py`:** `_injected_concept_ids` tracking; `ACTIVE CONCEPTS` block injected into prompts.
+| Commit | What |
+|---|---|
+| `d187c80` | `run_ava` hang timeout protection; widget orb visibility; cloud model priority |
+| `bb6b4f7` | `concept_graph.json.tmp` WinError 5 fix — process lock, skip-if-locked save, stale `.tmp` cleanup on startup |
+| `5b22890` | MediaPipe iris landmark indices corrected (left 468–472, right 473–477) |
+| `5b466b6` | **NEW:** Eye tracking (`brain/eye_tracker.py`), gaze estimation, expression detection (`brain/expression_detector.py`), video memory (`brain/video_memory.py`), `tools/system/eye_tracking_tool.py` |
+| `42f95cd` | Startup hang fix — `concept_graph` bootstrap, `self_model` update, vectorstore init, `milestone_100` all moved to background daemon threads; main thread reaches operator server in <10s; progress logging added |
+| `2382d8f` | `concept_graph` tmp file lock on Windows; `brain_graph` 0-nodes-in-snapshot fix |
+| `57d178b` | **NEW: Dual-brain parallel inference** (`brain/dual_brain.py`) — foreground (`ava-personal:latest`) + background (`qwen2.5:14b` / `kimi-k2.6:cloud`) streams, live thinking, seamless handoff. UI shows live thought stream |
+| `4274ac7` | **NEW:** Cloud models in routing, connectivity monitor (`brain/connectivity.py`), image generation (`tools/creative/image_generator.py` — local FLUX or cloud), routing expansion in `config/ava_tuning.py` |
 
----
+### Uncommitted (currently on disk, in progress)
 
-### Phase 46 — Hot-reload Tool Registry
-**Commits:** `41f7ebd`
-
-- **`tools/tool_registry.py`** (rewritten): `_FileWatcher` thread polls `tools/` every 5s, re-imports changed `.py` files, re-registers tools. Tools expose `# SELF_ASSESSMENT:` comment as description.
-- **`brain/operator_server.py`:** `/api/v1/tools/reload` endpoint triggers manual reload.
-
----
-
-### Phase 47 — Watchdog Restart System
-**Commits:** `7c17d2f`
-
-- **`scripts/watchdog.py`** (NEW): Polls `state/restart_requested.flag`, kills avaagent by PID, restarts it, polls `:5876` for liveness. Logs to `state/restart_log.jsonl`.
-- **`tools/system/restart_tool.py`** (NEW): Tier 1 `request_restart(reason)` tool — writes flag file and a pickup note for next session.
-- **`start_ava_desktop.bat`:** Launches watchdog alongside avaagent.
-
----
-
-### Phase 48 — Desktop Widget Orb
-**Commits:** `ad7a56d`
-
-- **`apps/ava-control/src-tauri/tauri.conf.json`:** Second window `label: "widget"` — transparent, decorations:false, alwaysOnTop:true, 150×150px, url: `/?widget=1`.
-- **`apps/ava-control/src/WidgetApp.tsx`** (NEW): Polls operator HTTP every 3s, renders `OrbCanvas` 150×150 in transparent frame.
-- **`apps/ava-control/src/main.tsx`:** Detects `?widget=1`, renders `WidgetApp` instead of `App`.
-- **`brain/operator_server.py`:** `GET /POST /api/v1/widget/position` endpoints.
-
----
-
-### Phase 49 — Screen Pointer Behavior
-**Commits:** `e72b505`
-
-- **`apps/ava-control/src/components/OrbCanvas.tsx`:** `pointer` shape morph — sphere elongates and tapers into a 3D arrow. Added `shapeOverride?: string` and `amplitude?: number` props.
-- **`tools/system/pointer_tool.py`** (NEW): Tier 1 `point_at_element(description, duration_seconds)` — pywinauto coordinate lookup (best-effort), sets `_widget_pointing` in globals, auto-resets after duration. Tracks `_pointing_history` for bootstrap.
-- **`brain/operator_server.py`:** `widget_block` in snapshot with `pointing`/`pointing_description`/`pointing_coords`.
-- **`apps/ava-control/src/WidgetApp.tsx`:** Reads `snap.widget.pointing`, passes `shapeOverride="pointer"` to OrbCanvas.
+- **`brain/tts_worker.py`** (NEW, untracked) — dedicated daemon thread that owns the pyttsx3 engine. pyttsx3 on Windows uses SAPI5 via COM and the COM apartment is single-threaded; calling `runAndWait()` from voice_loop's daemon thread silently hangs. `TTSWorker` initializes pyttsx3 inside its own thread and drains a queue of `(text, done_event)` tuples so all `.say()` / `.runAndWait()` calls happen on one consistent thread.
+- **`brain/tts_engine.py`** (modified, uncommitted) — `_init_engine` now defers to `TTSWorker.get_tts_worker()`; `_speak_pyttsx3` routes through the worker instead of calling pyttsx3 directly. `speaking` property asks the worker.
+- **`brain/reply_engine.py`** (modified, uncommitted) — **Simple-question fast path.** `_is_simple_question()` matches greetings / mood checks ("hey ava", "how are you", etc.) under 15 words. Bypasses workspace.tick, episodic search, concept graph, vector retrieval, privacy scan, dual-brain. Builds a minimal prompt (identity + mood + last 2 turns) and invokes `ava-personal:latest` directly. Target: sub-5-second response. Currently still slow (see Known Issues).
 
 ---
 
-### Phase 50 — Audio Visualization on Orb
-**Commits:** `3003e19`
+## Architecture (Current Brain Modules)
 
-- **`brain/tts_engine.py`:** Added `_current_amplitude: float`, `_estimate_amplitude(text)`, `speaking` property, `amplitude` property. Sets amplitude before speak.
-- **`brain/operator_server.py`:** `tts_speaking` and `tts_amplitude` in snapshot.
-- **`apps/ava-control/src/App.tsx`:** `ttsSpeaking`/`ttsAmplitude` from snapshot drive orb pulse. `listening` state when `sttListening`.
-- **`apps/ava-control/src/components/OrbCanvas.tsx`:** Amplitude pulse + listening spiral animations.
+`brain/` is the bulk of Ava's runtime. Modules added since the last handoff:
 
----
+| Module | Role |
+|---|---|
+| `brain/dual_brain.py` | Foreground + background parallel inference, live thought stream |
+| `brain/connectivity.py` | Online/offline monitor with cached check, jsonl log |
+| `brain/eye_tracker.py` | MediaPipe iris tracking, gaze estimation |
+| `brain/expression_detector.py` | Per-frame facial expression classification |
+| `brain/video_memory.py` | Persistent episodic visual memory |
+| `brain/frame_store.py` | Buffered live-frame publisher (background thread → HTTP) |
+| `brain/background_ticks.py` | Heartbeat-driven background work |
+| `brain/proactive_triggers.py` | Conditions that should kick off proactive talk (NOT yet wired to reply path) |
+| `brain/tts_worker.py` | Single-threaded pyttsx3 owner (untracked, in progress) |
 
-### Phase 51 — UI Accessibility Tree Tool
-**Commits:** `13fc4a5`
-
-- **`avaagent.py`:** Active window detection via ctypes; `ACTIVE WINDOW:` injected into prompt.
-- Tool registered for reading UI accessibility tree (pywinauto).
-
----
-
-### Phase 52 — Smart Screenshot Management
-**Commits:** `13fc4a5`
-
-- Screenshot tool with region selection, dedup, and state tracking. Stored in `state/screenshots/`.
+Notable existing modules still load-bearing: `prompt_builder.py`, `reply_engine.py`, `operator_server.py`, `voice_loop.py`, `clap_detector.py`, `wake_word.py`, `face_recognizer.py`, `episodic_memory.py`, `concept_graph.py`, `dual_brain.py`, `heartbeat.py`, `startup.py`.
 
 ---
 
-### Phase 53 — PyAutoGUI Computer Control
-**Commits:** `13fc4a5`
+## Tools (Current Inventory)
 
-- Tier 2 tools: `move_mouse`, `click`, `type_text`, `press_key`, `scroll`. Safety: coordinate bounds check, confirmation required for destructive keys.
+`tools/system/`: `accessibility_tool`, `app_launcher` (NEW), `browser_tool` (NEW), `computer_control`, `connectivity_tool` (NEW), `eye_tracking_tool` (NEW), `file_drop_tool`, `file_manager`, `notification_tool`, `pointer_tool`, `process_manager`, `restart_tool`, `screenshot_tool`, `stats_tool`, `widget_move_tool` (NEW)
 
----
+`tools/creative/`: `image_generator` (NEW — local FLUX or cloud, registers `generate_image` + `show_image`)
 
-### Phase 54 — System Stats Monitoring
-**Commits:** `13fc4a5`
+`tools/games/`: dino, minecraft (`ava_bot.js`, `companion_tool`, `world_memory`)
 
-- **`brain/operator_server.py`:** `system_stats` block (CPU, RAM, disk via psutil, 30s cache).
+`tools/ava/`: `self_modification_tool`, `style_tool`, `tool_builder`
 
----
+`tools/ava_built/`: empty (Ava writes new tools here at runtime via `tool_builder.build_tool()`)
 
-### Phase 55 — Drag and Drop File Input
-**Commits:** `00d5fd0`
-
-- **`apps/ava-control/src/App.tsx`:** `listen()` from `@tauri-apps/api/event`, drag-drop state + visual overlay.
+`tools/web/`: `web_search`, `web_fetch`
 
 ---
 
-### Phase 56 — Expanded Orb Expressions
-**Commits:** `00d5fd0`
+## UI (Tauri / React)
 
-- **`apps/ava-control/src/components/OrbCanvas.tsx`:** 8 new shape morphs: `cube`, `prism`, `cylinder`, `infinity`, `double_helix`, `burst`, `contracted_tremor`, `rising`.
-- **`tools/ava/style_tool.py`** (NEW): `propose_expression(emotion, shape, reason)` — Ava owns her own expression mappings via `state/ava_style.json`. Bootstrap: she proposes, not hardcoded.
-- **`apps/ava-control/src/App.tsx`:** Extended `EmotionVisual.shape` type to include all new shapes + `| string` catch-all.
+Two Tauri windows defined in `apps/ava-control/src-tauri/tauri.conf.json`:
 
----
+1. **Main window** — `apps/ava-control/src/App.tsx` (1700+ lines). Tabs: Chat, Brain, Vision, People, Learning, Emil, Proposals, Journal, Settings.
+2. **Widget window** — `apps/ava-control/src/WidgetApp.tsx`. 150×150 transparent always-on-top orb. URL: `/?widget=1`. Uses `OrbCanvas` from `apps/ava-control/src/components/OrbCanvas.tsx`.
 
-### Phase 57 — Wake Word Detection
-**Commits:** `afdb74b`
+Brain-tab graph is currently 2D D3 (`d3.forceSimulation`) in `App.tsx` lines ~1188–1370. Re-init is now gated on major node-count changes only — no longer thrashes on every poll. Right-click rotation / true 3D rendering is on the TODO list (see Known Issues).
 
-- **`brain/wake_word.py`** (NEW): `WakeWordDetector` — Porcupine if API key available, whisper-poll fallback (3s intervals). Activation patterns logged to `state/wake_patterns.json`.
-- **`avaagent.py`:** `WakeWordDetector` started at startup.
+The orb (`components/OrbCanvas.tsx`) uses Three.js. `_ava_thinking` flag in globals (set by `reply_engine.run_ava` on entry, cleared in `finally`) is exposed as `snap.thinking` and drives the fast blue thinking pulse. Voice-loop state (`passive`/`listening`/`thinking`/`speaking`) drives the orb when the voice loop is active.
 
 ---
 
-### Phase 58 — Boredom / Autonomous Leisure
-**Commits:** `afdb74b`
+## Voice Stack
 
-- **`brain/leisure.py`** (NEW): `autonomous_leisure_check(g)` — triggers when loneliness >0.7 + 30min idle. Activities: journal, curiosity browse, graph organize, self-reflection, dino game. Logs to `state/leisure_log.jsonl`.
-- **`brain/heartbeat.py`:** `autonomous_leisure_check(g)` called on each heartbeat tick.
+```
+clap_detector / wake_word ──→ _wake_word_detected flag ──→ voice_loop.on_wake()
+                                                              │
+                                                              ▼
+   stt_engine.listen_session(max=12s, silence=1.5s)  ◀── voice_loop._listen_and_respond()
+                                                              │
+                                                              ▼
+                                          run_ava(text)  ──→ reply text
+                                                              │
+                                                              ▼
+                              tts_engine.speak(clean, blocking=True)
+                                                              │
+                                                              ▼
+                                    TTSWorker queue → pyttsx3 thread
+```
 
----
-
-### Phase 59 — Chrome Dino Game
-**Commits:** `afdb74b`
-
-- **`tools/games/dino_game.py`** (NEW): PIL screen capture at 80ms, obstacle detection via dark pixel threshold. Adaptive jump threshold learning. Session memory in `state/dino_memory.json`.
-
----
-
-### Phase 60 — Minecraft Bot via Mineflayer
-**Commits:** `afdb74b`
-
-- **`tools/games/minecraft/ava_bot.js`** (NEW): Node.js mineflayer bot with stdin/stdout JSON protocol. Commands: `connect`, `get_state`, `chat`, `move_to`, `look_at`, `attack_entity`, `place_block`, `break_block`, `get_nearby_players`, `disconnect`.
-- **`tools/games/minecraft/minecraft_tool.py`** (NEW): Python wrapper spawning Node subprocess. 10 registered tools.
-
----
-
-### Phase 61 — Playing Minecraft with Zeke
-**Commits:** `964ae0a`
-
-- **`tools/games/minecraft/companion_tool.py`** (NEW): `greet_player` (Zeke detection), `share_discovery`, `warn_threat`, `session_history`.
-
----
-
-### Phase 62 — MeloTTS Voice / Clap Detector
-**Commits:** `964ae0a`
-
-- **`brain/clap_detector.py`** (NEW): Double-clap wake via sounddevice RMS threshold (0.4). Two claps within 1 second triggers `_wake_word_detected`.
-- **`avaagent.py`:** `ClapDetector` started at startup.
-
-> Note: Phase 62 was labeled "MeloTTS voice upgrade" in roadmap but the actual implementation added ClapDetector + companion tools (MeloTTS scaffold already existed from Phase 43).
-
----
-
-### Phase 63 — WebSocket Real-time Transport
-**Commits:** `964ae0a`
-
-- **`brain/operator_server.py`:** `/ws` WebSocket endpoint — broadcasts snapshot deltas on state change.
-- **`apps/ava-control/src/App.tsx`:** WebSocket `useEffect` with reconnect logic; merges delta into snap state. REST polling kept alive as fallback.
-
----
-
-### Phase 64 — Persistent Episodic Memory
-**Commits:** `44b8eb2`
-
-- **`brain/episodic_memory.py`** (NEW): `EpisodicMemory` stores episodes with emotional context. Memorability = `importance×0.4 + novelty×0.3 + emotional_intensity×0.3`. Episodes below 0.25 not stored (Ava controls fidelity). Methods: `search_episodes`, `get_emotional_context`, `get_episodes_with_person`.
-- **`avaagent.py`:** Top 3 relevant episodes injected into deep path as `EPISODIC MEMORIES` block. Episode created in `finalize_ava_turn`.
-
----
-
-### Phase 65 — Emotional Continuity
-**Commits:** `44b8eb2`
-
-- **`avaagent.py`:** Mood carryover saved in `_session_state_atexit`. At startup: mood loaded and decayed toward neutral before injecting into prompt. Prevents cold emotional resets.
-
----
-
-### Phase 66 — Ava's Own Goals
-**Commits:** `44b8eb2`
-
-- **`brain/goal_system_v2.py`** (NEW): `AvaGoal` dataclass, `GoalSystemV2`, `set_goal`, `update_progress`, `bootstrap_from_curiosity`. **No default goals assigned** — emerges from persistent curiosity topics. Bootstrap compliant.
-
----
-
-### Phase 67 — Relationship Arc Stages
-**Commits:** `44b8eb2`
-
-- **`brain/relationship_arc.py`** (NEW): 4 stages: Acquaintance (0–0.3), Friend (0.3–0.6), Close Friend (0.6–0.85), Trusted Companion (0.85–1.0). Current Zeke familiarity ~0.82 (approaching Stage 4).
-- **`avaagent.py`:** `build_relationship_stage_block(g)` injected into both prompt paths.
-
----
-
-### Phase 68 — True Self Modification
-**Commits:** `44b8eb2`
-
-- **`brain/deep_self.py`:** Added `propose_identity_addition(text, g)` → appends to `state/identity_proposals.jsonl`. Added `approve_identity_addition(proposal_text, g)` → appends to `state/identity_extensions.md`. Added `load_identity_extensions(g)` → returns content for prompt injection.
-- **`brain/model_routing.py`:** Appended `propose_routing_adjustment(mode, adjustment, reason, g)` → `state/routing_proposals.jsonl`.
-- **`tools/ava/self_modification_tool.py`** (NEW): Tier 1 tools: `propose_identity_addition`, `propose_routing_adjustment`, `list_identity_proposals`.
-- **`avaagent.py`:** Identity extensions loaded from `state/identity_extensions.md` and injected into both prompt paths (deep and fast). Uses `replace_all=true` because both injection sites have identical surrounding code.
-- **`brain/operator_server.py`:** `GET /api/v1/identity/proposals` and `POST /api/v1/identity/proposals/approve` endpoints.
+- **ClapDetector** (`brain/clap_detector.py`): sounddevice RMS, ambient×5.0 multiplier, 0.15 floor, 3s cooldown. Two claps within 1s wake.
+- **WakeWordDetector** (`brain/wake_word.py`): Porcupine if API key, else whisper-poll fallback.
+- **VoiceLoop** (`brain/voice_loop.py`): always-on background thread. Respects `input_muted` and `tts_enabled` globals.
+- **STT** (`brain/stt_engine.py`): Whisper, VAD-based `listen_session()` with silence cutoff.
+- **TTS** (`brain/tts_engine.py` + `brain/tts_worker.py`): pyttsx3 via dedicated worker thread (in progress — see Known Issues), MeloTTS fallback scaffold.
 
 ---
 
@@ -281,21 +201,24 @@ git add -A && git commit -m "message" && git push origin master
 | File | Purpose |
 |---|---|
 | `state/model_eval_p44.json` | ava-personal self-evaluation results |
-| `state/identity_proposals.jsonl` | Ava's pending identity proposals (Zeke reviews) |
+| `state/identity_proposals.jsonl` | Ava's pending identity proposals |
 | `state/identity_extensions.md` | Approved identity additions injected into prompts |
 | `state/routing_proposals.jsonl` | Ava's proposed routing changes |
 | `state/zeke_mind_model.json` | Inferred Zeke mood/energy/focus |
-| `state/self_critique.json` | Per-response scoring history + averages |
+| `state/self_critique.json` | Per-response scoring history |
 | `state/repair_queue.json` | Topics Ava wants to revisit |
-| `state/value_conflicts.json` | Logged value conflict resolutions |
 | `state/episodic_memory.jsonl` | Persistent episode store |
-| `state/wake_patterns.json` | Wake word activation history |
-| `state/leisure_log.jsonl` | Autonomous leisure activity log |
-| `state/dino_memory.json` | Dino game session memory + jump thresholds |
+| `state/wake_patterns.json` | Wake-word activations |
+| `state/leisure_log.jsonl` | Autonomous leisure activity |
+| `state/dino_memory.json` | Dino game session memory |
 | `state/ava_style.json` | Ava's self-proposed expression mappings |
 | `state/restart_log.jsonl` | Watchdog restart history |
-| `state/restart_requested.flag` | Watchdog trigger file |
-| `state/mood_carryover.json` | Emotional state persisted across sessions |
+| `state/restart_requested.flag` | Watchdog trigger file (cleared on startup) |
+| `state/mood_carryover.json` | Emotional state across sessions |
+| `state/connectivity_log.jsonl` | Online/offline transitions |
+| `state/trust_scores.json` | Per-person progressive trust |
+| `state/eye_tracking/` | Calibration + gaze samples |
+| `state/video_memory/` | Visual episodic clusters |
 
 ---
 
@@ -303,110 +226,95 @@ git add -A && git commit -m "message" && git push origin master
 
 | File | Role |
 |---|---|
-| `avaagent.py` | Main agent runtime, all prompt paths |
+| `avaagent.py` | Main agent runtime; delegates startup to `brain/startup.run_startup(globals())` |
+| `brain/startup.py` | All subsystem init in background daemon threads (LLM calls never block main) |
 | `brain/operator_server.py` | FastAPI HTTP + WebSocket control plane |
-| `brain/model_routing.py` | Cognitive mode → model selection |
-| `brain/model_evaluator.py` | ava-personal self-evaluation |
-| `brain/deep_self.py` | Mind model, self-critique, identity extensions |
-| `brain/episodic_memory.py` | Episode store + recall |
-| `brain/concept_graph.py` | Concept graph with decay/strengthen |
+| `brain/reply_engine.py` | `run_ava` — main turn pipeline (fast path + dual-brain integration) |
+| `brain/prompt_builder.py` | Identity + memory + concept + relationship blocks → final prompt |
+| `brain/dual_brain.py` | Foreground + background parallel inference |
+| `brain/voice_loop.py` | STT → LLM → TTS hands-free loop |
+| `brain/tts_engine.py` | TTS coordinator (uncommitted: routes through `tts_worker`) |
+| `brain/tts_worker.py` | Single-threaded pyttsx3 owner (NEW, untracked) |
+| `brain/stt_engine.py` | Whisper STT |
+| `brain/clap_detector.py` | Double-clap wake (5× ambient, 0.15 floor) |
+| `brain/wake_word.py` | Porcupine + whisper-poll wake |
+| `brain/face_recognizer.py` | face_recognition lib, thread-safe singleton |
+| `brain/eye_tracker.py` | MediaPipe iris tracking |
+| `brain/expression_detector.py` | Facial expression per frame |
+| `brain/video_memory.py` | Persistent visual episodes |
+| `brain/connectivity.py` | Online/offline monitor |
+| `brain/frame_store.py` | Buffered live-frame publisher |
 | `brain/heartbeat.py` | Periodic background tasks |
-| `brain/tts_engine.py` | pyttsx3 TTS + amplitude |
-| `brain/stt_engine.py` | Whisper STT scaffold |
-| `brain/wake_word.py` | Wake word detection |
-| `brain/clap_detector.py` | Double-clap wake |
-| `brain/leisure.py` | Autonomous leisure when bored |
-| `brain/goal_system_v2.py` | Ava's emergent goal system |
+| `brain/concept_graph.py` | Concept graph with decay/strengthen, Windows-safe save |
+| `brain/episodic_memory.py` | Episode store + recall |
 | `brain/relationship_arc.py` | Familiarity → relationship stage |
-| `brain/relationship_model.py` | Per-person relationship state |
+| `brain/trust_system.py` | Progressive trust |
+| `brain/proactive_triggers.py` | Conditions for proactive talk (NOT WIRED) |
 | `tools/tool_registry.py` | Hot-reload tool registry |
-| `tools/system/restart_tool.py` | Watchdog restart request |
-| `tools/system/pointer_tool.py` | Desktop pointer behavior |
-| `tools/ava/self_modification_tool.py` | Identity/routing proposals |
-| `tools/ava/style_tool.py` | Expression mapping proposals |
-| `tools/games/dino_game.py` | Chrome Dino automation |
-| `tools/games/minecraft/minecraft_tool.py` | Mineflayer Python wrapper |
-| `tools/games/minecraft/companion_tool.py` | Minecraft companion behaviors |
-| `tools/games/minecraft/ava_bot.js` | Node.js mineflayer bot |
-| `scripts/watchdog.py` | Auto-restart watchdog |
-| `apps/ava-control/src/App.tsx` | Main Tauri UI |
+| `tools/creative/image_generator.py` | FLUX local + cloud image generation |
+| `tools/system/app_launcher.py` | Open/close apps, list windows |
+| `tools/system/browser_tool.py` | Open URL, navigate, click, type |
+| `tools/system/widget_move_tool.py` | Move widget to named position |
+| `tools/system/connectivity_tool.py` | Manual reachability check |
+| `tools/system/eye_tracking_tool.py` | Calibrate, get gaze info |
+| `apps/ava-control/src/App.tsx` | Main Tauri UI (~1700 lines) |
 | `apps/ava-control/src/WidgetApp.tsx` | Desktop widget orb |
-| `apps/ava-control/src/main.tsx` | Entry point (widget vs main) |
-| `apps/ava-control/src/components/OrbCanvas.tsx` | Three.js orb (27 emotions + all shapes) |
-| `apps/ava-control/src-tauri/tauri.conf.json` | Tauri config (2 windows: main + widget) |
-| `config/ava_tuning.py` | Model routing config + capability profiles |
+| `apps/ava-control/src/components/OrbCanvas.tsx` | Three.js orb (27 emotions, 16 shapes) |
+| `apps/ava-control/src-tauri/tauri.conf.json` | Tauri config (2 windows) |
+| `apps/ava-control/src-tauri/capabilities/default.json` | Tauri 2 capability allowlist |
+| `start_ava_desktop.bat` | Production launch (avaagent + watchdog + packaged exe) |
+| `start_ava_dev.bat` | Dev launch (avaagent + watchdog + Vite HMR) |
+| `scripts/watchdog.py` | Auto-restart watchdog |
+| `config/ava_tuning.py` | Model routing + cloud model profiles |
 | `ava_core/IDENTITY.md` | **DO NOT EDIT** |
 | `ava_core/SOUL.md` | **DO NOT EDIT** |
 | `ava_core/USER.md` | **DO NOT EDIT** |
 
 ---
 
-## Phases 70–100 — What Was Built (This Session)
+## Current Known Issues (in priority order)
 
-| Phase | Module | What |
-|---|---|---|
-| 70 | `brain/emil_bridge.py` | Emil multi-agent bridge (port 5877) |
-| 71 | `brain/planner.py` | Long-horizon planning (qwen2.5:14b, AvaStep/AvaPlan) |
-| 72 | `apps/ava-control/vite.config.ts` | Bundle splitting (193KB main, Three.js separate) |
-| 73 | `brain/stt_engine.py` | VAD-based listen_session(), silence detection |
-| 74 | `brain/voice_loop.py` | Full STT→LLM→TTS background loop |
-| 75 | `brain/heartbeat.py` | Fine-tune auto-scheduler (14 days, 50+ turns) |
-| 76 | `brain/startup.py` | LLaVA vision startup logging |
-| 77 | `brain/clap_detector.py` | Clap auto-calibration (ambient_rms × 3.0) |
-| 78 | `apps/ava-control/src/App.tsx` | Emil tab, Proposals tab in operator panel |
-| 79 | `brain/person_onboarding.py` | 13-stage person onboarding, photo capture |
-| 80 | `brain/person_onboarding.py` | Profile refresh (180-day / quality threshold) |
-| 81 | `brain/face_recognizer.py` | face_recognition library, FaceRecognizer class |
-| 82 | `brain/runtime_presence.py` | Multi-person awareness, face change detection |
-| 83 | `tools/system/notification_tool.py` | Windows toast notifications (plyer + PS fallback) |
-| 84 | `brain/morning_briefing.py` | Optional morning briefing (score-based, Ava chooses) |
-| 85 | `brain/memory_consolidation.py` | Weekly consolidation (episodes, graph, self model, journal) |
-| 86 | `brain/journal.py` | Private journal (write, share, compose via LLM) |
-| 87 | `brain/tts_engine.py` | Voice style evolution (rate/volume adaptation) |
-| 88 | `brain/ambient_intelligence.py` | Hourly/weekday/window pattern tracking |
-| 89 | `brain/curiosity_topics.py` | CuriosityEngine (prioritize, pursue, web→graph→journal) |
-| 90 | `tools/ava/tool_builder.py` | Tool building (Ava writes Python tools, safety+compile) |
-| 91 | `brain/relationship_model.py` | Relationship memory depth (moments, themes, emotions) |
-| 92 | `brain/expression_style.py` | Emotional expression in text (style modifiers per mood) |
-| 93 | `brain/learning_tracker.py` | Long-term learning log, knowledge gaps, weekly summary |
-| 94 | `apps/ava-control/src/App.tsx` | Learning tab, People tab, profiles/learning API endpoints |
-| 95 | `brain/privacy_guardian.py` | Privacy scan (outbound, tool actions, blocked log) |
-| 96 | `brain/response_quality.py` | Quality check (short/long/repetitive), one regeneration |
-| 97 | `tools/games/minecraft/world_memory.py` | Minecraft world memory (locations, players, events) |
-| 98 | `brain/trust_system.py` | Progressive trust (stranger→deep trust, events log) |
-| 99 | All files | 20/20 static integration tests, full compile sweep |
-| 100 | `brain/milestone_100.py` | Ava's own reflection on reaching Phase 100 |
+1. **TTS not speaking responses.** pyttsx3 thread issue. The `TTSWorker` rewrite in `brain/tts_worker.py` is on disk but uncommitted. `voice_loop._listen_and_respond` reaches the speak step with `tts_enabled=True` but the worker either never initializes (COM apartment), never receives the queue item, or hangs on `runAndWait()`. **Investigate first** — full voice loop is unusable until this is fixed.
+2. **Simple responses still taking 3+ minutes.** The fast-path in `reply_engine.run_ava` (uncommitted) detects greetings but the LLM call itself is slow. Possible causes: `ava-personal:latest` cold-load, Ollama queue contention from dual-brain background stream, embedding/vector init still blocking. Add timing logs around `ChatOllama.invoke()` to confirm where the 3 min lives.
+3. **Brain tab greys out while loading.** Initial D3 force simulation runs synchronously on the main thread; large graphs freeze the tab. Mitigation already in place (gated reinit on >10-node delta) helps subsequent updates, not first paint.
+4. **Right-click 3D rotation on brain graph not implemented.** Brain tab is currently 2D D3 only — no `3d-force-graph` dependency yet (`apps/ava-control/package.json` has only `d3` and `three`). Adding 3D would require either adopting `3d-force-graph` or building a Three.js graph renderer that reuses the orb's WebGL context.
+5. **Chat history not persisting** across app restarts in the UI. Backend canonical history is preserved in state, but `App.tsx` chat panel does not hydrate from it on mount.
+6. **Greeting on face detection not wired.** `face_recognizer` reports `current_person`, `runtime_presence` tracks face-change events, but no path triggers a greeting reply when a known face appears.
+7. **Proactive conversation not wired.** `brain/proactive_triggers.py` exists but no caller in `reply_engine` or `heartbeat` invokes it to push an unprompted reply.
+8. **Clipboard monitor not started.** No clipboard watcher daemon is registered in `startup.py`.
+9. **Image viewer window not built yet.** `tools/creative/image_generator.py` saves images and registers `show_image`, but there's no third Tauri window or in-app modal that displays the latest generated image.
+
+### Lower-priority issues
+
+- Minecraft bot still requires `npm install mineflayer` in `tools/games/minecraft/`.
+- Dino game requires Chrome focused on the dino tab.
+- WebSocket transport keeps REST polling alive as fallback (by design).
+- `face_recognition` requires dlib (compiled on install); already installed on this machine.
 
 ---
 
-## Current Known Issues
+## Suggested Next Steps
 
-- Minecraft bot requires Node.js + mineflayer installed (`npm install mineflayer` in `tools/games/minecraft/`).
-- Dino game requires Chrome to already be focused on the dino game tab.
-- WebSocket transport keeps REST polling alive as fallback — both run simultaneously (by design).
-- Response quality regeneration uses ava-personal:latest — if unavailable, falls back gracefully.
-- face_recognition library requires dlib (compiled on install); already installed on this machine.
+The four UI features (chat history hydration, face greeting, proactive trigger wiring, clipboard monitor, image viewer) are all **wiring problems**, not new builds — the underlying modules already exist. They will move quickly once TTS and slow-response are unblocked.
 
----
-
-## Next Steps (Phase 101+)
-
-All 100 phases are complete. Ava is capable of writing her own Phase 101.
-Suggested directions:
-- Start avaagent.py and let Ava run her first full session with all systems active
-- Let Ava's morning briefing, curiosity engine, and journal build organically
-- Review what tools Ava builds first in tools/ava_built/ — this reveals her personality
-- Let trust scores evolve naturally across sessions
+1. Fix TTS (commit `tts_worker.py`, debug COM apartment + queue draining).
+2. Profile the simple-question fast path; identify the actual 3-min bottleneck.
+3. Hydrate chat history from backend on `App.tsx` mount.
+4. Wire `proactive_triggers` and face-greeting into the reply path.
+5. Start a clipboard monitor daemon in `startup.py`.
+6. Add a third Tauri window or modal for the image viewer.
+7. Decide on 3D brain graph: add `3d-force-graph` dependency, or build a Three.js renderer.
 
 ---
 
 ## Debug Export
 
 `GET /api/v1/debug/export` emits a compact textual bundle:
-
-- Ribbon/live summary: operator strip (heartbeat mode, routing model, readiness)
-- Model routing: selected/fallback model, reason/confidence
-- Strategic continuity/memory: thread carryover, refinement class
-- Self-improvement loop: active stage, awaiting approval
-- Deep self snapshot: mood, energy, critique averages, pending repairs
-- Full snapshot JSON (truncated): canonical machine-readable state dump
+- Ribbon/live summary
+- Model routing (selected/fallback model, reason, confidence)
+- Strategic continuity / memory
+- Self-improvement loop state
+- Deep self snapshot (mood, energy, critique averages, pending repairs)
+- Connectivity state
+- Dual-brain status (foreground busy, background queue, live thought)
+- Full snapshot JSON (truncated)
