@@ -525,6 +525,19 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
 
+    # Phase 95: privacy security stats
+    _security_block: dict[str, Any] = {"blocked_today": 0, "last_audit_ts": 0.0}
+    try:
+        from brain.privacy_guardian import get_blocked_count_today
+        _security_block["blocked_today"] = get_blocked_count_today(host)
+        _audit_path = Path(host.get("BASE_DIR") or ".") / "state" / "privacy_audit_state.json"
+        if _audit_path.is_file():
+            import json as _j95
+            _ad = _j95.loads(_audit_path.read_text(encoding="utf-8"))
+            _security_block["last_audit_ts"] = float(_ad.get("ts") or 0)
+    except Exception:
+        pass
+
     mood_block = _load_mood_block(host)
     style_block = _load_style(host)
     deep_self_block = {}
@@ -665,6 +678,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "onboarding": onboarding_block,
         "current_person": current_person_block,
         "notification_count_today": _notif_count_today,
+        "security": _security_block,
         "system_stats": system_stats,
         "mood": mood_block,
         "style": style_block,
@@ -1654,6 +1668,31 @@ def create_app():
             "message": cmd_result["summary"],
             "result": cmd_result,
         }
+
+    # ── Phase 95: Privacy / Security endpoints ───────────────────────────────
+
+    @app.post("/api/v1/security/audit")
+    async def security_audit() -> dict[str, Any]:
+        try:
+            from brain.privacy_guardian import data_audit
+            return {"ok": True, "audit": data_audit(_g())}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
+    @app.get("/api/v1/security/blocked")
+    async def security_blocked() -> dict[str, Any]:
+        h = _g()
+        import json as _jbl
+        from brain.privacy_guardian import _log_path
+        path = _log_path(h)
+        entries = []
+        if path.is_file():
+            for line in path.read_text(encoding="utf-8").splitlines()[-50:]:
+                try:
+                    entries.append(_jbl.loads(line))
+                except Exception:
+                    pass
+        return {"ok": True, "entries": entries}
 
     # ── Phase 93-94: Learning and Profiles endpoints ─────────────────────────
 
