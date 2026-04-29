@@ -1798,6 +1798,34 @@ export default function App() {
                       ]}
                     />
                   </Section>
+                  <Section title="Vision / Gaze / Expression">
+                    {(() => {
+                      const attn = asRecord((snap as Record<string, unknown> | null)?.attention);
+                      const gazeRegion = String(attn?.gaze_region ?? "unknown");
+                      const attnState = String(attn?.attention_state ?? "unknown");
+                      const expr = String(attn?.expression ?? "neutral");
+                      const calibrated = Boolean(attn?.gaze_calibrated);
+                      const gazeTarget = String(attn?.gaze_target ?? "");
+                      return (
+                        <>
+                          <Kv items={[
+                            { label: "Gaze region", value: gazeRegion },
+                            { label: "Attention state", value: attnState },
+                            { label: "Expression", value: expr },
+                            { label: "Gaze calibrated", value: calibrated ? "yes" : "no" },
+                            { label: "Gaze target", value: gazeTarget || "—" },
+                          ]} />
+                          <div style={{ marginTop: "0.75rem", display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <button type="button" className="op-btn" onClick={() => {
+                              postJson("/api/v1/camera/calibrate_gaze", {})
+                                .then((d) => { const r = d as Record<string, unknown>; alert(r.ok ? "Calibration complete!" : `Failed: ${r.error}`); })
+                                .catch(() => {});
+                            }}>Calibrate Gaze</button>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </Section>
                   <Section title="Onboarding">
                     <p className="op-muted" style={{ marginBottom: "0.75rem" }}>
                       Start a new person onboarding flow. Ava will greet them, take photos, and build a profile.

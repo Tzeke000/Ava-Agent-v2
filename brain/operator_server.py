@@ -517,6 +517,25 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
 
+    # Attention / gaze / expression snapshot
+    _away_since = float(host.get("_user_away_since") or 0)
+    _attention_block: dict[str, Any] = {
+        "gaze_region": str(host.get("_gaze_region") or "unknown"),
+        "attention_state": str(host.get("_attention_state") or "unknown"),
+        "looking_at_screen": bool(host.get("_looking_at_screen", False)),
+        "away_duration_seconds": round(time.time() - _away_since, 1) if _away_since > 0 and host.get("_user_away") else 0.0,
+        "expression": str(host.get("_current_expression") or "neutral"),
+        "gaze_calibrated": False,
+        "gaze_target": str(host.get("_gaze_target_description") or ""),
+    }
+    try:
+        from brain.eye_tracker import get_eye_tracker
+        _et = get_eye_tracker()
+        if _et is not None:
+            _attention_block["gaze_calibrated"] = _et.calibrated
+    except Exception:
+        pass
+
     # Dual-brain status snapshot
     _dual_brain_block: dict[str, Any] = {
         "stream_a": {"model": "ava-personal:latest", "busy": False, "last_active": 0.0},
@@ -723,6 +742,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "active_plans": active_plans_block,
         "onboarding": onboarding_block,
         "current_person": current_person_block,
+        "attention": _attention_block,
         "dual_brain": _dual_brain_block,
         "connectivity": _connectivity_block,
         "notification_count_today": _notif_count_today,
@@ -1717,6 +1737,59 @@ def create_app():
             "message": cmd_result["summary"],
             "result": cmd_result,
         }
+
+    # ── Eye tracking / gaze calibration endpoints ────────────────────────────
+
+    @app.post("/api/v1/camera/calibrate_gaze")
+    async def calibrate_gaze() -> dict[str, Any]:
+        h = _g()
+        try:
+            from brain.eye_tracker import get_eye_tracker
+            et = get_eye_tracker()
+            if et is None or not et.available:
+                return {"ok": False, "error": "Eye tracker not available (mediapipe missing?)"}
+            import threading as _ct
+            result_box: list[bool] = [False]
+            def _run():
+                result_box[0] = et.calibrate()
+            t = _ct.Thread(target=_run, daemon=True)
+            t.start()
+            t.join(timeout=60.0)
+            return {"ok": result_box[0], "calibrated": et.calibrated}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
+    @app.get("/api/v1/camera/gaze")
+    async def gaze_status() -> dict[str, Any]:
+        h = _g()
+        try:
+            from brain.eye_tracker import get_eye_tracker
+            from brain.expression_detector import get_expression_detector
+            from brain.frame_store import read_live_frame_with_meta, LIVE_CACHE_MAX_AGE_SEC
+            et = get_eye_tracker()
+            ed = get_expression_detector()
+            meta = read_live_frame_with_meta(max_age=LIVE_CACHE_MAX_AGE_SEC)
+            frame = meta.frame
+            result: dict[str, Any] = {
+                "eye_tracker_available": et is not None and et.available,
+                "expression_detector_available": ed is not None and ed.available,
+                "gaze_calibrated": et.calibrated if et is not None else False,
+                "gaze_region": "unknown",
+                "attention_state": "unknown",
+                "expression": "neutral",
+            }
+            if frame is not None:
+                if et is not None and et.available:
+                    result["gaze_region"] = et.get_gaze_region(frame)
+                    result["attention_state"] = et.get_attention_state(frame)
+                    result["looking_at_screen"] = et.is_looking_at_screen(frame)
+                if ed is not None and ed.available:
+                    scores = ed.detect_expression(frame)
+                    result["expression"] = str(scores.get("dominant") or "neutral")
+                    result["expression_scores"] = {k: v for k, v in scores.items() if k != "dominant"}
+            return {"ok": True, **result}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
 
     # ── Connectivity + Image endpoints ───────────────────────────────────────
 

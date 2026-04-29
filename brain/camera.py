@@ -420,6 +420,97 @@ class CameraManager:
         except Exception as e:
             return f"Recognition error: {e}", None
 
+    def get_gaze_info(self, frame: Any, g: dict) -> dict:
+        """Return gaze region, expression, attention state from EyeTracker + ExpressionDetector."""
+        result: dict[str, Any] = {
+            "gaze_region": "unknown",
+            "attention_state": "unknown",
+            "looking_at_screen": False,
+            "expression": "neutral",
+            "expression_scores": {},
+            "gaze_calibrated": False,
+        }
+        if frame is None:
+            return result
+        try:
+            from brain.eye_tracker import get_eye_tracker
+            et = get_eye_tracker()
+            if et is not None and et.available:
+                result["gaze_region"] = et.get_gaze_region(frame)
+                result["attention_state"] = et.get_attention_state(frame)
+                result["looking_at_screen"] = et.is_looking_at_screen(frame)
+                result["gaze_calibrated"] = et.calibrated
+        except Exception:
+            pass
+        try:
+            from brain.expression_detector import get_expression_detector
+            ed = get_expression_detector()
+            if ed is not None and ed.available:
+                scores = ed.detect_expression(frame)
+                result["expression"] = str(scores.get("dominant") or "neutral")
+                result["expression_scores"] = {k: v for k, v in scores.items() if k != "dominant"}
+        except Exception:
+            pass
+        return result
+
+    def capture_gaze_target(self, g: dict) -> Optional[str]:
+        """
+        Get current gaze point, screenshot that region (400×400px),
+        ask LLaVA what's there. Stores result in g['_gaze_target_description'].
+        """
+        try:
+            from brain.eye_tracker import get_eye_tracker
+            et = get_eye_tracker()
+            if et is None or not et.available:
+                return None
+            # Get a live frame for gaze estimation
+            meta = read_live_frame_with_meta(max_age=LIVE_CACHE_MAX_AGE_SEC)
+            frame = meta.frame
+            if frame is None:
+                return None
+            gaze_pt = et.get_gaze_point(frame)
+            if gaze_pt is None:
+                return None
+            gx, gy = gaze_pt
+            # Take screenshot of region around gaze point
+            import ctypes
+            sw = ctypes.windll.user32.GetSystemMetrics(0)
+            sh = ctypes.windll.user32.GetSystemMetrics(1)
+            half = 200
+            x1 = max(0, gx - half)
+            y1 = max(0, gy - half)
+            x2 = min(sw, gx + half)
+            y2 = min(sh, gy + half)
+            try:
+                import pyautogui
+                region_img = pyautogui.screenshot(region=(x1, y1, x2 - x1, y2 - y1))
+                import cv2
+                import numpy as np
+                region_arr = cv2.cvtColor(np.array(region_img), cv2.COLOR_RGB2BGR)
+            except Exception:
+                return None
+            # Send to LLaVA
+            llava_model = g.get("_llava_model_name")
+            if not llava_model:
+                return f"gaze at ({gx},{gy}) on screen"
+            import base64
+            _, buf = cv2.imencode(".jpg", region_arr, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+            from langchain_ollama import ChatOllama
+            from langchain_core.messages import HumanMessage
+            llm = ChatOllama(model=llava_model, temperature=0.2)
+            msg = HumanMessage(content=[
+                {"type": "text", "text": "What is shown in this screen region? One sentence, be specific."},
+                {"type": "image_url", "image_url": f"data:image/jpeg;base64,{b64}"},
+            ])
+            result_obj = llm.invoke([msg])
+            description = str(getattr(result_obj, "content", str(result_obj))).strip()[:300]
+            g["_gaze_target_description"] = description
+            return description
+        except Exception as e:
+            print(f"[camera] capture_gaze_target error: {e}")
+            return None
+
     def analyze(self, image, g: dict) -> CameraState:
         r = self.resolve_frame_detailed(image)
         state = CameraState(frame=r.frame, source=r.source, live_used=r.source == "live")

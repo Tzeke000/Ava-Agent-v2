@@ -365,6 +365,7 @@ CURRENT PERSON AT MACHINE: {_g.get("_current_person_at_machine") or "unknown"} (
 {_rel_memory_block}
 {_trust_context_block}
 {("LIVE THOUGHT (from your background processing): " + str(_g.get("_dual_brain_live_thought") or "")) if _g.get("_dual_brain_live_thought") else ""}
+{("GAZE TARGET: User appears to be looking at: " + str(_g.get("_gaze_target_description") or "")) if _g.get("_gaze_target_description") else ""}
 
 AVAILABLE READ-ONLY FILES:
 - chatlog.jsonl
@@ -557,7 +558,7 @@ CURRENT MOOD AND AFFECT:
 INNER LIFE (FAST CONTEXT):
 - current_thought: {_fast_thought or "(none recent)"}
 - current_curiosity: {_fast_curiosity_topic or "(none)"}
-{("LIVE THOUGHT (your background processing): " + str(_g.get("_dual_brain_live_thought") or "")) if _g.get("_dual_brain_live_thought") else ""}CURRENT PERSON AT MACHINE: {_g.get("_current_person_at_machine") or "unknown"}
+{("LIVE THOUGHT (your background processing): " + str(_g.get("_dual_brain_live_thought") or "")) if _g.get("_dual_brain_live_thought") else ""}{("GAZE TARGET: User appears to be looking at: " + str(_g.get("_gaze_target_description") or "")) if _g.get("_gaze_target_description") else ""}CURRENT PERSON AT MACHINE: {_g.get("_current_person_at_machine") or "unknown"}
 
 USER MESSAGE:
 {user_input}
