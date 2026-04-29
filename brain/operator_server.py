@@ -1802,20 +1802,22 @@ def create_app():
 
     @app.get("/api/v1/camera/live_frame")
     async def camera_live_frame() -> dict[str, Any]:
-        """Return current camera frame as JPEG base64. Served from background thread buffer."""
+        """Return current camera frame as JPEG base64.
+        Reads exclusively from the background thread's push_frame() buffer.
+        Returns error if frame is missing or older than 10 seconds."""
         try:
             import cv2
             import base64 as _b64
-            from brain.frame_store import read_live_frame_with_meta, LIVE_CACHE_MAX_AGE_SEC
-            # Use a generous max_age — background thread updates the buffer at 15fps,
-            # so frames are almost always fresh; we just need to not reject them.
-            meta = read_live_frame_with_meta(max_age=5.0)
+            from brain.frame_store import get_buffered_frame
+            meta = get_buffered_frame(max_age_sec=10.0)
             frame = meta.frame
             if frame is None:
-                return {"ok": False, "error": "no frame available", "b64": None, "age_sec": -1.0}
-            # Reject frames older than 5 seconds — camera thread has stopped or camera is gone
-            if meta.age_sec > 5.0:
-                return {"ok": False, "error": "stale frame", "b64": None, "age_sec": round(meta.age_sec, 3)}
+                reason = "stale frame" if meta.age_sec > 0 else "no frame available"
+                return {
+                    "ok": False, "error": reason, "b64": None,
+                    "age_sec": round(float(meta.age_sec), 3),
+                    "freshness": str(meta.freshness),
+                }
             ok_enc, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
             if not ok_enc:
                 return {"ok": False, "error": "jpeg encode failed", "b64": None}
@@ -1824,6 +1826,7 @@ def create_app():
                 "ok": True, "b64": b64,
                 "age_sec": round(float(meta.age_sec), 3),
                 "freshness": str(meta.freshness),
+                "capture_ts": round(float(meta.capture_ts), 3),
             }
         except Exception as e:
             return {"ok": False, "error": str(e)[:200], "b64": None}

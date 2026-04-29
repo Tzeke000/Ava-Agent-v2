@@ -155,6 +155,20 @@ def push_frame(frame: Any) -> None:
     _buffer_ts = _now()
 
 
+def get_buffered_frame(max_age_sec: float = 10.0) -> "LiveFrameResult":
+    """Return the frame pushed by the background thread, or unavailable if stale/missing.
+    Does NOT open its own VideoCapture — solely reads from the push_frame() buffer.
+    Use this in the live_frame endpoint instead of read_live_frame_with_meta."""
+    now = _now()
+    if _buffer_frame is None or _buffer_ts <= 0.0:
+        return LiveFrameResult(frame=None, capture_ts=0.0, age_sec=-1.0, freshness="unavailable", origin="none")
+    age = now - _buffer_ts
+    if age > max_age_sec:
+        return LiveFrameResult(frame=None, capture_ts=float(_buffer_ts), age_sec=age, freshness="stale", origin="cache")
+    freshness = classify_acquisition_freshness(True, age)
+    return LiveFrameResult(frame=_buffer_frame, capture_ts=float(_buffer_ts), age_sec=age, freshness=freshness, origin="cache")
+
+
 def peek_buffer_age_sec() -> float | None:
     """Debug helper: seconds since last successful device capture, or None if empty."""
     if _buffer_frame is None or _buffer_ts <= 0.0:
