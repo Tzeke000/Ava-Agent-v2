@@ -221,11 +221,12 @@ class VoiceLoop:
             time.time() - self._last_speak_end_ts
         ) < _ATTENTIVE_TIMEOUT_SEC
 
-        # Clap-triggered wake: ALWAYS direct, no classification, no clarify.
-        # The clap_detector set _wake_source="clap" before triggering.
+        # Explicit wake sources (clap or openWakeWord model) → ALWAYS direct,
+        # no classification, no clarify. Both detectors stamp _wake_source
+        # before raising the wake flag.
         wake_source = str(self._g.get("_wake_source") or "")
-        if wake_source == "clap":
-            print(f"[voice_loop] clap-triggered → bypassing wake classification")
+        if wake_source in ("clap", "openwakeword"):
+            print(f"[voice_loop] {wake_source}-triggered → bypassing wake classification")
             # Consume the wake_source so a later passive listen re-classifies.
             self._g.pop("_wake_source", None)
             self._g.pop("_wake_source_ts", None)

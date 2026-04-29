@@ -143,9 +143,13 @@ class WakeDetector:
         with a double clap, so anything they say next is for her. No
         classification, no clarification.
         """
-        # Clap = direct, period.
-        if g is not None and str(g.get("_wake_source") or "") == "clap":
-            return True, 1.0, "clap_triggered"
+        # Explicit wake sources are always direct: clap or openWakeWord.
+        if g is not None:
+            ws = str(g.get("_wake_source") or "")
+            if ws == "clap":
+                return True, 1.0, "clap_triggered"
+            if ws == "openwakeword":
+                return True, 1.0, "openwakeword_triggered"
 
         # Normalize Whisper mishearings of "Ava" → "ava" first.
         normalised_raw = normalize_name(text or "")
