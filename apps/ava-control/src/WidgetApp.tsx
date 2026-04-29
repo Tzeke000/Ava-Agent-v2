@@ -25,7 +25,7 @@ const EMOTION_COLOR: Record<string, string> = {
   contempt: "#4a5568", shame: "#b7791f", guilt: "#2d3748", anticipation: "#d69e2e",
 };
 
-type OrbState = "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "offline" | "listening";
+type OrbState = "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "offline" | "listening" | "attentive";
 
 function getOrbState(snap: Record<string, unknown> | null, online: boolean): OrbState {
   if (!online || !snap) return "offline";
@@ -42,6 +42,7 @@ function getOrbState(snap: Record<string, unknown> | null, online: boolean): Orb
     if (voiceState === "speaking") return "speaking";
     if (voiceState === "thinking") return "thinking";
     if (voiceState === "listening") return "listening";
+    if (voiceState === "attentive") return "attentive";
   }
 
   // TTS speaking outside the voice loop.

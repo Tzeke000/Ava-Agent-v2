@@ -332,6 +332,44 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_insight_face"] = None
         print(f"[insight_face] dispatch failed: {e}")
 
+    # Expression calibrator — per-person baseline of facial geometry. Cheap to
+    # init; loads existing baselines on first call.
+    print("[startup] step: expression calibrator")
+    try:
+        from brain.expression_calibrator import bootstrap_expression_calibrator
+        bootstrap_expression_calibrator(g)
+    except Exception as e:
+        g["_expression_calibrator"] = None
+        print(f"[expression_calibrator] startup skipped: {e}")
+
+    # Voice mood detector (librosa). Lightweight — instance created on demand.
+    print("[startup] step: voice mood detector")
+    try:
+        from brain.voice_mood_detector import bootstrap_voice_mood_detector
+        bootstrap_voice_mood_detector(g)
+    except Exception as e:
+        g["_voice_mood_detector"] = None
+        print(f"[voice_mood] startup skipped: {e}")
+
+    # Wake learner — loads any patterns Ava previously learned at runtime and
+    # hydrates them into the WakeDetector singleton.
+    print("[startup] step: wake learner")
+    try:
+        from brain.wake_learner import bootstrap_wake_learner
+        bootstrap_wake_learner(g)
+    except Exception as e:
+        g["_wake_learner"] = None
+        print(f"[wake_learner] startup skipped: {e}")
+
+    # Question engine — Ava decides when she wants to ask Zeke things.
+    print("[startup] step: question engine")
+    try:
+        from brain.question_engine import bootstrap_question_engine
+        bootstrap_question_engine(g)
+    except Exception as e:
+        g["_question_engine"] = None
+        print(f"[question_engine] startup skipped: {e}")
+
     print("[startup] step: mood init")
     if not MOOD_PATH.exists():
         g["save_mood"](g["enrich_mood_state"](g["default_mood"]()))

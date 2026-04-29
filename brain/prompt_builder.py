@@ -9,6 +9,7 @@ avaagent.py is fully loaded and all its globals are accessible.
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 
@@ -399,6 +400,17 @@ Respond as Ava.
         except Exception:
             _id_ext_p68 = ""
         injected = f"{_AVA_IDENTITY_BLOCK}{_id_ext_p68}\n\n{persona_block}\n\n{trust_note}"
+        # Voice tone hint — only when fresh (< 60s) and the audio path captured one.
+        try:
+            vm = _g.get("_voice_mood")
+            if isinstance(vm, dict):
+                vm_ts = float(vm.get("ts") or 0)
+                if vm_ts > 0 and (time.time() - vm_ts) < 60.0:
+                    label = str(vm.get("label") or "neutral")
+                    qhint = " (asking a question)" if vm.get("is_question") else ""
+                    injected += f"\n\nVOICE TONE: {label}{qhint}"
+        except Exception:
+            pass
         if messages and isinstance(messages[0], SystemMessage):
             messages[0].content = injected + "\n\n" + messages[0].content
         else:
@@ -598,6 +610,17 @@ Respond as Ava — concise and natural unless they explicitly ask for depth or t
         except Exception:
             _id_ext_p68 = ""
         injected = f"{_AVA_IDENTITY_BLOCK}{_id_ext_p68}\n\n{persona_block}\n\n{trust_note}"
+        # Voice tone hint — only when fresh (< 60s).
+        try:
+            vm = _g.get("_voice_mood")
+            if isinstance(vm, dict):
+                vm_ts = float(vm.get("ts") or 0)
+                if vm_ts > 0 and (time.time() - vm_ts) < 60.0:
+                    label = str(vm.get("label") or "neutral")
+                    qhint = " (asking a question)" if vm.get("is_question") else ""
+                    injected += f"\n\nVOICE TONE: {label}{qhint}"
+        except Exception:
+            pass
         if messages and isinstance(messages[0], SystemMessage):
             messages[0].content = injected + "\n\n" + messages[0].content
         else:

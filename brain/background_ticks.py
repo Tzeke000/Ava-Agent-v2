@@ -80,12 +80,26 @@ def _video_frame_capture_thread(g: dict[str, Any]) -> None:
                             face_results = insight.analyze_frame(frame)
                             g["_face_results"] = face_results
                             if face_results:
-                                # Pick the highest-confidence face as "the person"
                                 best = max(face_results, key=lambda r: float(r.get("confidence") or 0.0))
-                                g["_recognized_person_id"] = str(best.get("person_id") or "unknown")
+                                pid = str(best.get("person_id") or "unknown")
+                                g["_recognized_person_id"] = pid
                                 g["_recognized_confidence"] = float(best.get("confidence") or 0.0)
                                 g["_recognized_age"] = best.get("age", 0)
+                                g["_face_age"] = best.get("age", 0)
                                 g["_recognized_gender"] = best.get("gender", "?")
+                                g["_face_gender"] = best.get("gender", "?")
+                                # Expression calibration + detection per recognized person.
+                                cal = g.get("_expression_calibrator")
+                                if cal is not None:
+                                    lm = best.get("landmarks")
+                                    if lm is not None:
+                                        try:
+                                            if pid != "unknown":
+                                                cal.calibrate_baseline(pid, lm)
+                                            expr = cal.detect_expression(pid, lm)
+                                            g["_current_expression"] = expr
+                                        except Exception as _ce:
+                                            print(f"[video_capture] calibrator error: {_ce}")
                             else:
                                 g["_recognized_person_id"] = "unknown"
                                 g["_recognized_confidence"] = 0.0

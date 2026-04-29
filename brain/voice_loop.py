@@ -1,11 +1,19 @@
 """
-Phase 74 — Real Voice Loop (STT → LLM → TTS tight loop).
+Phase 74 — Real Voice Loop (STT → LLM → TTS tight loop) with attentive state.
 
-VoiceLoop runs as a background daemon thread.
-States: passive → listening → thinking → speaking → passive
+States:
+  passive   → wait for wake word / clap. Slow polling.
+  attentive → just finished speaking. Faster polling, no wake word required;
+              any speech > 1s is treated as direct address. Decays back to
+              passive after 60s of silence.
+  listening → actively recording user speech.
+  thinking  → run_ava is producing a reply.
+  speaking  → TTS is playing.
 
-Starts automatically at launch when both TTS and STT are available.
-Respects input_muted and tts_enabled globals.
+Wake-word recognition uses brain.wake_detector. When a transcribed clip is
+ambiguous, brain.wake_learner asks for clarification. After STT completes we
+also analyse the audio with brain.voice_mood_detector and stash the result
+for prompt_builder.
 """
 from __future__ import annotations
 
@@ -14,14 +22,26 @@ import time
 from typing import Any
 
 
+_ATTENTIVE_TIMEOUT_SEC = 60.0       # decay back to passive after this long
+_ATTENTIVE_MIN_SPEECH_SEC = 1.0     # speech longer than this counts as input
+_DEFAULT_SILENCE_SEC = 2.5          # initial wait
+_CONTINUE_SILENCE_SEC = 4.0         # if first transcript was short, wait longer
+_LONG_SILENCE_SEC = 1.5             # if first transcript was long, end fast
+_SHORT_WORDS = 3                    # under this → keep listening
+_LONG_WORDS = 10                    # over this → end fast
+
+
 class VoiceLoop:
-    STATES = ("passive", "listening", "thinking", "speaking")
+    STATES = ("passive", "attentive", "listening", "thinking", "speaking")
 
     def __init__(self, g: dict[str, Any]) -> None:
         self._g = g
         self._state = "passive"
         self._active = False
         self._thread: threading.Thread | None = None
+        self._last_audio_ts: float = 0.0  # any speech detected
+        self._last_speak_end_ts: float = 0.0
+        self._last_audio_array: Any = None  # cached for voice mood
 
     # ── public interface ──────────────────────────────────────
 
@@ -69,26 +89,74 @@ class VoiceLoop:
     def _loop(self) -> None:
         while self._active:
             try:
-                # Passive: wait for wake signal
-                self._set_state("passive")
-                self._wait_for_wake()
+                # ── Choose passive vs attentive ────────────────────────────
+                in_attentive = (
+                    self._last_speak_end_ts > 0
+                    and (time.time() - self._last_speak_end_ts) < _ATTENTIVE_TIMEOUT_SEC
+                )
+                if in_attentive:
+                    self._set_state("attentive")
+                    triggered = self._attentive_wait()
+                else:
+                    self._set_state("passive")
+                    triggered = self._passive_wait()
                 if not self._active:
                     break
-                # Active: listen, think, speak
+                if not triggered:
+                    # attentive timed out → fall back to passive
+                    continue
                 self._listen_and_respond()
             except Exception as e:
                 print(f"[voice_loop] error in loop: {e}")
                 self._set_state("passive")
                 time.sleep(2.0)
 
-    def _wait_for_wake(self) -> None:
-        """Block until wake word / clap fires or _voice_loop_wake_requested is set."""
+    def _passive_wait(self) -> bool:
+        """Block until wake word / clap fires. Returns True when triggered."""
         while self._active:
             if self._g.get("_voice_loop_wake_requested") or self._g.get("_wake_word_detected"):
                 self._g.pop("_voice_loop_wake_requested", None)
                 self._g.pop("_wake_word_detected", None)
-                return
+                return True
             time.sleep(0.2)
+        return False
+
+    def _attentive_wait(self) -> bool:
+        """While in attentive state: poll mic faster, react to any speech > 1s
+        without requiring a wake word. Decays to passive after 60s silence."""
+        attentive_started = time.time()
+        while self._active:
+            # Wake / clap triggers immediately exit to listening.
+            if self._g.get("_voice_loop_wake_requested") or self._g.get("_wake_word_detected"):
+                self._g.pop("_voice_loop_wake_requested", None)
+                self._g.pop("_wake_word_detected", None)
+                return True
+            # Quick mic snapshot for ~0.8s — if we hear something significant, trigger.
+            stt = self._g.get("stt_engine")
+            if stt is not None and callable(getattr(stt, "is_available", None)) and stt.is_available():
+                try:
+                    snap = stt.listen_session(max_seconds=0.8, silence_seconds=0.4)
+                    if isinstance(snap, dict) and snap.get("speech_detected"):
+                        dur = float(snap.get("duration_seconds") or 0)
+                        if dur >= _ATTENTIVE_MIN_SPEECH_SEC:
+                            # Stash the partial as initial input — listen_and_respond
+                            # will continue from there.
+                            self._g["_attentive_initial_text"] = snap.get("text") or ""
+                            return True
+                except Exception:
+                    pass
+            # Silence-only branch: time out after 60s.
+            if (time.time() - self._last_speak_end_ts) >= _ATTENTIVE_TIMEOUT_SEC:
+                return False
+            time.sleep(0.4)
+        return False
+
+    def _silence_seconds_for(self, word_count: int) -> float:
+        if word_count < _SHORT_WORDS:
+            return _CONTINUE_SILENCE_SEC
+        if word_count > _LONG_WORDS:
+            return _LONG_SILENCE_SEC
+        return _DEFAULT_SILENCE_SEC
 
     def _listen_and_respond(self) -> None:
         if self._g.get("input_muted"):
@@ -101,29 +169,91 @@ class VoiceLoop:
             print(f"[voice_loop] skipped — stt={'set' if stt else 'None'} tts={'set' if tts else 'None'}")
             return
 
-        # Listening
+        # ── LISTEN ────────────────────────────────────────────────────────────
         self._set_state("listening")
         print("[voice_loop] listening…")
+        initial_text = str(self._g.pop("_attentive_initial_text", "") or "").strip()
         try:
-            result = stt.listen_session(max_seconds=12.0, silence_seconds=1.5)
+            # Initial pass at 2.5s silence cutoff — most utterances finish here.
+            result = stt.listen_session(max_seconds=12.0, silence_seconds=_DEFAULT_SILENCE_SEC)
         except Exception as e:
             print(f"[voice_loop] listen_session error: {e!r}")
             self._set_state("passive")
             return
 
         if result is None or not result.get("speech_detected"):
-            print("[voice_loop] no speech detected")
-            self._set_state("passive")
-            return
-        text = str(result.get("text") or "").strip()
-        if not text:
-            print("[voice_loop] speech detected but empty transcription")
-            self._set_state("passive")
-            return
+            # If we entered listening because attentive heard a partial, keep that.
+            if initial_text:
+                text = initial_text
+                result = {"text": text, "speech_detected": True, "duration_seconds": 1.0}
+            else:
+                print("[voice_loop] no speech detected")
+                self._set_state("passive")
+                return
+        text = str((result or {}).get("text") or "").strip()
+        if initial_text and not text.lower().startswith(initial_text.lower()[:20]):
+            text = (initial_text + " " + text).strip()
 
+        # Word-count-aware continuation: if Zeke gave us only a couple words,
+        # extend the silence window and keep listening up to 4s more.
+        word_count = len(text.split())
+        if word_count > 0 and word_count < _SHORT_WORDS:
+            try:
+                cont = stt.listen_session(max_seconds=6.0, silence_seconds=_CONTINUE_SILENCE_SEC)
+                if isinstance(cont, dict) and cont.get("speech_detected"):
+                    extra = str(cont.get("text") or "").strip()
+                    if extra:
+                        text = (text + " " + extra).strip()
+                        print(f"[voice_loop] short utterance extended: +{len(extra)} chars")
+            except Exception:
+                pass
+
+        if not text:
+            print("[voice_loop] empty transcription after listen")
+            self._set_state("passive")
+            return
         print(f"[voice_loop] heard: {text[:120]!r}")
 
-        # Thinking
+        # ── WAKE-WORD CHECK (passive mode only) ───────────────────────────────
+        # In attentive state we already decided this is for Ava. In passive we
+        # need to confirm direct address before invoking run_ava.
+        in_attentive_when_started = self._state in ("attentive", "listening") and self._last_speak_end_ts > 0 and (
+            time.time() - self._last_speak_end_ts
+        ) < _ATTENTIVE_TIMEOUT_SEC
+
+        if not in_attentive_when_started:
+            try:
+                from brain.wake_detector import get_wake_detector
+                wd = get_wake_detector()
+                is_direct, conf, reason = wd.classify(text, self._g)
+                print(f"[voice_loop] wake-classify direct={is_direct} conf={conf:.2f} reason={reason}")
+                # Borderline → ask for clarification via WakeLearner.
+                if not is_direct or conf < 0.6:
+                    try:
+                        from brain.wake_learner import get_wake_learner
+                        wl = get_wake_learner()
+                        if wl is not None and wl.can_clarify():
+                            asked = wl.ask_clarification(text, self._g)
+                            if asked:
+                                print("[voice_loop] asked wake clarification — skipping run_ava this turn")
+                                self._set_state("passive")
+                                return
+                    except Exception as _e:
+                        print(f"[voice_loop] wake clarify error: {_e!r}")
+                    if not is_direct:
+                        print("[voice_loop] not direct address — skipping")
+                        self._set_state("passive")
+                        return
+            except Exception as e:
+                print(f"[voice_loop] wake detector error: {e!r}")
+
+        # ── VOICE MOOD ANALYSIS (best-effort) ─────────────────────────────────
+        try:
+            self._analyze_voice_mood()
+        except Exception as e:
+            print(f"[voice_loop] voice mood error: {e!r}")
+
+        # ── THINKING ──────────────────────────────────────────────────────────
         self._set_state("thinking")
         print(f"[voice_loop] calling run_ava with: {text[:100]!r}")
         try:
@@ -144,7 +274,7 @@ class VoiceLoop:
             return
         print(f"[voice_loop] reply preview: {reply_text[:80]!r}")
 
-        # Speaking
+        # ── SPEAKING ──────────────────────────────────────────────────────────
         self._set_state("speaking")
         import re as _re
         clean = _re.sub(r"[*_`#\[\]()]", "", reply_text)
@@ -160,11 +290,47 @@ class VoiceLoop:
             self._set_state("passive")
             return
 
-        # Prefer the COM-safe TTS worker directly with the current emotion.
+        spoke_ok = self._speak(clean)
+        self._last_speak_end_ts = time.time() if spoke_ok else 0.0
+
+        # Drop into attentive so a quick follow-up doesn't need a wake word.
+        if spoke_ok:
+            self._set_state("attentive")
+        else:
+            self._set_state("passive")
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _analyze_voice_mood(self) -> None:
+        """Capture a brief audio sample and run voice_mood_detector. We sample
+        independently of STT (which already returned) because the STT pipeline
+        doesn't expose the raw audio array. This is best-effort — failures are
+        silent and never block the main path."""
+        det = self._g.get("_voice_mood_detector")
+        if det is None or not getattr(det, "available", False):
+            return
+        try:
+            import numpy as np  # type: ignore
+            import sounddevice as sd  # type: ignore
+        except Exception:
+            return
+        try:
+            sr = 16000
+            seconds = 1.5
+            audio = sd.rec(int(sr * seconds), samplerate=sr, channels=1, dtype="float32")
+            sd.wait()
+            audio = np.squeeze(audio, axis=1) if audio.ndim > 1 else audio
+            mood = det.analyze(audio, sr=sr)
+            mood["ts"] = time.time()
+            self._g["_voice_mood"] = mood
+            print(f"[voice_mood] {mood.get('label')} energy={mood.get('energy')} q={mood.get('is_question')}")
+        except Exception as e:
+            print(f"[voice_mood] sample error: {e!r}")
+
+    def _speak(self, clean: str) -> bool:
         worker = self._g.get("_tts_worker")
         if worker is not None and getattr(worker, "available", False):
             try:
-                # Pull current mood for expressive speech.
                 emotion = "neutral"
                 intensity = 0.5
                 try:
@@ -183,25 +349,23 @@ class VoiceLoop:
                 print(f"[voice_loop] speaking response ({len(clean)} chars) emotion={emotion} intensity={intensity:.2f}")
                 worker.speak_with_emotion(clean, emotion=emotion, intensity=intensity, blocking=True)
                 print("[voice_loop] done speaking (worker)")
-                self._set_state("passive")
-                return
+                return True
             except Exception as e:
                 print(f"[voice_loop] worker.speak_with_emotion failed: {e!r} — falling back to tts_engine")
 
-        # Fallback to legacy tts_engine path.
+        tts = self._g.get("tts_engine")
         speak_callable = callable(getattr(tts, "speak", None))
         if not speak_callable:
             print("[voice_loop] tts.speak is not callable")
-            self._set_state("passive")
-            return
+            return False
         try:
             print(f"[voice_loop] speaking response ({len(clean)} chars) via tts_engine fallback")
             tts.speak(clean, blocking=True)
             print("[voice_loop] done speaking (engine)")
+            return True
         except Exception as e:
             print(f"[voice_loop] TTS failed to speak: {e!r}")
-
-        self._set_state("passive")
+            return False
 
 
 # ── module singleton ──────────────────────────────────────────

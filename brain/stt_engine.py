@@ -109,7 +109,7 @@ class STTEngine:
     def listen_session(
         self,
         max_seconds: float = 12.0,
-        silence_seconds: float = 1.5,
+        silence_seconds: float = 2.5,
         sample_rate: int = 16000,
         rms_threshold: float = 0.008,
     ) -> dict | None:

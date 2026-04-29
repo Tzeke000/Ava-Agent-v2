@@ -1219,6 +1219,8 @@ export default function App() {
       ? "thinking"
     : voiceLoopActive && voiceLoopState === "listening"
       ? "listening"
+    : voiceLoopActive && voiceLoopState === "attentive"
+      ? "attentive"
     : ttsSpeaking
       ? "speaking"
       : Boolean(tts?.enabled)
