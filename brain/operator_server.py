@@ -1569,6 +1569,76 @@ def create_app():
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
 
+    # ── UI tab routing (set by VoiceCommandRouter, polled by App.tsx) ────────
+    @app.get("/api/v1/ui/tab")
+    def ui_tab_get() -> dict[str, Any]:
+        h = _g()
+        tab = h.get("_requested_tab")
+        ts = float(h.get("_requested_tab_ts") or 0.0)
+        # Auto-clear stale requests after 3s.
+        if tab and (time.time() - ts) > 3.0:
+            h.pop("_requested_tab", None)
+            h.pop("_requested_tab_ts", None)
+            tab = None
+        if tab:
+            # Read-once: clear so the same tab isn't re-applied on every poll.
+            h.pop("_requested_tab", None)
+            h.pop("_requested_tab_ts", None)
+        return {"tab": tab}
+
+    @app.post("/api/v1/ui/tab")
+    async def ui_tab_set(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+        h = _g()
+        tab = str(body.get("tab") or "").strip()
+        if not tab:
+            return {"ok": False, "error": "tab required"}
+        h["_requested_tab"] = tab
+        h["_requested_tab_ts"] = time.time()
+        return {"ok": True, "tab": tab}
+
+    @app.get("/api/v1/ui/custom_tabs")
+    def ui_custom_tabs_get() -> dict[str, Any]:
+        try:
+            from brain.command_builder import get_command_builder
+            cb = get_command_builder()
+            tabs = cb.load_tabs() if cb is not None else []
+            return {"ok": True, "tabs": tabs}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200], "tabs": []}
+
+    @app.post("/api/v1/ui/custom_tabs")
+    async def ui_custom_tabs_post(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+        try:
+            from brain.command_builder import get_command_builder
+            cb = get_command_builder()
+            if cb is None:
+                return {"ok": False, "error": "command_builder_unavailable"}
+            name = str(body.get("name") or "").strip()
+            content_type = str(body.get("content_type") or "").strip()
+            data_source = str(body.get("data_source") or "").strip()
+            config = body.get("config") or {}
+            res = cb.create_tab(name, content_type, data_source=data_source, config=config)
+            return res
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
+    @app.get("/api/v1/discovered_apps")
+    def discovered_apps_get() -> dict[str, Any]:
+        try:
+            from brain.app_discoverer import get_app_discoverer
+            disc = get_app_discoverer()
+            if disc is None:
+                return {"ok": True, "entries": [], "count": 0}
+            entries = disc.all_entries()
+            return {
+                "ok": True,
+                "entries": entries,
+                "count": len(entries),
+                "last_scan_ts": disc.last_scan_ts,
+            }
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200], "entries": []}
+
     # Phase 63: WebSocket real-time transport
     _ws_clients: list[WebSocket] = []
 

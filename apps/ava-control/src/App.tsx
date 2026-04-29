@@ -173,8 +173,117 @@ function asRecord(v: unknown): Record<string, unknown> | undefined {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined;
 }
 
+// ── Custom tab renderer ──────────────────────────────────────────────────────
+// Tabs created at runtime via brain/command_builder. Read from
+// /api/v1/ui/custom_tabs. The config.content_type drives the rendering.
+
+type CustomTabConfig = {
+  id: string;
+  name: string;
+  content_type: string;
+  data_source?: string;
+  config?: Record<string, unknown>;
+};
+
+function CustomTabRenderer({ config, snap }: { config: CustomTabConfig; snap: Snapshot | null }) {
+  const t = config.content_type;
+  if (t === "web_embed") {
+    const url = String(config.data_source || "");
+    return (
+      <div className="op-pane">
+        <h1 className="op-h1">{config.name}</h1>
+        {url ? (
+          <iframe
+            src={url}
+            title={config.name}
+            style={{ width: "100%", height: "70vh", border: "none", borderRadius: 6, background: "#0b0f1a" }}
+          />
+        ) : (
+          <p className="op-muted">No URL configured.</p>
+        )}
+      </div>
+    );
+  }
+  if (t === "journal_view") {
+    return (
+      <div className="op-pane">
+        <h1 className="op-h1">{config.name}</h1>
+        <p className="op-muted">Pulls from <code>{String(config.data_source || "/api/v1/journal/shared")}</code>.</p>
+        <div style={{ marginTop: 12, opacity: 0.85 }}>
+          {/* Lightweight inline viewer — full impl reads journal entries on focus. */}
+          <iframe
+            src={`${API_BASE}${String(config.data_source || "/api/v1/journal/shared")}`}
+            title={`${config.name}-journal`}
+            style={{ width: "100%", height: "60vh", border: "none", borderRadius: 6, background: "#0b0f1a" }}
+          />
+        </div>
+      </div>
+    );
+  }
+  if (t === "custom_stats") {
+    const fields = (config.config?.stats_fields as string[] | undefined) || [];
+    return (
+      <div className="op-pane">
+        <h1 className="op-h1">{config.name}</h1>
+        <pre className="debug-pre" style={{ maxHeight: "70vh", overflow: "auto" }}>
+          {fields.length === 0
+            ? JSON.stringify(snap, null, 2)
+            : JSON.stringify(
+                fields.reduce<Record<string, unknown>>((acc, f) => {
+                  acc[f] = (snap as Record<string, unknown> | null)?.[f];
+                  return acc;
+                }, {}),
+                null,
+                2,
+              )}
+        </pre>
+      </div>
+    );
+  }
+  if (t === "image_gallery") {
+    return (
+      <div className="op-pane">
+        <h1 className="op-h1">{config.name}</h1>
+        <p className="op-muted">Image gallery — fetch from <code>{String(config.data_source || "/api/v1/images/list")}</code>.</p>
+      </div>
+    );
+  }
+  if (t === "data_display") {
+    return (
+      <div className="op-pane">
+        <h1 className="op-h1">{config.name}</h1>
+        <p className="op-muted">Data from <code>{String(config.data_source || "")}</code>.</p>
+      </div>
+    );
+  }
+  if (t === "chat_log") {
+    return (
+      <div className="op-pane">
+        <h1 className="op-h1">{config.name}</h1>
+        <p className="op-muted">Chat log filter — UI TBD.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="op-pane">
+      <h1 className="op-h1">{config.name}</h1>
+      <p className="op-muted">Unknown content type: <code>{t}</code></p>
+    </div>
+  );
+}
+
+type CustomTab = {
+  id: string;
+  name: string;
+  content_type: string;
+  data_source?: string;
+  config?: Record<string, unknown>;
+};
+
 export default function App() {
-  const [tab, setTab] = useState<TabId>("voice");
+  // Tab id can be a built-in TabId OR a custom tab id created at runtime.
+  const [tab, setTab] = useState<string>("voice");
+  const [customTabs, setCustomTabs] = useState<CustomTab[]>([]);
   const [online, setOnline] = useState(false);
   const [connecting, setConnecting] = useState(true);
   const [snap, setSnap] = useState<Snapshot | null>(null);
@@ -504,6 +613,37 @@ export default function App() {
     };
     timeoutId = window.setTimeout(tick, 0);
     return () => { active = false; window.clearTimeout(timeoutId); };
+  }, [online]);
+
+  // ── UI tab routing — polls /api/v1/ui/tab every 1s; switches tab when set
+  useEffect(() => {
+    if (!online) return;
+    let active = true;
+    const tick = async () => {
+      try {
+        const r = await getJson<{ tab?: string | null }>("/api/v1/ui/tab");
+        if (active && r && typeof r.tab === "string" && r.tab) {
+          setTab(r.tab);
+        }
+      } catch { /* ignore */ }
+    };
+    const id = window.setInterval(tick, 1000);
+    return () => { active = false; window.clearInterval(id); };
+  }, [online]);
+
+  // ── Custom tabs — polled at mount and every 30s. Tab list is small.
+  useEffect(() => {
+    if (!online) return;
+    let active = true;
+    const fetchTabs = async () => {
+      try {
+        const r = await getJson<{ ok?: boolean; tabs?: CustomTab[] }>("/api/v1/ui/custom_tabs");
+        if (active && Array.isArray(r?.tabs)) setCustomTabs(r.tabs);
+      } catch { /* ignore */ }
+    };
+    void fetchTabs();
+    const id = window.setInterval(fetchTabs, 30000);
+    return () => { active = false; window.clearInterval(id); };
   }, [online]);
 
   // Inner-thought cross-fade animation. When the snapshot reports a new
@@ -1822,6 +1962,17 @@ export default function App() {
               onClick={() => setTab(t.id)}
             >
               {t.label}
+            </button>
+          ))}
+          {customTabs.map((ct) => (
+            <button
+              key={`custom_${ct.id}`}
+              type="button"
+              className={tab === ct.id ? "active" : ""}
+              onClick={() => setTab(ct.id)}
+              title={`Custom tab: ${ct.content_type}`}
+            >
+              {ct.name}
             </button>
           ))}
         </nav>
@@ -3192,6 +3343,11 @@ export default function App() {
                 </pre>
               </Section>
             </div>
+          )}
+          {customTabs.map((ct) =>
+            tab === ct.id ? (
+              <CustomTabRenderer key={`pane_${ct.id}`} config={ct} snap={snap} />
+            ) : null
           )}
         </main>
       </div>

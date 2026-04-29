@@ -93,6 +93,60 @@ def run_ava(
         return f"{time.time()-_t_start:.2f}s"
 
     print(f"[perf] run_ava start person={active_person_id} has_image={image is not None} input_chars={len(_inp)}")
+
+    # ── VOICE COMMAND ROUTER (intercept before LLM) ──────────────────────────
+    # Pattern-matches the input against built-in + custom commands. If it
+    # matches, the action runs, the response is spoken via the TTS worker, the
+    # turn is logged to chat_history, and we return without invoking the LLM.
+    try:
+        from brain.voice_commands import get_voice_command_router
+        from brain.turn_visual import default_visual_payload
+        from brain.output_guard import scrub_visible_reply
+        _router = get_voice_command_router(BASE_DIR)
+        if _router is not None and _inp:
+            _handled, _response = _router.route(_inp, _g)
+            if _handled and _response:
+                print(f"[voice_commands] matched: {_inp[:60]!r} → {_response[:80]!r}")
+                # Persist to canonical history + chat_history.jsonl so the UI
+                # picks it up like any other turn.
+                try:
+                    _canon = list(_av._get_canonical_history())
+                    _canon.append({"role": "user", "content": user_input})
+                    _canon.append({"role": "assistant", "content": _response})
+                    _av._set_canonical_history(_canon)
+                except Exception:
+                    pass
+                try:
+                    import json as _json
+                    from pathlib import Path as _Path
+                    _hp = _Path(BASE_DIR) / "state" / "chat_history.jsonl"
+                    _hp.parent.mkdir(parents=True, exist_ok=True)
+                    _now = time.time()
+                    _emo = "neutral"
+                    try:
+                        _emo = str(_av.load_mood().get("current_mood") or "neutral")
+                    except Exception:
+                        pass
+                    with _hp.open("a", encoding="utf-8") as _f:
+                        _f.write(_json.dumps({"ts": _now, "role": "user", "content": user_input}, ensure_ascii=False) + "\n")
+                        _f.write(_json.dumps({
+                            "ts": _now, "role": "assistant", "content": _response,
+                            "model": "voice_command_router", "emotion": _emo,
+                            "turn_route": "voice_command",
+                        }, ensure_ascii=False) + "\n")
+                except Exception:
+                    pass
+                _profile_vc = _av.load_profile_by_id(active_person_id)
+                _vis_vc = default_visual_payload(
+                    face_status="—", recognition_status="—", expression_status="—",
+                    memory_preview="", turn_route="voice_command",
+                    visual_truth_trusted=False, vision_status="voice_command",
+                )
+                _g["_ava_thinking"] = False
+                return scrub_visible_reply(_response), _vis_vc, _profile_vc, [], {"voice_command": True}
+    except Exception as _vce:
+        print(f"[run_ava] voice_command router error (non-fatal): {_vce!r}")
+
     # Set thinking flag — UI uses this to show fast blue pulse animation
     _g["_ava_thinking"] = True
     _g["_ava_thinking_since"] = time.time()
