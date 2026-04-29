@@ -3,8 +3,25 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+
+def _to_ts(val: Any) -> float:
+    """Convert a last_updated value to a Unix timestamp float.
+    Handles both float/int (stored directly) and ISO 8601 strings
+    (written by now_iso() in avaagent.py)."""
+    if val is None:
+        return 0.0
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return datetime.fromisoformat(str(val)).timestamp()
+    except Exception:
+        return 0.0
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
@@ -71,7 +88,7 @@ def update_self_model(g: dict[str, Any]) -> dict[str, Any]:
     base_dir = Path(g.get("BASE_DIR") or Path.cwd())
     m = load_model(base_dir)
     now = time.time()
-    if (now - float(m.get("last_updated") or 0.0)) < 7 * 24 * 3600:
+    if (now - _to_ts(m.get("last_updated"))) < 7 * 24 * 3600:
         return m
 
     chatlog = base_dir / "chatlog.jsonl"

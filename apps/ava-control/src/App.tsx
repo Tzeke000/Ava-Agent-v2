@@ -175,6 +175,7 @@ function asRecord(v: unknown): Record<string, unknown> | undefined {
 export default function App() {
   const [tab, setTab] = useState<TabId>("voice");
   const [online, setOnline] = useState(false);
+  const [connecting, setConnecting] = useState(true);
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [pollErr, setPollErr] = useState<string>("");
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
@@ -300,6 +301,7 @@ export default function App() {
   const [liveFrameSrc, setLiveFrameSrc] = useState<string | null>(null);
   const prevOnlineRef = useRef<boolean | null>(null);
   const appStartedAtRef = useRef(Date.now());
+  const connectStartRef = useRef(Date.now());
   const sttPollRef = useRef<number | null>(null);
 
   const pushEvent = useCallback((message: string) => {
@@ -372,16 +374,26 @@ export default function App() {
       setSnap(s);
       setLastSnapshotRaw(s);
       setOnline(true);
+      setConnecting(false);
       setBackendShutdownDetected(false);
       setLastUpdated(typeof s.ts === "number" ? s.ts * 1000 : Date.now());
     } catch (e) {
-      if (prevOnlineRef.current === true || shutdownInProgress || shutdownDone) {
-        setBackendShutdownDetected(true);
+      const elapsedMs = Date.now() - connectStartRef.current;
+      const stillConnecting = elapsedMs < 120_000;
+      if (!stillConnecting) {
+        // 120s timeout — give up waiting, show error
+        setConnecting(false);
+        if (prevOnlineRef.current === true || shutdownInProgress || shutdownDone) {
+          setBackendShutdownDetected(true);
+        }
+        setOnline(false);
+        setSnap(null);
+        setLastSnapshotRaw(null);
+        setPollErr(e instanceof Error ? e.message : String(e));
+      } else {
+        // Still in connecting window — stay silent, keep retrying
+        setOnline(false);
       }
-      setOnline(false);
-      setSnap(null);
-      setLastSnapshotRaw(null);
-      setPollErr(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
@@ -1410,7 +1422,9 @@ export default function App() {
 
       {!online && (
         <div className="op-banner">
-          {backendShutdownDetected ? (
+          {connecting ? (
+            "Connecting to Ava..."
+          ) : backendShutdownDetected ? (
             "Ava has shut down."
           ) : (
             <>

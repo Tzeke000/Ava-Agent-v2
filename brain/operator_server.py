@@ -2074,4 +2074,5 @@ def start_operator_http_background(host: dict[str, Any], chat_fn: Callable[..., 
 
     t = threading.Thread(target=_run, name="ava-operator-http", daemon=True)
     t.start()
+    host["_operator_http_thread"] = t
     print(f"[operator_http] listening on http://{host_bind}:{port}")
