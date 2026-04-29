@@ -132,6 +132,12 @@ class ConceptGraph:
         # All file operations must happen under the lock to prevent TOCTOU races
         # between concurrent threads in the same process.
         with _SAVE_LOCK:
+            # Ensure state/ directory exists — it may have been missing at startup
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as _mkdir_e:
+                print(f"[concept_graph] mkdir failed for {self.path.parent}: {_mkdir_e!r}")
+                return
             # Stale .tmp from previous crashed instance — try to clear it
             if tmp.is_file():
                 try:
@@ -151,10 +157,10 @@ class ConceptGraph:
                     except Exception:
                         pass
                 else:
-                    # Unexpected OSError — log but don't crash
-                    print(f"[concept_graph] save failed: {_e!r}")
+                    # Unexpected OSError — log full paths to aid diagnosis
+                    print(f"[concept_graph] save failed path={self.path} tmp={tmp}: {_e!r}")
             except Exception as _e2:
-                print(f"[concept_graph] save unexpected error: {_e2!r}")
+                print(f"[concept_graph] save unexpected error path={self.path}: {_e2!r}")
 
     def add_node(self, label: str, type: NodeType, notes: str = "") -> str:
         node_id = _slugify(label)

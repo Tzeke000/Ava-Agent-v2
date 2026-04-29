@@ -297,6 +297,7 @@ export default function App() {
   const [onboardingStageIndex, setOnboardingStageIndex] = useState(0);
   const [onboardingStageCount, setOnboardingStageCount] = useState(13);
   const PHOTO_STAGES_UI = ["photo_front", "photo_left", "photo_right", "photo_up", "photo_down"];
+  const [liveFrameSrc, setLiveFrameSrc] = useState<string | null>(null);
   const prevOnlineRef = useRef<boolean | null>(null);
   const appStartedAtRef = useRef(Date.now());
   const sttPollRef = useRef<number | null>(null);
@@ -418,6 +419,27 @@ export default function App() {
     const id = window.setInterval(() => void poll(), 3000);
     return () => window.clearInterval(id);
   }, [poll]);
+
+  // Live camera feed — polls /api/v1/camera/live_frame at ~5fps when on status tab
+  useEffect(() => {
+    if (tab !== "status" || !online) {
+      setLiveFrameSrc(null);
+      return;
+    }
+    let active = true;
+    let timeoutId: number;
+    const fetchFrame = async () => {
+      try {
+        const r = await getJson<{ ok: boolean; b64?: string }>("/api/v1/camera/live_frame");
+        if (active && r.ok && r.b64) {
+          setLiveFrameSrc(`data:image/jpeg;base64,${r.b64}`);
+        }
+      } catch { /* ignore */ }
+      if (active) timeoutId = window.setTimeout(fetchFrame, 200);
+    };
+    timeoutId = window.setTimeout(fetchFrame, 0);
+    return () => { active = false; window.clearTimeout(timeoutId); };
+  }, [tab, online]);
 
   // Phase 63: WebSocket real-time transport (with REST fallback)
   useEffect(() => {
@@ -1849,6 +1871,24 @@ export default function App() {
                     />
                   </Section>
                   <Section title="Vision / Gaze / Expression">
+                    {liveFrameSrc ? (
+                      <div style={{ marginBottom: "0.75rem" }}>
+                        <img
+                          src={liveFrameSrc}
+                          alt="Live camera feed"
+                          style={{
+                            width: 320, height: 240, objectFit: "cover",
+                            borderRadius: 6, border: "1px solid #333",
+                            display: "block",
+                          }}
+                        />
+                        <p style={{ fontSize: "0.75rem", color: "#666", marginTop: 4 }}>Live feed ~5fps</p>
+                      </div>
+                    ) : online ? (
+                      <p style={{ fontSize: "0.8rem", color: "#555", marginBottom: "0.75rem" }}>
+                        Camera unavailable
+                      </p>
+                    ) : null}
                     {(() => {
                       const attn = asRecord((snap as Record<string, unknown> | null)?.attention);
                       const gazeRegion = String(attn?.gaze_region ?? "unknown");
