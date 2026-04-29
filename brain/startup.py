@@ -370,7 +370,17 @@ def run_startup(g: dict[str, Any]) -> None:
     if not EXPRESSION_STATE_PATH.exists():
         g["save_expression_state"](g["default_expression_state"]())
 
-    print("[startup] step: TTS engine")
+    print("[startup] step: TTS worker (COM-isolated thread)")
+    try:
+        from brain.tts_worker import get_tts_worker
+        _tts_worker = get_tts_worker()
+        g["_tts_worker"] = _tts_worker
+        print(f"[tts_worker] available={_tts_worker.available} voice={_tts_worker.voice_name()}")
+    except Exception as e:
+        g["_tts_worker"] = None
+        print(f"[tts_worker] startup skipped: {e}")
+
+    print("[startup] step: TTS engine (wraps worker)")
     try:
         from brain.tts_engine import TTSEngine
         _tts = TTSEngine()
@@ -379,7 +389,7 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception:
         g["tts_engine"] = None
         g["tts_engine_name"] = "none"
-    g["tts_enabled"] = False
+    g["tts_enabled"] = True  # default ON now that worker is COM-safe
 
     print("[startup] step: STT engine (Whisper)")
     try:

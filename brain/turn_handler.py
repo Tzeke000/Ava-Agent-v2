@@ -48,6 +48,32 @@ def finalize_ava_turn(
     _av.log_chat("assistant", ai_reply, {"person_id": person_id, "person_name": active_profile["name"], "actions": actions})
     _av.maybe_autoremember(user_input, ai_reply, person_id)
 
+    # Persist turn to state/chat_history.jsonl so the UI can hydrate across restarts.
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+        _hist_path = _Path(_av.BASE_DIR) / "state" / "chat_history.jsonl"
+        _hist_path.parent.mkdir(parents=True, exist_ok=True)
+        _now = time.time()
+        try:
+            _emo = str(_av.load_mood().get("current_mood") or "neutral")
+        except Exception:
+            _emo = "neutral"
+        _used_model = str(_g.get("_last_invoked_model") or _av.LLM_MODEL or "")
+        with _hist_path.open("a", encoding="utf-8") as _f:
+            _f.write(_json.dumps({
+                "ts": _now, "role": "user", "content": str(user_input or ""),
+                "person_id": person_id, "person_name": active_profile.get("name", ""),
+            }, ensure_ascii=False) + "\n")
+            _f.write(_json.dumps({
+                "ts": _now, "role": "assistant", "content": str(ai_reply or ""),
+                "person_id": person_id, "person_name": active_profile.get("name", ""),
+                "model": _used_model, "emotion": _emo,
+                "turn_route": str(turn_route or ""),
+            }, ensure_ascii=False) + "\n")
+    except Exception as _e:
+        print(f"[chat_history] persist failed: {_e}")
+
     try:
         from brain.event_extractor import maybe_extract_prospective_events
         st = _av.load_session_state()
@@ -142,20 +168,38 @@ def finalize_ava_turn(
     except Exception:
         pass
 
-    # TTS speak
+    # TTS speak — prefer COM-safe worker directly so we can use emotion-aware
+    # voice modulation, fall back to tts_engine.
     _tts_spoke = False
     try:
-        _tts = _g.get("tts_engine")
         _tts_enabled = bool(_g.get("tts_enabled", False))
-        if _tts_enabled and _tts is not None and callable(getattr(_tts, "is_available", None)) and _tts.is_available():
+        if _tts_enabled:
             _reply_text = str(ai_reply or "")
             _clean = re.sub(r"[*_`#\[\]()]", "", _reply_text)
             _clean = re.sub(r"\s+", " ", _clean).strip()
             if len(_clean) > 300:
                 _clean = _clean[:300].rstrip()
             if _clean and re.search(r"[A-Za-z0-9]", _clean):
-                _tts.speak(_clean, blocking=False)
-                _tts_spoke = True
+                _worker = _g.get("_tts_worker")
+                if _worker is not None and getattr(_worker, "available", False):
+                    try:
+                        _emotion = "neutral"
+                        _intensity = 0.5
+                        try:
+                            _mood = _av.load_mood() or {}
+                            _emotion = str(_mood.get("current_mood") or _mood.get("primary_emotion") or "neutral")
+                            _intensity = float(_mood.get("energy") or _mood.get("intensity") or 0.5)
+                        except Exception:
+                            pass
+                        _worker.speak_with_emotion(_clean, emotion=_emotion, intensity=_intensity, blocking=False)
+                        _tts_spoke = True
+                    except Exception:
+                        _tts_spoke = False
+                if not _tts_spoke:
+                    _tts = _g.get("tts_engine")
+                    if _tts is not None and callable(getattr(_tts, "is_available", None)) and _tts.is_available():
+                        _tts.speak(_clean, blocking=False)
+                        _tts_spoke = True
     except Exception:
         pass
 

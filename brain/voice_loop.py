@@ -155,21 +155,49 @@ class VoiceLoop:
             return
 
         tts_enabled = bool(self._g.get("tts_enabled", False))
-        speak_callable = callable(getattr(tts, "speak", None))
-        print(f"[voice_loop] tts check: enabled={tts_enabled} speak_callable={speak_callable} engine={getattr(tts, '_engine_name', '?')}")
         if not tts_enabled:
             print("[voice_loop] TTS disabled in globals — not speaking. Toggle via /api/v1/tts/toggle.")
             self._set_state("passive")
             return
+
+        # Prefer the COM-safe TTS worker directly with the current emotion.
+        worker = self._g.get("_tts_worker")
+        if worker is not None and getattr(worker, "available", False):
+            try:
+                # Pull current mood for expressive speech.
+                emotion = "neutral"
+                intensity = 0.5
+                try:
+                    mood_state = self._g.get("_current_mood")
+                    if isinstance(mood_state, dict):
+                        emotion = str(mood_state.get("current_mood") or mood_state.get("primary_emotion") or "neutral")
+                        intensity = float(mood_state.get("energy") or mood_state.get("intensity") or 0.5)
+                    else:
+                        load_mood = self._g.get("load_mood")
+                        if callable(load_mood):
+                            m = load_mood() or {}
+                            emotion = str(m.get("current_mood") or m.get("primary_emotion") or "neutral")
+                            intensity = float(m.get("energy") or m.get("intensity") or 0.5)
+                except Exception:
+                    pass
+                print(f"[voice_loop] speaking response ({len(clean)} chars) emotion={emotion} intensity={intensity:.2f}")
+                worker.speak_with_emotion(clean, emotion=emotion, intensity=intensity, blocking=True)
+                print("[voice_loop] done speaking (worker)")
+                self._set_state("passive")
+                return
+            except Exception as e:
+                print(f"[voice_loop] worker.speak_with_emotion failed: {e!r} — falling back to tts_engine")
+
+        # Fallback to legacy tts_engine path.
+        speak_callable = callable(getattr(tts, "speak", None))
         if not speak_callable:
             print("[voice_loop] tts.speak is not callable")
             self._set_state("passive")
             return
-
         try:
-            print(f"[voice_loop] speaking response ({len(clean)} chars)…")
+            print(f"[voice_loop] speaking response ({len(clean)} chars) via tts_engine fallback")
             tts.speak(clean, blocking=True)
-            print("[voice_loop] done speaking")
+            print("[voice_loop] done speaking (engine)")
         except Exception as e:
             print(f"[voice_loop] TTS failed to speak: {e!r}")
 

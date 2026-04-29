@@ -207,28 +207,20 @@ class TTSEngine:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
     def _init_engine(self) -> None:
+        # Route pyttsx3 through TTSWorker so all engine calls happen on a single
+        # dedicated thread (required by Windows COM/SAPI5 single-threaded apartment).
         try:
-            import pyttsx3  # type: ignore
-
-            engine = pyttsx3.init()
-            selected_name = "default"
-            voices = engine.getProperty("voices") or []
-            for voice in voices:
-                voice_name = str(getattr(voice, "name", "") or "")
-                if any(x in voice_name.lower() for x in ("zira", "hazel", "female")):
-                    engine.setProperty("voice", str(getattr(voice, "id", "") or ""))
-                    selected_name = voice_name
-                    break
-            engine.setProperty("rate", 175)
-            engine.setProperty("volume", 0.9)
-            self._pyttsx3 = engine
-            self._voice_name = selected_name
-            self._engine_name = "pyttsx3"
-            self._available = True
-            self._log(f"Using pyttsx3 (voice={selected_name}).")
-            return
+            from brain.tts_worker import get_tts_worker
+            worker = get_tts_worker()
+            if worker.is_available():
+                self._pyttsx3 = None  # we never call pyttsx3 directly anymore
+                self._voice_name = worker.voice_name()
+                self._engine_name = "pyttsx3"
+                self._available = True
+                self._log(f"Using pyttsx3 via TTSWorker (voice={self._voice_name}).")
+                return
         except Exception as e:
-            self._log(f"pyttsx3 init failed: {e}")
+            self._log(f"TTSWorker init failed: {e!r}")
 
         melo_err = ""
         try:
@@ -291,25 +283,24 @@ class TTSEngine:
             pass
 
     def _speak_pyttsx3(self, text: str, blocking: bool) -> None:
-        if self._pyttsx3 is None:
-            return
-        self.stop()
-        self._apply_voice_style()
-        if blocking:
-            self._pyttsx3.say(text)
-            self._pyttsx3.runAndWait()
-            return
-
-        def _worker() -> None:
+        # Always route through TTSWorker — never call pyttsx3 from this thread.
+        try:
+            from brain.tts_worker import get_tts_worker
+            worker = get_tts_worker()
+            if not worker.is_available():
+                self._log("pyttsx3 worker not available")
+                return
+            # Apply current voice style to worker before speaking
             try:
-                self._pyttsx3.say(text)
-                self._pyttsx3.runAndWait()
+                self._voice_style = _load_voice_style()
+                rate = int(self._voice_style.get("rate") or 175)
+                vol = float(self._voice_style.get("volume") or 0.9)
             except Exception:
-                pass
-
-        t = threading.Thread(target=_worker, daemon=True, name="ava-tts-pyttsx3")
-        self._player_thread = t
-        t.start()
+                rate = 175
+                vol = 0.9
+            worker.speak(text, rate=rate, volume=vol, blocking=blocking)
+        except Exception as e:
+            self._log(f"_speak_pyttsx3 routing error: {e!r}")
 
     @staticmethod
     def _estimate_amplitude(text: str) -> float:
@@ -322,6 +313,13 @@ class TTSEngine:
 
     @property
     def speaking(self) -> bool:
+        # When using pyttsx3, ask the worker (it knows true speech state).
+        if self._engine_name == "pyttsx3":
+            try:
+                from brain.tts_worker import get_tts_worker
+                return get_tts_worker().is_speaking()
+            except Exception:
+                pass
         t = self._player_thread
         return bool(t is not None and t.is_alive())
 
@@ -360,24 +358,24 @@ class TTSEngine:
                         self._log(
                             f"MeloTTS synthesis failed (code={res.returncode}, wav_exists={wav_path.is_file()}): {err_text or 'no error output'}"
                         )
-                        if self._pyttsx3 is None:
-                            try:
-                                import pyttsx3  # type: ignore
-
-                                engine = pyttsx3.init()
-                                engine.setProperty("rate", 175)
-                                engine.setProperty("volume", 0.9)
-                                self._pyttsx3 = engine
-                                self._voice_name = "default"
-                                self._log("Initialized pyttsx3 after MeloTTS failure.")
-                            except Exception:
+                        # Pivot to TTSWorker-managed pyttsx3 instead of direct init
+                        try:
+                            from brain.tts_worker import get_tts_worker
+                            worker = get_tts_worker()
+                            if not worker.is_available():
                                 self._available = False
                                 self._engine_name = "none"
-                                self._log("pyttsx3 fallback initialization failed after MeloTTS synthesis error.")
+                                self._log("pyttsx3 fallback unavailable after MeloTTS synthesis error.")
                                 return
-                        self._engine_name = "pyttsx3"
-                        self._available = True
-                        self._log("Switched active TTS engine to pyttsx3 fallback.")
+                            self._engine_name = "pyttsx3"
+                            self._available = True
+                            self._voice_name = worker.voice_name()
+                            self._log("Switched active TTS engine to pyttsx3 (via worker) fallback.")
+                        except Exception:
+                            self._available = False
+                            self._engine_name = "none"
+                            self._log("pyttsx3 worker import failed after MeloTTS synthesis error.")
+                            return
                         self._speak_pyttsx3(clean, blocking)
                         return
                     self._last_wav = str(wav_path)
@@ -398,6 +396,12 @@ class TTSEngine:
         try:
             if winsound is not None:
                 winsound.PlaySound(None, winsound.SND_PURGE)
+        except Exception:
+            pass
+        # Stop pyttsx3 via worker (which owns the engine thread)
+        try:
+            from brain.tts_worker import get_tts_worker
+            get_tts_worker().stop()
         except Exception:
             pass
         try:

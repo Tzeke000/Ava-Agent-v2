@@ -165,7 +165,15 @@ class DualBrain:
         return (time.time() - last_msg) < 45.0 or self.foreground_busy
 
     def should_pause_background(self) -> bool:
-        return self.is_zeke_active()
+        return self.is_zeke_active() or bool(self._g.get("_dual_brain_pause_until_ts", 0) > time.time())
+
+    def pause_background_now(self, seconds: float = 30.0) -> None:
+        """Force Stream B to skip its next iterations for `seconds`.
+
+        Called by reply_engine when Zeke sends a message so Ollama's GPU is
+        not contested by background work mid-turn.
+        """
+        self._g["_dual_brain_pause_until_ts"] = time.time() + max(1.0, float(seconds))
 
     def get_status(self) -> dict[str, Any]:
         with self._lock:
@@ -192,6 +200,8 @@ class DualBrain:
 
     def _background_worker(self) -> None:
         """Stream B daemon — consumes the task queue."""
+        # Heavy tasks that should not run while Zeke might message us soon.
+        _HEAVY = {"curiosity_research", "memory_consolidation", "creative", "plan_step"}
         while True:
             time.sleep(1.0)
             if self.should_pause_background():
@@ -199,6 +209,18 @@ class DualBrain:
             try:
                 task = self.background_queue.get_nowait()
             except queue.Empty:
+                continue
+
+            # If Zeke messaged within the last 5 minutes, skip heavy tasks and
+            # only run lightweight ones (inner_monologue, self_critique).
+            last_msg = float(self._g.get("_last_user_message_ts") or 0)
+            if (time.time() - last_msg) < 300.0 and task.task_type in _HEAVY:
+                # Re-queue for later if there's room; otherwise drop.
+                try:
+                    self.background_queue.put_nowait(task)
+                except queue.Full:
+                    pass
+                time.sleep(5.0)
                 continue
 
             with self._lock:
@@ -307,6 +329,7 @@ class DualBrain:
         try:
             from langchain_ollama import ChatOllama
             from langchain_core.messages import HumanMessage
+            from brain.ollama_lock import with_ollama
             model = self.get_thinking_model()
             llm = ChatOllama(model=model, temperature=0.8, num_predict=100)
             prompt = (
@@ -316,7 +339,10 @@ class DualBrain:
                 "Be brief — 1-2 sentences max. "
                 "This is your private thinking, not a reply."
             )
-            result = llm.invoke([HumanMessage(content=prompt)])
+            result = with_ollama(
+                lambda: llm.invoke([HumanMessage(content=prompt)]),
+                label=f"stream_b:live_thought:{model}",
+            )
             return str(getattr(result, "content", str(result))).strip()[:200]
         except Exception as e:
             print(f"[live_think] inference error: {e}")
@@ -378,6 +404,7 @@ class DualBrain:
             return ""
         try:
             from langchain_ollama import ChatOllama
+            from brain.ollama_lock import with_ollama
             model = self.get_thinking_model()
             llm = ChatOllama(model=model, temperature=0.5, num_predict=150)
             prompt = (
@@ -387,7 +414,10 @@ class DualBrain:
                 "What could have been better? What did you miss? "
                 "1-2 sentences of honest self-evaluation. Be concise."
             )
-            result = llm.invoke(prompt)
+            result = with_ollama(
+                lambda: llm.invoke(prompt),
+                label=f"stream_b:self_critique:{model}",
+            )
             critique = str(getattr(result, "content", str(result))).strip()[:200]
             # Store critique as an inner monologue thought
             try:
@@ -431,6 +461,7 @@ class DualBrain:
         """Ava-initiated creative work during leisure. Decides what to make."""
         try:
             from langchain_ollama import ChatOllama
+            from brain.ollama_lock import with_ollama
             model = self.get_thinking_model()
             llm = ChatOllama(model=model, temperature=0.85, num_predict=200)
             mood_path = Path(g.get("BASE_DIR") or ".") / "ava_mood.json"
@@ -448,7 +479,10 @@ class DualBrain:
                 + "Write a short creative piece — a poem, a thought, a tiny story, or an image description. "
                 "Make it genuinely yours. 3-6 sentences."
             )
-            result = llm.invoke(prompt)
+            result = with_ollama(
+                lambda: llm.invoke(prompt),
+                label=f"stream_b:creative:{model}",
+            )
             creative_text = str(getattr(result, "content", str(result))).strip()[:400]
             # Log to journal
             try:
