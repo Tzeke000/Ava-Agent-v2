@@ -80,6 +80,18 @@ def run_ava(
         except Exception as _ob_e:
             print(f"[run_ava] onboarding trigger check error: {_ob_e}")
 
+        # Phase 84: optional morning briefing (first interaction of new day)
+        if not _g.get("_morning_briefing_checked"):
+            _g["_morning_briefing_checked"] = True
+            try:
+                from brain.morning_briefing import should_brief, deliver_briefing
+                if should_brief(_g):
+                    _briefing = deliver_briefing(_g)
+                    if _briefing:
+                        _g["_pending_morning_briefing"] = _briefing
+            except Exception as _mb_e:
+                print(f"[run_ava] morning briefing check error: {_mb_e}")
+
         # Phase 79: if onboarding flow is active, route through it
         if _g.get("_onboarding_flow") is not None:
             try:
@@ -281,6 +293,11 @@ def run_ava(
                     mark_curiosity_resolved(_t, _g)
         except Exception:
             pass
+
+        # Phase 84: prepend morning briefing to first response of the day
+        _mb_pending = str(_g.pop("_pending_morning_briefing", "") or "").strip()
+        if _mb_pending:
+            ai_reply = f"{_mb_pending}\n\n{ai_reply}"
 
         _vroute = isinstance(visual, dict) and visual.get("turn_route")
         print(
