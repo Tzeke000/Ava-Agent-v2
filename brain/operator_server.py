@@ -506,6 +506,17 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
 
+    # Phase 82: current person at machine
+    current_person_block: dict[str, Any] = {
+        "person_id": "unknown", "display_name": "Unknown",
+        "confidence": 0.0, "time_at_machine": 0.0, "is_zeke": False,
+    }
+    try:
+        from brain.runtime_presence import get_current_person_block
+        current_person_block = get_current_person_block(host)
+    except Exception:
+        pass
+
     mood_block = _load_mood_block(host)
     style_block = _load_style(host)
     deep_self_block = {}
@@ -644,6 +655,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "emil": emil_block,
         "active_plans": active_plans_block,
         "onboarding": onboarding_block,
+        "current_person": current_person_block,
         "system_stats": system_stats,
         "mood": mood_block,
         "style": style_block,

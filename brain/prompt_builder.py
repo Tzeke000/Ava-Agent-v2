@@ -340,6 +340,7 @@ pending_repair_note: {_pending_repair_note or "(none)"}
 {_pickup_note_once}
 {_active_plans_prompt}
 {_emil_online_hint}
+CURRENT PERSON AT MACHINE: {_g.get("_current_person_at_machine") or "unknown"} (confidence={_g.get("_face_recognizer_last_confidence") or 0.0:.2f})
 
 AVAILABLE READ-ONLY FILES:
 - chatlog.jsonl

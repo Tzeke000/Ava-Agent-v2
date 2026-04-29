@@ -525,6 +525,17 @@ def _run_heartbeat_tick(
     except Exception:
         pass
 
+    # Phase 82: multi-person awareness (check who is at machine)
+    _PERSON_CHECK_INTERVAL = 5.0  # every 5 seconds
+    _last_person_check = float(st.meta.get("last_person_check_wall") or 0)
+    if (now - _last_person_check) >= _PERSON_CHECK_INTERVAL:
+        try:
+            from brain.runtime_presence import tick_multi_person_awareness
+            tick_multi_person_awareness(g)
+            st.meta["last_person_check_wall"] = now
+        except Exception:
+            pass
+
     # Phase 75: auto fine-tune check (every 14 days if 50+ new turns)
     _FT_CHECK_INTERVAL = 14 * 24 * 3600
     _last_ft_check = float(st.meta.get("last_finetune_check_wall") or 0)
