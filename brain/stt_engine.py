@@ -14,7 +14,21 @@ class STTEngine:
         self._model = None
         self._backend = "none"
         self._lock = threading.Lock()
+        self._vad_model: Any = None
+        self._vad_available: bool = False
         self._init_model()
+        self._init_vad()
+
+    def _init_vad(self) -> None:
+        """Load Silero VAD. RTF ≈ 0.004 — uses < 0.5% CPU per check."""
+        try:
+            from silero_vad import load_silero_vad  # type: ignore
+            self._vad_model = load_silero_vad()
+            self._vad_available = True
+            print("[stt_engine] Silero VAD ready")
+        except Exception as e:
+            self._vad_available = False
+            print(f"[stt_engine] Silero VAD unavailable: {e!r} — falling back to RMS VAD")
 
     def _init_model(self) -> None:
         # Whisper base: better accuracy than tiny especially for short phrases.
@@ -86,9 +100,35 @@ class STTEngine:
 
     # ── VAD helper ─────────────────────────────────────────────
 
-    @staticmethod
-    def _has_speech(audio, sample_rate: int = 16000, rms_threshold: float = 0.008, min_speech_seconds: float = 0.3) -> bool:
-        """Return True if audio contains detectable speech above threshold."""
+    def _has_speech(self, audio, sample_rate: int = 16000, rms_threshold: float = 0.008, min_speech_seconds: float = 0.3) -> bool:
+        """Return True if `audio` contains speech.
+
+        Primary: Silero VAD (robust to keyboard/mouse/HVAC noise).
+        Fallback: simple RMS-energy threshold.
+        """
+        # Silero path — preferred when available.
+        if self._vad_available and self._vad_model is not None:
+            try:
+                import numpy as np
+                import torch
+                from silero_vad import get_speech_timestamps  # type: ignore
+                arr = np.asarray(audio, dtype=np.float32).flatten()
+                if arr.size < int(sample_rate * 0.1):
+                    return False
+                tensor = torch.from_numpy(arr)
+                ts = get_speech_timestamps(
+                    tensor,
+                    self._vad_model,
+                    sampling_rate=sample_rate,
+                    min_speech_duration_ms=int(min_speech_seconds * 1000),
+                    min_silence_duration_ms=300,
+                    threshold=0.5,
+                )
+                return len(ts) > 0
+            except Exception as e:
+                print(f"[stt_engine] Silero VAD error: {e!r} — falling back to RMS")
+
+        # RMS fallback.
         try:
             import numpy as np
             block = int(sample_rate * 0.05)  # 50ms blocks
@@ -104,6 +144,33 @@ class STTEngine:
             return False
         except Exception:
             return True  # fail open — let transcription decide
+
+    @staticmethod
+    def _normalize_transcript(text: str) -> str:
+        """Whisper sometimes hears "Eva" / "Aye va" / "A va" instead of "Ava".
+        Normalize so wake detection and prompt building see the canonical name."""
+        if not text:
+            return text
+        # Word-boundary substitutions; preserve punctuation context.
+        replacements: list[tuple[str, str]] = [
+            ("Eva,", "Ava,"),
+            ("Eva.", "Ava."),
+            ("Eva?", "Ava?"),
+            ("Eva!", "Ava!"),
+            ("Eva ", "Ava "),
+            (" Eva", " Ava"),
+            ("Aye va", "Ava"),
+            ("Aye-va", "Ava"),
+            ("A va", "Ava"),
+            ("Hey Ada", "Hey Ava"),
+            ("Hi Ada", "Hi Ava"),
+        ]
+        out = text
+        for wrong, right in replacements:
+            out = out.replace(wrong, right)
+            # Case variants
+            out = out.replace(wrong.lower(), right.lower())
+        return out
 
     # ── listen_session (VAD-gated, silence-terminated) ─────────
 
@@ -208,14 +275,16 @@ class STTEngine:
 
         try:
             # initial_prompt biases Whisper toward hearing "Ava" as the wake
-            # word — without it Whisper often drops the name as filler.
+            # word — without it Whisper often drops the name as filler. Once
+            # Silero VAD is the primary speech-presence check (in listen_session)
+            # we leave Whisper's internal vad_filter on as a secondary guard.
             # hotwords is a faster-whisper feature; gracefully fall back if
             # the installed version doesn't accept it.
             transcribe_kwargs: dict[str, Any] = {
                 "language": "en",
                 "vad_filter": True,
                 "beam_size": 5,
-                "initial_prompt": "Ava,",
+                "initial_prompt": "Ava, hey Ava,",
                 "vad_parameters": {
                     "min_silence_duration_ms": 500,
                     "threshold": 0.008,
@@ -243,6 +312,9 @@ class STTEngine:
                     avg_logprob_sum += float(getattr(seg, "avg_logprob", -1.0) or -1.0)
                     seg_count += 1
             text = " ".join(" ".join(p.split()) for p in parts).strip()
+            # Normalize "Eva"/"A va"/etc → "Ava" so downstream wake detection
+            # and prompt building see the canonical wake word.
+            text = self._normalize_transcript(text)
             # Convert avg_logprob (-inf..0) to 0..1 confidence
             if seg_count > 0:
                 avg_lp = avg_logprob_sum / seg_count
