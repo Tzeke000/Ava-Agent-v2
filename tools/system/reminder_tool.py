@@ -115,7 +115,13 @@ def cancel_reminders(g: dict[str, Any]) -> int:
 
 def deliver_due_reminders(g: dict[str, Any]) -> int:
     """Called by heartbeat. Speaks any reminders whose due_ts has passed.
-    Returns the number of reminders spoken this tick."""
+    Returns the number of reminders spoken this tick.
+
+    Also fires SIGNAL_REMINDER_DUE (urgent) on the signal bus so any
+    registered urgent handler runs in addition to the speak path. The
+    speak here is the primary delivery — the signal exists for any other
+    subsystem that wants to react (logging, UI flash, etc).
+    """
     if not bool(g.get("tts_enabled", False)):
         return 0
     worker = g.get("_tts_worker")
@@ -127,6 +133,7 @@ def deliver_due_reminders(g: dict[str, Any]) -> int:
         due = [r for r in rows if not r.get("spoken") and not r.get("cancelled") and float(r.get("due_ts") or 0) <= now]
         if not due:
             return 0
+        bus = g.get("_signal_bus")
         for r in due:
             try:
                 spoken = f"Reminder: {r.get('text', '')}"
@@ -134,6 +141,16 @@ def deliver_due_reminders(g: dict[str, Any]) -> int:
                 r["spoken"] = True
                 r["spoken_at"] = time.time()
                 print(f"[reminders] delivered: {r.get('text', '')[:80]!r}")
+                if bus is not None:
+                    try:
+                        from brain.signal_bus import SIGNAL_REMINDER_DUE
+                        bus.fire(
+                            SIGNAL_REMINDER_DUE,
+                            data={"text": str(r.get("text", "")), "id": r.get("id")},
+                            priority="urgent",
+                        )
+                    except Exception:
+                        pass
             except Exception as e:
                 print(f"[reminders] deliver error: {e}")
         _rewrite(g, rows)

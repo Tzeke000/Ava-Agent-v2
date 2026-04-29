@@ -49,6 +49,17 @@ def run_startup(g: dict[str, Any]) -> None:
         print(f"[startup] could not clear restart flag: {_rf_e}")
     MOOD_PATH: Path = g["MOOD_PATH"]
     OWNER_PERSON_ID: str = g["OWNER_PERSON_ID"]
+    # Signal bus — must come early so every later subsystem can fire signals
+    # into it without crashing on a None lookup.
+    print("[startup] step: signal bus")
+    try:
+        from brain.signal_bus import bootstrap_signal_bus
+        bootstrap_signal_bus(g)
+        print("[startup] signal bus ready")
+    except Exception as _sb_e:
+        g["_signal_bus"] = None
+        print(f"[signal_bus] startup skipped: {_sb_e}")
+
     print("[startup] step: identity + profiles")
     g["ensure_owner_profile"]()
     g["ensure_identity_files"]()
@@ -408,6 +419,34 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as e:
         g["_app_discoverer"] = None
         print(f"[app_discoverer] startup skipped: {e}")
+
+    # Urgent reminder handler — fires on SIGNAL_REMINDER_DUE.
+    # Reminders also run via a heartbeat sweep; this handler covers the case
+    # where another subsystem decides a reminder is urgent enough to bypass
+    # the next 30s tick.
+    try:
+        from brain.signal_bus import get_signal_bus, SIGNAL_REMINDER_DUE
+        _bus = get_signal_bus()
+        if _bus is not None:
+            def _urgent_reminder(signal: dict) -> None:
+                try:
+                    text = str(signal.get("data", {}).get("text") or "")
+                    if not text:
+                        return
+                    worker = g.get("_tts_worker")
+                    if worker is not None and getattr(worker, "available", False) and bool(g.get("tts_enabled", False)):
+                        worker.speak_with_emotion(
+                            f"Reminder: {text}",
+                            emotion="curiosity",
+                            intensity=0.5,
+                            blocking=False,
+                        )
+                except Exception as _e:
+                    print(f"[urgent_reminder] error: {_e}")
+            _bus.register_urgent_handler(SIGNAL_REMINDER_DUE, _urgent_reminder)
+            print("[startup] urgent SIGNAL_REMINDER_DUE handler registered")
+    except Exception as _rh_e:
+        print(f"[urgent_reminder] handler registration skipped: {_rh_e}")
 
     print("[startup] step: mood init")
     if not MOOD_PATH.exists():
