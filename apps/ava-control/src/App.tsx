@@ -20,6 +20,7 @@ const TABS = [
   { id: "finetune" as const, label: "Finetune" },
   { id: "workbench" as const, label: "Workbench" },
   { id: "plans" as const, label: "Plans" },
+  { id: "journal" as const, label: "Journal" },
   { id: "emil" as const, label: "Emil" },
   { id: "proposals" as const, label: "Proposals" },
   { id: "identity" as const, label: "Identity" },
@@ -227,6 +228,12 @@ export default function App() {
   const [plansBusy, setPlansBusy] = useState(false);
   const [planGoalInput, setPlanGoalInput] = useState("");
   const [planMsg, setPlanMsg] = useState("");
+
+  // Phase 86: journal state
+  const [journalEntries, setJournalEntries] = useState<Record<string, unknown>[] | null>(null);
+  const [journalBusy, setJournalBusy] = useState(false);
+  const [journalTotal, setJournalTotal] = useState(0);
+  const [journalSharedCount, setJournalSharedCount] = useState(0);
 
   const [emilStatus, setEmilStatus] = useState<Record<string, unknown> | null>(null);
   const [emilSendMsg, setEmilSendMsg] = useState("");
@@ -448,6 +455,20 @@ export default function App() {
     if (tab !== "plans") return;
     void fetchPlans();
   }, [tab, fetchPlans]);
+
+  useEffect(() => {
+    if (tab !== "journal") return;
+    setJournalBusy(true);
+    getJson("/api/v1/journal/entries")
+      .then((d) => {
+        const r = d as Record<string, unknown>;
+        setJournalEntries((r.entries as Record<string, unknown>[]) ?? []);
+        setJournalTotal(typeof r.total === "number" ? r.total : 0);
+        setJournalSharedCount(typeof r.shared_count === "number" ? r.shared_count : 0);
+      })
+      .catch(() => {})
+      .finally(() => setJournalBusy(false));
+  }, [tab]);
 
   useEffect(() => {
     if (tab !== "emil") return;
@@ -2061,6 +2082,55 @@ export default function App() {
                   })
                 )}
               </Section>
+            </div>
+          )}
+
+          {tab === "journal" && (
+            <div className="op-pane">
+              <h1 className="op-h1">Journal</h1>
+              <p className="op-lead">Ava's private journal. She decides what to write and what to share.</p>
+              {journalBusy ? (
+                <p className="op-muted">Loading…</p>
+              ) : (
+                <>
+                  <Section title="Summary">
+                    <Kv items={[
+                      { label: "Total entries", value: journalTotal },
+                      { label: "Shared with you", value: journalSharedCount },
+                    ]} />
+                  </Section>
+                  <Section title="Entries">
+                    {(journalEntries ?? []).length === 0 ? (
+                      <p className="op-muted">No entries yet.</p>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        {[...(journalEntries ?? [])].reverse().map((entry, i) => {
+                          const e = entry as Record<string, unknown>;
+                          const isPrivate = Boolean(e.is_private) && !Boolean(e.shared);
+                          return (
+                            <div key={String(e.id ?? i)} style={{
+                              background: "#0d1117", border: "1px solid #1e293b",
+                              borderRadius: 8, padding: "0.75rem", fontSize: "0.85rem",
+                            }}>
+                              <div style={{ color: "#4a90d9", marginBottom: 4, fontSize: "0.75rem" }}>
+                                {String(e.date ?? "")} · {String(e.topic ?? "")}
+                                {Boolean(e.shared) && <span style={{ color: "#4ade80", marginLeft: 8 }}>shared</span>}
+                              </div>
+                              {isPrivate ? (
+                                <p style={{ color: "#4a5568", fontStyle: "italic" }}>
+                                  [private entry — {String(e.date ?? "")}]
+                                </p>
+                              ) : (
+                                <p style={{ color: "#e2e8f0", lineHeight: 1.5 }}>{String(e.content ?? "")}</p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </Section>
+                </>
+              )}
             </div>
           )}
 

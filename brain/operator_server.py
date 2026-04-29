@@ -1655,6 +1655,29 @@ def create_app():
             "result": cmd_result,
         }
 
+    # ── Phase 86: Journal endpoints ──────────────────────────────────────────
+
+    @app.get("/api/v1/journal/entries")
+    async def journal_entries() -> dict[str, Any]:
+        h = _g()
+        try:
+            from brain.journal import get_shared_entries, get_entry_count, _load_entries
+            all_entries = _load_entries(h)
+            total, shared_count = get_entry_count(h)
+            return {"ok": True, "entries": all_entries[-50:], "total": total, "shared_count": shared_count}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200], "entries": [], "total": 0, "shared_count": 0}
+
+    @app.post("/api/v1/journal/share/{entry_id}")
+    async def journal_share(entry_id: str) -> dict[str, Any]:
+        h = _g()
+        try:
+            from brain.journal import share_entry
+            entry = share_entry(entry_id, h)
+            return {"ok": entry is not None, "entry": entry}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
     # ── Phase 79: Onboarding endpoints ───────────────────────────────────────
 
     @app.post("/api/v1/onboarding/start")
