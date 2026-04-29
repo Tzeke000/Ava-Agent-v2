@@ -1655,6 +1655,61 @@ def create_app():
             "result": cmd_result,
         }
 
+    # ── Phase 93-94: Learning and Profiles endpoints ─────────────────────────
+
+    @app.get("/api/v1/learning/log")
+    async def learning_log() -> dict[str, Any]:
+        h = _g()
+        try:
+            from brain.learning_tracker import _log_path
+            import json as _json
+            path = _log_path(h)
+            if not path.is_file():
+                return {"ok": True, "entries": []}
+            entries = []
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    entries.append(_json.loads(line))
+                except Exception:
+                    pass
+            return {"ok": True, "entries": entries[-50:]}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200], "entries": []}
+
+    @app.get("/api/v1/learning/gaps")
+    async def learning_gaps() -> dict[str, Any]:
+        try:
+            from brain.learning_tracker import knowledge_gaps
+            return {"ok": True, "gaps": knowledge_gaps(_g())}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200], "gaps": []}
+
+    @app.get("/api/v1/learning/week")
+    async def learning_week() -> dict[str, Any]:
+        try:
+            from brain.learning_tracker import what_have_i_learned_this_week
+            return {"ok": True, "summary": what_have_i_learned_this_week(_g())}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200], "summary": ""}
+
+    @app.get("/api/v1/profiles/list")
+    async def profiles_list() -> dict[str, Any]:
+        h = _g()
+        import json as _json
+        base = Path(h.get("BASE_DIR") or ".")
+        profiles_dir = base / "profiles"
+        profiles = []
+        if profiles_dir.is_dir():
+            for pf in sorted(profiles_dir.glob("*.json")):
+                if "_relationship" in pf.stem:
+                    continue
+                try:
+                    data = _json.loads(pf.read_text(encoding="utf-8"))
+                    profiles.append(data)
+                except Exception:
+                    pass
+        return {"ok": True, "profiles": profiles}
+
     # ── Phase 86: Journal endpoints ──────────────────────────────────────────
 
     @app.get("/api/v1/journal/entries")
