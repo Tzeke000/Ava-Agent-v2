@@ -316,6 +316,12 @@ export default function App() {
     firing_paths: [],
   });
   const [selectedBrainNode, setSelectedBrainNode] = useState<BrainNode | null>(null);
+  // Middle-click → recenter orb. orbRecenterCounter increments on each
+  // middle-click; OrbCanvas watches the prop and snaps drift back to (0,0).
+  // orbRecenterPulse drives a brief scale-up CSS animation so the user gets
+  // immediate visual feedback even before the Three.js drift settles.
+  const [orbRecenterCounter, setOrbRecenterCounter] = useState(0);
+  const [orbRecenterPulse, setOrbRecenterPulse] = useState(false);
   // 3D brain graph (3d-force-graph). The container div is the mount point;
   // fgRef holds the constructed ForceGraph3D instance so we can update data
   // without rebuilding the WebGL scene.
@@ -1514,8 +1520,14 @@ export default function App() {
       // on the instance; the documented runtime API is `ForceGraph3D()(domEl)`.
       // Cast via a local any to suppress the TS check.
       const FG: any = ForceGraph3D as any;
-      const fg = FG()(brainGraph3DContainerRef.current as HTMLElement)
+      const container = brainGraph3DContainerRef.current as HTMLElement;
+      const w0 = container.clientWidth || 0;
+      const h0 = container.clientHeight || 0;
+      console.info("[brain-3d] init container dims", { width: w0, height: h0 });
+      const fg = FG()(container)
         .backgroundColor("rgba(0,0,0,0)")
+        .width(w0 || 800)
+        .height(h0 || 620)
         .nodeLabel((node: any) => {
           const t = String(node.type || "node");
           const lbl = String(node.label || node.id || "");
@@ -1537,6 +1549,44 @@ export default function App() {
           setSelectedBrainNode(node as BrainNode);
         });
       brainGraph3DInstanceRef.current = fg;
+      // After mount, wait a frame and re-apply size — the container may have
+      // been zero-sized when init ran (flex/grid layout settling), in which
+      // case the WebGL canvas is invisible until we resize it.
+      requestAnimationFrame(() => {
+        try {
+          const cw = container.clientWidth || 0;
+          const ch = container.clientHeight || 0;
+          if (cw > 0 && ch > 0) {
+            fg.width(cw).height(ch);
+            console.info("[brain-3d] post-init resize", { width: cw, height: ch });
+          } else {
+            console.warn("[brain-3d] container still zero-sized after init", { cw, ch });
+          }
+        } catch (re) {
+          console.error("[brain-3d] post-init resize failed", re);
+        }
+      });
+      // Keep the renderer aligned with container resizes — the previous
+      // window-resize listener only fired on tab change, missing layout
+      // shifts from the side panel or DevTools docking.
+      try {
+        const ro = new ResizeObserver((entries) => {
+          for (const entry of entries) {
+            const cr = entry.contentRect;
+            if (cr.width > 0 && cr.height > 0) {
+              try {
+                fg.width(cr.width).height(cr.height);
+              } catch { /* ignore */ }
+            }
+          }
+        });
+        ro.observe(container);
+        // Stash on the instance so we can disconnect on unmount.
+        (fg as any)._avaResizeObserver = ro;
+      } catch (roErr) {
+        console.warn("[brain-3d] ResizeObserver unavailable", roErr);
+      }
+      console.info("[brain-3d] init succeeded");
     } catch (e) {
       console.error("[brain-3d] init failed", e);
     }
@@ -1766,7 +1816,20 @@ export default function App() {
         </div>
       )}
 
-      <section className="presence-stage" style={{ position: "relative" }}>
+      <section
+        className="presence-stage"
+        style={{ position: "relative" }}
+        onMouseDown={(ev) => {
+          // Middle mouse button (button === 1) → snap orb back to center.
+          // No preventDefault — we don't want to suppress autoscroll cursor or
+          // any other browser default behavior elsewhere.
+          if (ev.button === 1) {
+            setOrbRecenterCounter((n) => n + 1);
+            setOrbRecenterPulse(true);
+            window.setTimeout(() => setOrbRecenterPulse(false), 320);
+          }
+        }}
+      >
         {dropHover && (
           <div style={{
             position: "absolute", inset: 0, zIndex: 100, background: "rgba(0,212,212,0.12)",
@@ -1821,7 +1884,7 @@ export default function App() {
           {speakingTextForUI}
         </div>
         <div className="presence-orb-wrap">
-          <div className="orb-canvas-shell">
+          <div className={`orb-canvas-shell${orbRecenterPulse ? " recenter-pulse" : ""}`}>
             <OrbCanvas
               emotion={primaryEmotion}
               emotionColor={effectiveOrbColor}
@@ -1829,6 +1892,7 @@ export default function App() {
               size={320}
               amplitude={ttsAmplitude}
               energy={moodEnergy}
+              recenterTrigger={orbRecenterCounter}
             />
             {/* Offline overlay text */}
             {connOffline && (

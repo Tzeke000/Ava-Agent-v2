@@ -14,6 +14,9 @@ interface OrbProps {
   amplitude?: number;
   /** Energy 0-1 from snap.mood.raw_mood.energy — drives breathing rate. */
   energy?: number;
+  /** Increments on each user-initiated recenter (middle-click). When this
+   *  value changes, the orb's scene drift eases back to (0,0) over ~300ms. */
+  recenterTrigger?: number;
 }
 
 const EMOTION_CONFIG: Record<string, {
@@ -96,7 +99,7 @@ const STATE_TINT = {
   offline: new THREE.Color("#404858"),
 };
 
-function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude = 0, energy = 0.5 }: OrbProps) {
+function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude = 0, energy = 0.5, recenterTrigger }: OrbProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const disposeRef = useRef<()=>void>(()=>{});
 
@@ -110,11 +113,17 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
   // listening/attentive cube morph: target 1.0 when listening, 0.0 otherwise.
   // The animate loop eases this toward the target so the morph is smooth.
   const morphRef = useRef<number>(0);
+  // Recenter signal: animate loop reads `recenterTriggerRef`, compares with
+  // its own last-seen value, and on change captures a clock-time start point
+  // to drive the eased return to (0,0). This avoids piping the trigger
+  // through React effects (which would tear down/rebuild the scene).
+  const recenterTriggerRef = useRef<number | undefined>(recenterTrigger);
   stateRef.current = state;
   amplitudeRef.current = amplitude;
   emotionRef.current = emotion;
   shapeOverrideRef.current = shapeOverride;
   energyRef.current = energy;
+  recenterTriggerRef.current = recenterTrigger;
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -219,6 +228,13 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
 
     const clock = new THREE.Clock();
     let fid = 0;
+    // Recenter animation state — captured here so the animate loop can read
+    // it without going through React. `lastSeenRecenterTrigger` is the
+    // trigger value we last reacted to; `recenterStartT` is the clock time
+    // when we kicked off the easing.
+    let lastSeenRecenterTrigger: number | undefined = recenterTriggerRef.current;
+    let recenterStartT = -Infinity;
+    const RECENTER_DURATION = 0.32;  // seconds — matches the CSS pulse
 
     // Reusable color scratch — avoid allocating per frame.
     const _coreScratch = new THREE.Color();
@@ -373,12 +389,32 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
       const breathAmp = 0.03 * (1 - cubeFactor * 0.4);
       const breath = 1 + Math.sin((t / breathPeriod) * Math.PI * 2) * breathAmp;
 
+      // ── Recenter signal (middle-click) ───────────────────────────────────
+      // Detect a fresh middle-click from the parent component. On change,
+      // capture clock-time so we can ease drift back to zero over ~320ms.
+      const liveTrigger = recenterTriggerRef.current;
+      if (liveTrigger !== lastSeenRecenterTrigger) {
+        lastSeenRecenterTrigger = liveTrigger;
+        recenterStartT = t;
+      }
+      // recenterFactor: 1.0 at start of pulse, 0.0 after RECENTER_DURATION.
+      // While > 0 we scale drift down toward zero so the orb snaps to center.
+      let recenterFactor = 0;
+      const recenterAge = t - recenterStartT;
+      if (recenterAge >= 0 && recenterAge < RECENTER_DURATION) {
+        const k = recenterAge / RECENTER_DURATION;             // 0..1
+        const eased = 1 - Math.pow(1 - k, 3);                   // easeOutCubic
+        recenterFactor = 1 - eased;                              // 1..0
+      }
+
       // ── Drift (always-on) ─────────────────────────────────────────────────
       // Two superimposed sines on each axis so the motion never repeats cleanly.
       // Amplitude is in scene units (camera at z=2.8); these translate to ~6-12
       // pixels at the canvas size, matching the user's spec of ~8/6 px.
       // Drift amplitude is reduced when the cube is formed so it feels steady.
-      const driftScale = 0.012 * (1 - cubeFactor * 0.5);
+      // During a recenter pulse, drift is scaled toward 0 so the orb returns
+      // visibly to the center of its row.
+      const driftScale = 0.012 * (1 - cubeFactor * 0.5) * (1 - recenterFactor);
       const dx = (Math.sin(t * 0.30) * 8 + Math.sin(t * 0.70) * 4) * driftScale;
       const dy = (Math.cos(t * 0.40) * 6 + Math.cos(t * 0.11) * 3) * driftScale;
       rootGroup.position.set(dx, dy, 0);
@@ -509,7 +545,8 @@ const OrbCanvas = memo(OrbCanvasInner, (prev, next) => (
   (prev.size ?? 320) === (next.size ?? 320) &&
   prev.shapeOverride === next.shapeOverride &&
   Math.abs((prev.amplitude ?? 0) - (next.amplitude ?? 0)) < 0.03 &&
-  Math.abs((prev.energy ?? 0.5) - (next.energy ?? 0.5)) < 0.05
+  Math.abs((prev.energy ?? 0.5) - (next.energy ?? 0.5)) < 0.05 &&
+  prev.recenterTrigger === next.recenterTrigger
 ));
 
 export default OrbCanvas;
