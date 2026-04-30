@@ -6597,10 +6597,18 @@ def _execute_tool_tags_from_reply(reply: str) -> tuple[str, list[str]]:
 
 
 def _pick_fast_model_fallback() -> str | None:
-    """Prefer Ava's identity-baked model for fast conversational replies."""
+    """Prefer Ava's identity-baked model for fast conversational replies.
+
+    ava-personal:latest comes first because the fast path uses num_predict=80
+    and the model needs to produce a final response in those tokens. Reasoning
+    models like ava-gemma4 emit thinking-prefix output ("Thinking... Process:
+    1. ...") that consumes the budget before any final reply lands; ChatOllama
+    returns empty .content in that case, falling through to "I'm here." Use
+    ava-gemma4 only for the deep path where there's room for reasoning.
+    """
     preferred = [
-        "ava-gemma4", "ava-gemma4:latest",
         "ava-personal:latest", "ava-personal",
+        "ava-gemma4", "ava-gemma4:latest",
         "mistral:7b", "mistral", "llama3.1:8b", "llama3.1", "llama3:8b", "llama3",
     ]
     try:
