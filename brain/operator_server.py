@@ -483,6 +483,21 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
             "tts_speaking": bool(getattr(tts_obj, "speaking", False)) if tts_obj is not None else bool(host.get("_tts_speaking", False)),
             "tts_amplitude": float(getattr(tts_obj, "amplitude", 0.0)) if tts_obj is not None else float(host.get("_tts_amplitude", 0.0) or 0.0),
         }
+    # Live speech progress — what Ava is currently speaking, word by word.
+    speech_block: dict[str, Any] = {
+        "speaking": bool(tts_block.get("tts_speaking", False)),
+        "current_word": "",
+        "spoken_so_far": "",
+        "full_reply": "",
+    }
+    try:
+        from brain.tts_worker import get_speech_state
+        _full, _spoken, _current = get_speech_state()
+        speech_block["full_reply"] = _full
+        speech_block["spoken_so_far"] = _spoken
+        speech_block["current_word"] = _current
+    except Exception:
+        pass
     # Phase 49: pointing state for widget orb
     widget_block = {
         "pointing": bool(host.get("_widget_pointing", False)),
@@ -531,6 +546,31 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
             }
     except Exception:
         pass
+
+    # Compose inner_state_line — single short string summarizing what Ava is
+    # doing right now. Updated on actual state changes by voice_loop /
+    # reply_engine / heartbeat; this composer falls back to derived state.
+    inner_state_line = ""
+    try:
+        explicit = str(host.get("_inner_state_line") or "").strip()
+        vl_state = str(voice_loop_block.get("state") or "").lower()
+        if explicit:
+            inner_state_line = explicit[:60]
+        elif speech_block.get("speaking"):
+            # Speech text shows above the orb; keep this empty during speaking.
+            inner_state_line = ""
+        elif vl_state in ("listening", "attentive"):
+            inner_state_line = "listening"
+        elif vl_state == "thinking":
+            inner_state_line = "thinking"
+        else:
+            hb_summary = str(host.get("_heartbeat_last_summary") or "").strip()
+            if hb_summary:
+                inner_state_line = hb_summary[:60]
+            else:
+                inner_state_line = ""
+    except Exception:
+        inner_state_line = ""
 
     # Phase 70: Emil bridge status
     emil_block: dict[str, Any] = {"online": False, "last_contact": 0.0, "shared_topics": []}
@@ -785,6 +825,8 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "concerns": concerns_block,
         "tools": tools_block,
         "tts": tts_block,
+        "speech": speech_block,
+        "inner_state_line": inner_state_line,
         "widget": widget_block,
         "voice_loop": voice_loop_block,
         "thinking": bool(host.get("_ava_thinking", False)),

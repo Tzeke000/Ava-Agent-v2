@@ -1416,9 +1416,28 @@ export default function App() {
           : sttListening
             ? "listening"
             : orbVisual.pulse;
-  const presenceStatusMessage = backendShutdownDetected
+  // Live speech text (above the orb) and inner-state line (below the orb).
+  // Speech text streams word-by-word from /api/v1/snapshot speech.* fields
+  // when Kokoro is playing; falls back to the last assistant message if TTS
+  // is disabled/muted but Ava has produced a reply.
+  const speechBlock = (snap as Record<string, unknown> | null)?.speech as
+    Record<string, unknown> | undefined;
+  const speechSpeaking = Boolean(speechBlock?.speaking);
+  const speechSpokenSoFar = String(speechBlock?.spoken_so_far ?? "");
+  const speechFullReply = String(speechBlock?.full_reply ?? "");
+  const ttsEnabled = Boolean(tts?.enabled);
+  const speakingTextForUI = backendShutdownDetected
     ? "Ava has shut down."
-    : String(lastAssistantMessage || "I'm here.");
+    : speechSpeaking
+      ? speechSpokenSoFar
+      : speechFullReply
+        ? speechFullReply
+        : !ttsEnabled && lastAssistantMessage
+          ? String(lastAssistantMessage)
+          : "";
+  const innerStateLine = backendShutdownDetected
+    ? ""
+    : String((snap as Record<string, unknown> | null)?.inner_state_line ?? "");
   const uptimeMs = Math.max(0, Date.now() - appStartedAtRef.current);
   const uptimeLabel = `${Math.floor(uptimeMs / 3600000)}h ${Math.floor((uptimeMs % 3600000) / 60000)}m`;
 
@@ -1795,6 +1814,12 @@ export default function App() {
             HEARTBEAT: {String(hb?.heartbeat_mode ?? "idle")}
           </div>
         </div>
+        <div
+          key={speakingTextForUI || "empty"}
+          className={`presence-speaking-text ${speakingTextForUI ? "live" : "empty"}`}
+        >
+          {speakingTextForUI}
+        </div>
         <div className="presence-orb-wrap">
           <div className="orb-canvas-shell">
             <OrbCanvas
@@ -1841,7 +1866,12 @@ export default function App() {
             Ava is thinking…
           </div>
         )}
-        <div className="presence-last-message">{presenceStatusMessage}</div>
+        <div
+          key={innerStateLine || "empty"}
+          className={`presence-inner-state-line ${innerStateLine ? "live" : "empty"}`}
+        >
+          {innerStateLine}
+        </div>
         <div className="presence-input-row">
           <input
             type="text"

@@ -146,6 +146,33 @@ def _emotion_to_kokoro(emotion: str, intensity: float) -> tuple[str, float]:
 _LIVE_AMPLITUDE: float = 0.0
 _AMP_LOCK = threading.Lock()
 
+# ── Live speech progress (module-level, read by operator_server) ─────────────
+# Approximated word-level streaming: Kokoro generates the whole phrase at once,
+# so we estimate per-word cadence by walking the audio buffer in lockstep with
+# playback. The orb-text UI reads these to render Ava's speech word by word.
+_SPEECH_LOCK = threading.Lock()
+_SPEECH_FULL_REPLY: str = ""
+_SPEECH_SPOKEN_SO_FAR: str = ""
+_SPEECH_CURRENT_WORD: str = ""
+
+
+def _speech_set(full: str = "", spoken: str = "", current: str = "") -> None:
+    global _SPEECH_FULL_REPLY, _SPEECH_SPOKEN_SO_FAR, _SPEECH_CURRENT_WORD
+    with _SPEECH_LOCK:
+        _SPEECH_FULL_REPLY = full
+        _SPEECH_SPOKEN_SO_FAR = spoken
+        _SPEECH_CURRENT_WORD = current
+
+
+def _speech_clear() -> None:
+    _speech_set("", "", "")
+
+
+def get_speech_state() -> tuple[str, str, str]:
+    """Return (full_reply, spoken_so_far, current_word). Empty strings when idle."""
+    with _SPEECH_LOCK:
+        return (_SPEECH_FULL_REPLY, _SPEECH_SPOKEN_SO_FAR, _SPEECH_CURRENT_WORD)
+
 
 def _trace(label: str) -> None:  # TRACE-PHASE1
     """Timestamped diagnostic trace for the TTS path. Removed/gated in Phase 3."""  # TRACE-PHASE1
@@ -390,12 +417,17 @@ class TTSWorker:
         _trace(f"tts.synth_done ms={int((time.time()-_synth_t0)*1000)} samples={int(full.shape[0])}")  # TRACE-PHASE1
         _trace(f"tts.playback_start samples={int(full.shape[0])}")  # TRACE-PHASE1
         _playback_t0 = time.time()  # TRACE-PHASE1
-        self._play_with_amplitude(full, sample_rate)
+        # Seed speech state for the UI so spoken_so_far stays empty until
+        # playback begins advancing words.
+        _speech_set(full=text, spoken="", current="")
+        self._play_with_amplitude(full, sample_rate, words=text.split())
         _trace(f"tts.playback_done ms={int((time.time()-_playback_t0)*1000)}")  # TRACE-PHASE1
+        # Final state: full reply marked as spoken, no current word.
+        _speech_set(full=text, spoken=text, current="")
         preview = text[:60].replace("\n", " ")
         print(f"[tts_worker] kokoro spoke voice={voice} speed={speed:.2f} chars={len(text)}: {preview!r}")
 
-    def _play_with_amplitude(self, audio_np: Any, sample_rate: int) -> None:
+    def _play_with_amplitude(self, audio_np: Any, sample_rate: int, words: Optional[list[str]] = None) -> None:
         """Play audio via a protected sd.OutputStream that cannot be
         interrupted by window focus changes or other UI events.
 
@@ -405,6 +437,10 @@ class TTSWorker:
           - the worker is shutting down (self._stop_evt set)
         Window focus changes, mouse clicks, other apps grabbing the mic — all
         are ignored. Audio plays through to completion.
+
+        If `words` is provided, advances current_word / spoken_so_far in
+        lockstep with playback (Option 1 estimated cadence: words evenly
+        distributed across audio duration).
         """
         np = self._np
         sd = self._sd
@@ -415,6 +451,9 @@ class TTSWorker:
 
         chunk_size = 2048  # ~85ms @ 24kHz — small enough for snappy amplitude
         n_samples = int(audio_np.shape[0])
+        full_text = " ".join(words) if words else ""
+        n_words = len(words) if words else 0
+        last_word_idx = -1
 
         try:
             with sd.OutputStream(
@@ -438,6 +477,25 @@ class TTSWorker:
                     amp = min(1.0, rms * 8.0)  # gain so the orb pulses meaningfully
                     _set_live_amplitude(amp)
                     self._set_speaking_amplitude(amp)
+
+                    # Advance the word pointer in lockstep with playback.
+                    if n_words > 0:
+                        progress = (idx + chunk_size) / max(1, n_samples)
+                        progress = max(0.0, min(1.0, progress))
+                        # Floor so we only "say" a word once we've passed its
+                        # start boundary; round up at the end so the final word
+                        # latches.
+                        word_idx = int(progress * n_words)
+                        if word_idx > last_word_idx:
+                            last_word_idx = word_idx
+                            spoken_words = words[:max(0, word_idx)]
+                            current = words[word_idx - 1] if word_idx > 0 else ""
+                            _speech_set(
+                                full=full_text,
+                                spoken=" ".join(spoken_words),
+                                current=current,
+                            )
+
                     stream.write(chunk.reshape(-1, 1))
                     idx += chunk_size
         except Exception as e:
@@ -462,6 +520,9 @@ class TTSWorker:
         # No live amplitude with SAPI5 — use a coarse estimate based on text length.
         est = min(0.85, 0.30 + len(text) / 500.0)
         _set_live_amplitude(est)
+        # SAPI5 doesn't expose word callbacks here; show the full reply as
+        # spoken_so_far so the UI still gets text on this fallback path.
+        _speech_set(full=text, spoken=text, current="")
         try:
             self._pyttsx3.say(text)
             self._pyttsx3.runAndWait()

@@ -216,6 +216,10 @@ def run_ava(
         # + LLM. Target: sub-5-second response for "hey ava" style inputs.
         if _is_simple_question(_inp):
             _trace("re.run_ava.fast_path_entered")  # TRACE-PHASE1
+            try:
+                _g["_inner_state_line"] = "thinking — fast path"
+            except Exception:
+                pass
             print(f"[run_ava] FAST PATH: simple question (t={time.time()-_t_start:.2f}s)")
             try:
                 from langchain_core.messages import HumanMessage
@@ -464,6 +468,10 @@ def run_ava(
         use_fast_path = _depth == "fast"
         _g["reply_path_selected"] = "fast" if use_fast_path else "deep"
         _g["reply_path_reason"] = f"classify_reply_depth_{_depth}"
+        try:
+            _g["_inner_state_line"] = "thinking — fast path" if use_fast_path else "thinking — full path"
+        except Exception:
+            pass
 
         # ── Step: prompt building (with 30s timeout) ──────────────────────────
         print(f"[perf] pre-build-prompt {_elapsed()} path={'fast' if use_fast_path else 'deep'}")

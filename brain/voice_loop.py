@@ -168,6 +168,21 @@ class VoiceLoop:
         prev = self._state
         self._state = state
         self._g["_voice_loop_state"] = state
+        # Drive the orb's inner-state line. reply_engine overrides this with
+        # "thinking — fast path" / "thinking — full path" while it runs.
+        if state in ("listening", "attentive"):
+            self._g["_inner_state_line"] = "listening"
+        elif state == "thinking":
+            # Leave any reply_engine-set value alone if it's already a
+            # thinking-* variant; otherwise default to plain "thinking".
+            cur = str(self._g.get("_inner_state_line") or "")
+            if not cur.startswith("thinking"):
+                self._g["_inner_state_line"] = "thinking"
+        elif state == "speaking":
+            # Empty so the speaking-text region above the orb takes over.
+            self._g["_inner_state_line"] = ""
+        elif state == "passive":
+            self._g["_inner_state_line"] = ""
         if prev != state:
             print(f"[voice_loop] state: {prev} → {state}")
 

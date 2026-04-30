@@ -1676,6 +1676,59 @@ body,
   padding: 16px;
   text-align: center;
 }
+
+/* Speaking text — above the orb, streams word-by-word as Kokoro plays. */
+.presence-speaking-text {
+  width: min(760px, 92vw);
+  min-height: 1.6em;
+  margin: 0.15rem auto 0.35rem;
+  text-align: center;
+  font-size: 1.05rem;
+  line-height: 1.45;
+  color: #f3f7ff;
+  letter-spacing: 0.005em;
+  transition: opacity 1.2s ease;
+  pointer-events: none;
+  user-select: none;
+}
+.presence-speaking-text.empty {
+  opacity: 0;
+}
+.presence-speaking-text.live {
+  opacity: 0.96;
+  animation: speakingFadeIn 0.6s ease both;
+}
+@keyframes speakingFadeIn {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 0.96; transform: translateY(0); }
+}
+
+/* Inner-state line — below the orb. Crossfades on every change. */
+.presence-inner-state-line {
+  width: min(760px, 92vw);
+  min-height: 1.4em;
+  margin: 0.2rem auto 0;
+  text-align: center;
+  font-family: monospace;
+  font-size: 0.78rem;
+  letter-spacing: 0.12em;
+  color: rgba(180, 198, 224, 0.62);
+  text-transform: lowercase;
+  pointer-events: none;
+  user-select: none;
+  transition: opacity 0.7s ease;
+}
+.presence-inner-state-line.empty {
+  opacity: 0;
+}
+.presence-inner-state-line.live {
+  opacity: 0.85;
+  animation: innerStateFadeIn 0.85s ease both;
+}
+@keyframes innerStateFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 0.85; }
+}
 .presence-input-row {
   margin-top: auto;
   min-height: 60px;
