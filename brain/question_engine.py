@@ -199,6 +199,11 @@ class QuestionEngine:
             return None
         if self._is_zeke_busy(g):
             return None
+        # Don't fire a new question while Zeke and Ava are mid-conversation.
+        # This is independent of cooldown — even if 10 minutes have passed,
+        # we should not interrupt an ongoing exchange.
+        if bool(g.get("_conversation_active")) or bool(g.get("_turn_in_progress")):
+            return None
 
         candidates: list[dict[str, Any]] = []
         for picker in (

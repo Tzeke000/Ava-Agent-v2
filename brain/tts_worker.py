@@ -298,6 +298,16 @@ class TTSWorker:
                 try:
                     self._currently_speaking.set()
                     self._set_speaking_state(True, 0.5)
+                    # Any playback Ava starts is conversational (the only
+                    # callers are run_ava replies, voice_commands, the
+                    # question engine, proactive triggers, face greetings —
+                    # all directed at the user). Mark conversation active
+                    # so background subsystems defer.
+                    if self._g is not None:
+                        try:
+                            self._g["_conversation_active"] = True
+                        except Exception:
+                            pass
                     if self._engine_type == "kokoro":
                         self._speak_kokoro(text, emotion, intensity)
                     else:
@@ -307,6 +317,14 @@ class TTSWorker:
                 finally:
                     _set_live_amplitude(0.0)
                     self._set_speaking_state(False, 0.0)
+                    # Stamp the global last-speak-end so voice_loop drops into
+                    # attentive after question_engine / proactive / greeting
+                    # speech, not just after run_ava replies.
+                    if self._g is not None:
+                        try:
+                            self._g["_last_speak_end_ts"] = time.time()
+                        except Exception:
+                            pass
                     self._currently_speaking.clear()
                     if done:
                         done.set()

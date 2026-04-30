@@ -206,11 +206,15 @@ class DualBrain:
         return (time.time() - last_msg) < 45.0 or self.foreground_busy
 
     def should_pause_background(self) -> bool:
-        # Also honour the voice-loop turn-in-progress flag set the moment Zeke
-        # speaks — this stops Stream B from starting NEW work while Stream A
-        # is mid-turn. (In-flight tasks still finish: lock contention is then
-        # only as bad as the remaining duration of the running task.)
+        # Honour the voice-loop turn-in-progress flag (set the moment Zeke
+        # speaks) and the broader conversation_active flag (set the moment
+        # Ava starts speaking, stays true through the entire attentive window
+        # post-speech). Either one means Stream B should NOT start new work.
+        # In-flight tasks still finish: lock contention is then only as bad
+        # as the remaining duration of the running task.
         if bool(self._g.get("_turn_in_progress")):
+            return True
+        if bool(self._g.get("_conversation_active")):
             return True
         return self.is_zeke_active() or bool(self._g.get("_dual_brain_pause_until_ts", 0) > time.time())
 
@@ -313,6 +317,11 @@ class DualBrain:
                 if not self.is_zeke_active():
                     continue
                 if self.foreground_busy:
+                    continue
+                # Don't fire a live-thought Ollama call while a conversation
+                # is in flight — it'd compete for the same lock the user's
+                # next turn needs.
+                if bool(self._g.get("_conversation_active")) or bool(self._g.get("_turn_in_progress")):
                     continue
 
                 gap = time.time() - self.last_foreground_ts

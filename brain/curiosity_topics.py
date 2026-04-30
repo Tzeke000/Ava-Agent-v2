@@ -230,7 +230,15 @@ def pursue_curiosity(topic_row: dict[str, Any], g: dict[str, Any]) -> str:
     3. Write journal entry
     4. Update topic (resolved or deepened)
     Returns summary of what was learned.
+
+    Deferred during active conversation: the LLM call here can take 30-120s
+    on qwen2.5:14b and would block the Ollama lock at exactly the moment Zeke
+    is about to answer Ava's question or follow up on her reply.
     """
+    if bool(g.get("_conversation_active")) or bool(g.get("_turn_in_progress")):
+        topic_for_log = str(topic_row.get("topic") or "")[:50]
+        print(f"[curiosity_engine] deferred topic={topic_for_log!r} reason=conversation_active")
+        return ""
     topic = str(topic_row.get("topic") or "")
     base_dir = Path(g.get("BASE_DIR") or Path.cwd())
 
