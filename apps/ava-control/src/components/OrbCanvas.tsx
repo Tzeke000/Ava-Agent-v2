@@ -17,6 +17,10 @@ interface OrbProps {
   /** Increments on each user-initiated recenter (middle-click). When this
    *  value changes, the orb's scene drift eases back to (0,0) over ~300ms. */
   recenterTrigger?: number;
+  /** When false, the listening/attentive cube morph is disabled — morphTarget
+   *  is pinned at 0 so the orb never reshapes. Used by the PRESENCE_V2 flag
+   *  to keep the orb on its baseline behavior while drift is being debugged. */
+  cubeMorphEnabled?: boolean;
 }
 
 const EMOTION_CONFIG: Record<string, {
@@ -99,7 +103,7 @@ const STATE_TINT = {
   offline: new THREE.Color("#404858"),
 };
 
-function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude = 0, energy = 0.5, recenterTrigger }: OrbProps) {
+function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude = 0, energy = 0.5, recenterTrigger, cubeMorphEnabled = true }: OrbProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const disposeRef = useRef<()=>void>(()=>{});
 
@@ -118,12 +122,14 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
   // to drive the eased return to (0,0). This avoids piping the trigger
   // through React effects (which would tear down/rebuild the scene).
   const recenterTriggerRef = useRef<number | undefined>(recenterTrigger);
+  const cubeMorphEnabledRef = useRef<boolean>(cubeMorphEnabled);
   stateRef.current = state;
   amplitudeRef.current = amplitude;
   emotionRef.current = emotion;
   shapeOverrideRef.current = shapeOverride;
   energyRef.current = energy;
   recenterTriggerRef.current = recenterTrigger;
+  cubeMorphEnabledRef.current = cubeMorphEnabled;
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -372,7 +378,10 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
       // ── Cube-morph easing (listening/attentive only) ─────────────────────
       // Target = 1 while listening/attentive, 0 otherwise. Per-frame lerp at
       // ~0.05 reaches ~95% in ~700ms at 60fps which matches the spec.
-      const morphTarget = (liveState === "listening" || liveState === "attentive") ? 1.0 : 0.0;
+      // When the cube-morph is disabled (PRESENCE_V2 off), pin target to 0
+      // so morphRef eases to 0 and stays there — orb keeps its baseline
+      // shape regardless of state.
+      const morphTarget = cubeMorphEnabledRef.current && (liveState === "listening" || liveState === "attentive") ? 1.0 : 0.0;
       morphRef.current += (morphTarget - morphRef.current) * 0.05;
       if (morphRef.current < 0.001) morphRef.current = 0;
       else if (morphRef.current > 0.999) morphRef.current = 1;
@@ -546,7 +555,8 @@ const OrbCanvas = memo(OrbCanvasInner, (prev, next) => (
   prev.shapeOverride === next.shapeOverride &&
   Math.abs((prev.amplitude ?? 0) - (next.amplitude ?? 0)) < 0.03 &&
   Math.abs((prev.energy ?? 0.5) - (next.energy ?? 0.5)) < 0.05 &&
-  prev.recenterTrigger === next.recenterTrigger
+  prev.recenterTrigger === next.recenterTrigger &&
+  (prev.cubeMorphEnabled ?? true) === (next.cubeMorphEnabled ?? true)
 ));
 
 export default OrbCanvas;
