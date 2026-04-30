@@ -376,10 +376,12 @@ class AppDiscoverer:
 
     def _scan_program_files(self) -> None:
         paths = _expand_search_paths()
-        # Top-level .exe scan in Program Files (x86) / Program Files. We
-        # restrict to depth 3 so we don't end up enumerating thousands of
-        # bundled support binaries.
-        for root in paths["program_files"] + paths["local_app_data"]:
+        # Top-level .exe scan in Program Files / Program Files (x86) only.
+        # LOCALAPPDATA is huge and dominated by per-app caches/installers/
+        # helpers; the .lnk shortcut scan already picks up the user-facing
+        # entry points there. Skipping it cuts the initial scan from ~45s
+        # to ~5-10s.
+        for root in paths["program_files"]:
             if not root.is_dir():
                 continue
             _t0 = time.time()  # TRACE-PHASE1
@@ -398,16 +400,25 @@ class AppDiscoverer:
             _trace(f"app_disc.scan_done root={root} ms={int((time.time()-_t0)*1000)} found={len(self._registry)-_before}")  # TRACE-PHASE1
 
     def _iter_exes(self, root: Path, max_depth: int) -> Iterable[Path]:
-        root_parts = len(root.parts)
-        for p in root.rglob("*.exe"):
+        # Depth-limited BFS instead of rglob+post-filter. rglob walks the
+        # whole tree before yielding anything; this version stops descending
+        # past max_depth so the scan is genuinely bounded.
+        stack: list[tuple[Path, int]] = [(root, 0)]
+        while stack:
+            d, depth = stack.pop()
             try:
-                if not p.is_file():
-                    continue
-                if len(p.parts) - root_parts > max_depth:
-                    continue
-                yield p
-            except OSError:
+                entries = list(d.iterdir())
+            except (OSError, PermissionError):
                 continue
+            for entry in entries:
+                try:
+                    if entry.is_file():
+                        if entry.suffix.lower() == ".exe":
+                            yield entry
+                    elif entry.is_dir() and depth < max_depth:
+                        stack.append((entry, depth + 1))
+                except OSError:
+                    continue
 
     def _scan_steam(self) -> None:
         paths = _expand_search_paths()
@@ -564,16 +575,37 @@ def bootstrap_app_discoverer(g: dict[str, Any]) -> Optional[AppDiscoverer]:
     if disc is None:
         return None
 
+    def _wait_for_idle() -> None:
+        """Block while a voice turn is in progress so we don't compete for
+        disk + CPU during the user's response."""
+        while bool(g.get("_turn_in_progress")):
+            time.sleep(0.5)
+
+    def _set_low_priority() -> None:
+        """Ask Windows to schedule this thread below normal so it can't starve
+        the LLM / TTS threads even when it does run."""
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            THREAD_PRIORITY_BELOW_NORMAL = -1
+            kernel32.SetThreadPriority(kernel32.GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL)
+        except Exception:
+            pass
+
     def _bg_scan():
-        # Initial scan: re-do even if registry on disk; takes a few seconds at most.
+        _set_low_priority()
+        # Initial scan — wait for any in-flight turn before starting (rare on
+        # first start, but defensive).
+        _wait_for_idle()
         try:
             disc.discover_all(g)
         except Exception as e:
             print(f"[app_discovery] initial scan error: {e}")
-        # Periodic refresh
+        # Periodic refresh — gated on idle.
         while True:
             try:
                 time.sleep(_REFRESH_INTERVAL_SEC)
+                _wait_for_idle()
                 disc.discover_new_since_last(g)
             except Exception as e:
                 print(f"[app_discovery] periodic scan error: {e}")

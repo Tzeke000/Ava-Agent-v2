@@ -532,12 +532,22 @@ def _watch_directory(path: str, g: dict[str, Any], debounce_sec: float = 10.0) -
 
         # Debounce: rescan once per debounce_sec at most.
         time.sleep(debounce_sec)
+        # Wait for any active voice turn to finish before kicking the rescan
+        # so disk + CPU stay free for the LLM during conversation.
+        while bool(g.get("_turn_in_progress")):
+            time.sleep(0.5)
         try:
             disc = g.get("_app_discoverer")
             if disc is not None:
+                def _gated_rescan():
+                    while bool(g.get("_turn_in_progress")):
+                        time.sleep(0.5)
+                    try:
+                        disc.discover_new_since_last(g)
+                    except Exception as _re:
+                        print(f"[app_watcher] gated rescan error: {_re}")
                 threading.Thread(
-                    target=disc.discover_new_since_last,
-                    args=(g,),
+                    target=_gated_rescan,
                     daemon=True,
                     name="ava-disc-incremental",
                 ).start()
