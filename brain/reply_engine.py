@@ -21,7 +21,8 @@ def _trace(label: str) -> None:  # TRACE-PHASE1
     ts = time.strftime("%H:%M:%S") + f".{int(time.time()*1000)%1000:03d}"  # TRACE-PHASE1
     print(f"[trace] {ts} {label}")  # TRACE-PHASE1
 
-# Simple greetings / mood checks — bypass full pipeline for sub-5s response
+# Simple greetings / mood checks / quick factual questions — bypass full
+# pipeline for sub-5s response.
 _SIMPLE_PATTERNS = (
     "how are you", "how do you feel", "what are you doing",
     "hey ava", "hello ava", "hi ava", "hello", "hi ", "hey ",
@@ -29,6 +30,15 @@ _SIMPLE_PATTERNS = (
     "good morning", "good afternoon", "good evening", "good night",
     "how is your day", "how's it going", "hows it going",
     "what are you thinking", "you there", "you awake", "you up",
+    # Time/date — these have voice_command_router builtins, but if the user
+    # phrases it indirectly ("can you tell me what time"), the router may
+    # miss; route to the fast-path so we never hit the deep LLM path.
+    "what time", "what's the time", "whats the time", "what is the time",
+    "what day", "what's the date", "what is the date", "what's today",
+    # Quick "tell me" prompts that don't need memory or tools.
+    "tell me a joke", "one sentence joke", "tell a joke",
+    # Single-word probes
+    "thanks", "thank you", "ok ava", "okay ava", "got it",
 )
 
 
@@ -250,7 +260,10 @@ def run_ava(
                 _fast_pick = _av._pick_fast_model_fallback()
                 _fast_model = _fast_pick or str(_av.LLM_MODEL or "ava-personal:latest")
                 print(f"[perf] fast pre-llm-init {_elapsed()}")
-                _llm_fast = ChatOllama(model=_fast_model, temperature=0.7)
+                # Cap fast-path replies at ~80 tokens — concise replies are also
+                # dramatically faster (less generation time, no waiting for the
+                # model to wind down a long reply).
+                _llm_fast = ChatOllama(model=_fast_model, temperature=0.7, num_predict=80)
                 print(f"[perf] fast post-llm-init {_elapsed()}")
                 from brain.ollama_lock import with_ollama
                 print(f"[perf] fast pre-invoke {_elapsed()} model={_fast_model}")

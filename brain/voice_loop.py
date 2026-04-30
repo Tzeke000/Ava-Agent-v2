@@ -17,8 +17,11 @@ for prompt_builder.
 """
 from __future__ import annotations
 
+import json
+import re
 import threading
 import time
+from pathlib import Path
 from typing import Any
 
 
@@ -28,13 +31,89 @@ def _trace(label: str) -> None:  # TRACE-PHASE1
     print(f"[trace] {ts} {label}")  # TRACE-PHASE1
 
 
-_ATTENTIVE_TIMEOUT_SEC = 60.0       # decay back to passive after this long
-_ATTENTIVE_MIN_SPEECH_SEC = 1.0     # speech longer than this counts as input
-_DEFAULT_SILENCE_SEC = 2.5          # initial wait
-_CONTINUE_SILENCE_SEC = 4.0         # if first transcript was short, wait longer
-_LONG_SILENCE_SEC = 1.5             # if first transcript was long, end fast
-_SHORT_WORDS = 3                    # under this → keep listening
-_LONG_WORDS = 10                    # over this → end fast
+# ── Tunables (overridable via config/voice_tuning.json) ──────────────────────
+
+_DEFAULT_TUNING: dict[str, Any] = {
+    # Attentive window — how long after Ava speaks she keeps listening
+    # without requiring a wake word.
+    "attentive_base_seconds": 180,
+    # Early-exit silence threshold during attentive (seconds without user speech).
+    "attentive_silence_exit_seconds": 30,
+    # If true, also require user gaze on screen to stay in attentive past
+    # the silence threshold.
+    "attentive_require_gaze_to_stay": True,
+    # Minimum speech duration to treat an attentive utterance as direct input.
+    "attentive_min_speech_seconds": 1.0,
+    # Per-listen silence cutoffs.
+    "default_silence_seconds": 2.5,
+    "continue_silence_seconds": 4.0,
+    "long_silence_seconds": 1.5,
+    "short_words": 3,
+    "long_words": 10,
+}
+
+
+def _load_tuning() -> dict[str, Any]:
+    """Read config/voice_tuning.json if present; merge over defaults."""
+    cfg_path = Path("config") / "voice_tuning.json"
+    out = dict(_DEFAULT_TUNING)
+    if cfg_path.is_file():
+        try:
+            data = json.loads(cfg_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                out.update({k: v for k, v in data.items() if k in _DEFAULT_TUNING})
+        except Exception as e:
+            print(f"[voice_loop] tuning load error: {e}")
+    return out
+
+
+_TUNING = _load_tuning()
+_ATTENTIVE_BASE_SECONDS = float(_TUNING["attentive_base_seconds"])
+_ATTENTIVE_SILENCE_EXIT_SECONDS = float(_TUNING["attentive_silence_exit_seconds"])
+_ATTENTIVE_REQUIRE_GAZE = bool(_TUNING["attentive_require_gaze_to_stay"])
+_ATTENTIVE_MIN_SPEECH_SEC = float(_TUNING["attentive_min_speech_seconds"])
+_DEFAULT_SILENCE_SEC = float(_TUNING["default_silence_seconds"])
+_CONTINUE_SILENCE_SEC = float(_TUNING["continue_silence_seconds"])
+_LONG_SILENCE_SEC = float(_TUNING["long_silence_seconds"])
+_SHORT_WORDS = int(_TUNING["short_words"])
+_LONG_WORDS = int(_TUNING["long_words"])
+
+# Transcript-wake patterns. Match BEFORE Eva→Ava normalization so we catch
+# "Eva" as well; voice_loop strips the wake phrase before passing to run_ava.
+_TRANSCRIPT_WAKE_PATTERNS: list[tuple[str, "re.Pattern[str]"]] = [
+    ("hey_ava",   re.compile(r"\bhey\s+(?:ava|eva)\b", re.IGNORECASE)),
+    ("hi_ava",    re.compile(r"\bhi\s+(?:ava|eva)\b", re.IGNORECASE)),
+    ("hello_ava", re.compile(r"\bhello\s+(?:ava|eva)\b", re.IGNORECASE)),
+    ("yo_ava",    re.compile(r"\byo\s+(?:ava|eva)\b", re.IGNORECASE)),
+    ("ok_ava",    re.compile(r"\bok(?:ay)?\s+(?:ava|eva)\b", re.IGNORECASE)),
+]
+# Match "ava" alone only at start of a short utterance (≤ 4 words).
+_TRANSCRIPT_WAKE_BARE_AVA = re.compile(r"^\s*(?:ava|eva)\b", re.IGNORECASE)
+
+
+def _classify_transcript_wake(text: str) -> tuple[bool, str, str]:
+    """Return (matched, source_label, stripped_text).
+
+    matched=True only if text contains a transcript-wake pattern.
+    stripped_text has the wake phrase removed.
+    """
+    if not text or not text.strip():
+        return False, "", ""
+    raw = text.strip()
+    # Try the explicit "hey ava" / etc patterns first.
+    for label, pat in _TRANSCRIPT_WAKE_PATTERNS:
+        m = pat.search(raw)
+        if m:
+            stripped = (raw[:m.start()] + raw[m.end():]).strip(" ,.!?-")
+            return True, f"transcript_wake:{label}", stripped
+    # Then "Ava ..." at start of a short utterance.
+    word_count = len(raw.split())
+    if word_count <= 4:
+        m = _TRANSCRIPT_WAKE_BARE_AVA.match(raw)
+        if m:
+            stripped = raw[m.end():].strip(" ,.!?-")
+            return True, "transcript_wake:bare_ava", stripped
+    return False, "", ""
 
 
 class VoiceLoop:
@@ -98,7 +177,7 @@ class VoiceLoop:
                 # ── Choose passive vs attentive ────────────────────────────
                 in_attentive = (
                     self._last_speak_end_ts > 0
-                    and (time.time() - self._last_speak_end_ts) < _ATTENTIVE_TIMEOUT_SEC
+                    and (time.time() - self._last_speak_end_ts) < _ATTENTIVE_BASE_SECONDS
                 )
                 if in_attentive:
                     self._set_state("attentive")
@@ -128,9 +207,21 @@ class VoiceLoop:
         return False
 
     def _attentive_wait(self) -> bool:
-        """While in attentive state: poll mic faster, react to any speech > 1s
-        without requiring a wake word. Decays to passive after 60s silence."""
+        """Open-conversation window: poll mic faster, react to any speech > 1s
+        without requiring a wake word.
+
+        Exit conditions:
+          1. Wake/clap fires → return True (defer to wake path).
+          2. User speech > _ATTENTIVE_MIN_SPEECH_SEC → return True with text stashed.
+          3. Hard timeout: time since last speak >= _ATTENTIVE_BASE_SECONDS.
+             The timer RESETS each time the user speaks (rolling extension).
+          4. Early exit: silence ≥ _ATTENTIVE_SILENCE_EXIT_SECONDS AND
+             gaze is not 'center' (user disengaged). Skipped if
+             _ATTENTIVE_REQUIRE_GAZE is False — then silence-only triggers
+             early exit.
+        """
         attentive_started = time.time()
+        last_user_audio_ts = time.time()  # rolling silence timer base
         while self._active:
             # Wake / clap triggers immediately exit to listening.
             if self._g.get("_voice_loop_wake_requested") or self._g.get("_wake_word_detected"):
@@ -138,22 +229,48 @@ class VoiceLoop:
                 self._g.pop("_wake_word_detected", None)
                 return True
             # Quick mic snapshot for ~0.8s — if we hear something significant, trigger.
+            heard_audio_this_tick = False
             stt = self._g.get("stt_engine")
             if stt is not None and callable(getattr(stt, "is_available", None)) and stt.is_available():
                 try:
                     snap = stt.listen_session(max_seconds=0.8, silence_seconds=0.4)
                     if isinstance(snap, dict) and snap.get("speech_detected"):
                         dur = float(snap.get("duration_seconds") or 0)
+                        # Any detected audio resets the silence timer.
+                        if dur >= 0.3:
+                            heard_audio_this_tick = True
+                            last_user_audio_ts = time.time()
+                            # Reset the rolling base so the 180s timer restarts
+                            # from this moment for the hard timeout too.
+                            self._last_speak_end_ts = time.time()
                         if dur >= _ATTENTIVE_MIN_SPEECH_SEC:
-                            # Stash the partial as initial input — listen_and_respond
-                            # will continue from there.
                             self._g["_attentive_initial_text"] = snap.get("text") or ""
                             return True
                 except Exception:
                     pass
-            # Silence-only branch: time out after 60s.
-            if (time.time() - self._last_speak_end_ts) >= _ATTENTIVE_TIMEOUT_SEC:
-                _trace("vl.enter_passive attentive_timeout")  # TRACE-PHASE1
+
+            now = time.time()
+            silence_since_audio = now - last_user_audio_ts
+            since_speak_end = now - self._last_speak_end_ts
+
+            # Early exit on disengagement.
+            if silence_since_audio >= _ATTENTIVE_SILENCE_EXIT_SECONDS:
+                if _ATTENTIVE_REQUIRE_GAZE:
+                    gaze = str(self._g.get("_gaze_region") or "").lower()
+                    looking_away = gaze and gaze != "center"
+                    if looking_away:
+                        print(f"[voice_loop] exiting attentive: user_disengaged (silence={silence_since_audio:.0f}s, gaze={gaze})")
+                        _trace(f"vl.enter_passive disengaged silence={silence_since_audio:.0f} gaze={gaze}")  # TRACE-PHASE1
+                        return False
+                else:
+                    print(f"[voice_loop] exiting attentive: silence (silence={silence_since_audio:.0f}s)")
+                    _trace(f"vl.enter_passive silence_exit silence={silence_since_audio:.0f}")  # TRACE-PHASE1
+                    return False
+
+            # Hard timeout — 180s without any user audio at all.
+            if since_speak_end >= _ATTENTIVE_BASE_SECONDS:
+                print(f"[voice_loop] exiting attentive: timeout ({since_speak_end:.0f}s ≥ {_ATTENTIVE_BASE_SECONDS:.0f}s)")
+                _trace(f"vl.enter_passive timeout {since_speak_end:.0f}s")  # TRACE-PHASE1
                 return False
             time.sleep(0.4)
         return False
@@ -223,18 +340,34 @@ class VoiceLoop:
         _trace(f"vl.heard chars={len(text)}")  # TRACE-PHASE1
         print(f"[voice_loop] heard: {text[:120]!r}")
 
+        # ── TRANSCRIPT WAKE FALLBACK ──────────────────────────────────────────
+        # If no explicit wake source has been stamped (no clap, no openWakeWord
+        # fire), see if the transcript itself starts with "hey ava" / "hi ava"
+        # / "hello ava" / "yo ava" / "ok ava" / "ava <short>". If yes, that's
+        # an explicit direct-address signal — stamp the source and strip the
+        # wake phrase before passing to run_ava.
+        existing_wake = str(self._g.get("_wake_source") or "")
+        if not existing_wake:
+            tw_matched, tw_label, tw_stripped = _classify_transcript_wake(text)
+            if tw_matched:
+                print(f"[voice_loop] transcript-wake match: {tw_label} → stripped={tw_stripped[:80]!r}")
+                self._g["_wake_source"] = tw_label
+                self._g["_wake_source_ts"] = time.time()
+                if tw_stripped:
+                    text = tw_stripped
+
         # ── WAKE-WORD CHECK (passive mode only) ───────────────────────────────
         # In attentive state we already decided this is for Ava. In passive we
         # need to confirm direct address before invoking run_ava.
         in_attentive_when_started = self._state in ("attentive", "listening") and self._last_speak_end_ts > 0 and (
             time.time() - self._last_speak_end_ts
-        ) < _ATTENTIVE_TIMEOUT_SEC
+        ) < _ATTENTIVE_BASE_SECONDS
 
-        # Explicit wake sources (clap or openWakeWord model) → ALWAYS direct,
-        # no classification, no clarify. Both detectors stamp _wake_source
-        # before raising the wake flag.
+        # Explicit wake sources (clap or openWakeWord model or transcript_wake)
+        # → ALWAYS direct, no classification, no clarify. Each detector stamps
+        # _wake_source before raising the wake flag.
         wake_source = str(self._g.get("_wake_source") or "")
-        if wake_source in ("clap", "openwakeword"):
+        if wake_source in ("clap", "openwakeword") or wake_source.startswith("transcript_wake"):
             print(f"[voice_loop] {wake_source}-triggered → bypassing wake classification")
             # Consume the wake_source so a later passive listen re-classifies.
             self._g.pop("_wake_source", None)
@@ -277,6 +410,10 @@ class VoiceLoop:
         # ── THINKING ──────────────────────────────────────────────────────────
         self._set_state("thinking")
         _trace(f"vl.calling_run_ava chars={len(text)}")  # TRACE-PHASE1
+        # Turn-in-progress flag — gates app discovery and any other heavy
+        # background work that might starve the LLM. Cleared after TTS done.
+        self._g["_turn_in_progress"] = True
+        self._g["_turn_started_ts"] = time.time()
         print(f"[voice_loop] calling run_ava with: {text[:100]!r}")
         try:
             from brain.reply_engine import run_ava
@@ -287,11 +424,15 @@ class VoiceLoop:
         except Exception as e:
             import traceback as _tb
             print(f"[voice_loop] run_ava failed: {e!r}\n{_tb.format_exc()[:600]}")
+            self._g.pop("_turn_in_progress", None)
+            self._g.pop("_turn_started_ts", None)
             self._set_state("passive")
             return
 
         reply_text = str(reply or "").strip()
         if not reply_text:
+            self._g.pop("_turn_in_progress", None)
+            self._g.pop("_turn_started_ts", None)
             print("[voice_loop] reply was empty — nothing to speak")
             self._set_state("passive")
             return
@@ -303,12 +444,16 @@ class VoiceLoop:
         clean = _re.sub(r"[*_`#\[\]()]", "", reply_text)
         clean = _re.sub(r"\s+", " ", clean).strip()[:400]
         if not (clean and _re.search(r"[A-Za-z0-9]", clean)):
+            self._g.pop("_turn_in_progress", None)
+            self._g.pop("_turn_started_ts", None)
             print("[voice_loop] reply had no speakable content after cleanup")
             self._set_state("passive")
             return
 
         tts_enabled = bool(self._g.get("tts_enabled", False))
         if not tts_enabled:
+            self._g.pop("_turn_in_progress", None)
+            self._g.pop("_turn_started_ts", None)
             print("[voice_loop] TTS disabled in globals — not speaking. Toggle via /api/v1/tts/toggle.")
             self._set_state("passive")
             return
@@ -317,6 +462,10 @@ class VoiceLoop:
         spoke_ok = self._speak(clean)
         self._last_speak_end_ts = time.time() if spoke_ok else 0.0
         _trace(f"vl.tts_done ok={spoke_ok}")  # TRACE-PHASE1
+        # Clear turn-in-progress flag — app discovery and other background
+        # work can resume.
+        self._g.pop("_turn_in_progress", None)
+        self._g.pop("_turn_started_ts", None)
 
         # Drop into attentive so a quick follow-up doesn't need a wake word.
         if spoke_ok:

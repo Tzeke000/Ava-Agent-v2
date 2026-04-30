@@ -26,6 +26,7 @@ matters. mem0's extraction prompt does the filtering.
 """
 from __future__ import annotations
 
+import os
 import threading
 from pathlib import Path
 from typing import Any, Optional
@@ -33,6 +34,13 @@ from typing import Any, Optional
 
 _DEFAULT_USER_ID = "zeke"
 _DEFAULT_COLLECTION = "ava_memories"
+
+# Pre-create the chroma directory at module load so mem0's first init call
+# never trips on a missing path. Safe to call repeatedly.
+try:
+    os.makedirs("D:/AvaAgentv2/memory/mem0_chroma", exist_ok=True)
+except Exception:
+    pass
 
 
 class AvaMemory:
@@ -51,11 +59,16 @@ class AvaMemory:
         """Lazy-init the mem0 stack. Returns True if ready."""
         if self._available:
             return True
+        # If init already failed once, don't retry — we'd just print the same
+        # error again and clutter the log. Caller should treat available=False
+        # as terminal for this process.
+        if self._init_error:
+            return False
         try:
             from mem0 import Memory  # type: ignore
         except Exception as e:
-            self._init_error = f"mem0 import: {e!r}"
-            print(f"[ava_memory] mem0 import failed: {e!r}")
+            self._init_error = f"import: {e!r}"
+            print(f"[ava_memory] disabled (init failed: import: {e!r}) — falling back to ChromaDB only")
             return False
 
         # Pick the model that's actually available. ava-gemma4 is preferred;
@@ -95,8 +108,8 @@ class AvaMemory:
             print(f"[ava_memory] mem0 ready (llm={llm_model}, chroma={chroma_path})")
             return True
         except Exception as e:
-            self._init_error = f"mem0 init: {e!r}"
-            print(f"[ava_memory] init failed: {e!r}")
+            self._init_error = f"init: {e!r}"
+            print(f"[ava_memory] disabled (init failed: {e!r}) — falling back to ChromaDB only")
             self._available = False
             return False
 
