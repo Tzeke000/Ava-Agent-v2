@@ -10,14 +10,28 @@ import { listen } from "@tauri-apps/api/event";
 type Snapshot = Record<string, unknown>;
 type ChatMessage = { role?: string; content?: string };
 
-// ── Presence-v2 feature flag ────────────────────────────────────────────
-// When false, the streaming speaking-text region, inner-state-line region,
-// and the listening/attentive cube-morph on the orb are all disabled. This
-// is the unblock for orb-drift while the root cause is investigated in
-// isolation. Re-enable only after the per-tick remount + entry-animation
-// interaction has been understood and fixed. Orb itself, HUD, brain tab,
-// middle-click recenter, and drift diagnostics all remain active.
-const PRESENCE_V2_ENABLED = false;
+// ── Presence-v2 feature flags ───────────────────────────────────────────
+// When PRESENCE_V2_ENABLED is true, the streaming speaking-text and
+// inner-state-line regions render. The earlier drift symptom (orb falling
+// off-screen on snapshot ticks) was traced to two interacting patterns:
+//
+//   (a) `key={text || "empty"}` on the text divs forced React to unmount
+//       and remount the element on every content change.
+//   (b) The `from { transform: translateY(2px) }` entry keyframe in
+//       speakingFadeIn fires fresh on each remount. Per-tick remounts
+//       caused per-tick transform shifts that didn't fully settle before
+//       the next remount, producing cumulative drift.
+//
+// Fix: removed `key=` from both divs so React reuses the same DOM node
+// across content changes. The empty→live class transition still drives
+// a one-shot fade-in on each speaking session start; subsequent word
+// updates within a session no longer trigger animation.
+//
+// PRESENCE_V2_CUBE_MORPH_ENABLED gates the OrbCanvas cube-morph
+// independently so the user can verify text+inner-state stable, then
+// flip the cube-morph flag separately if drift returns.
+const PRESENCE_V2_ENABLED = true;
+const PRESENCE_V2_CUBE_MORPH_ENABLED = false;
 
 const TABS = [
   { id: "voice" as const, label: "Voice" },
@@ -1950,10 +1964,11 @@ export default function App() {
           </div>
         </div>
         {PRESENCE_V2_ENABLED && (
-          <div
-            key={speakingTextForUI || "empty"}
-            className={`presence-speaking-text ${speakingTextForUI ? "live" : "empty"}`}
-          >
+          // No `key=` — React reuses this DOM node across content changes.
+          // The empty→live class transition triggers the one-shot fade-in;
+          // subsequent text updates within the same session don't remount
+          // and don't re-fire the entry animation.
+          <div className={`presence-speaking-text ${speakingTextForUI ? "live" : "empty"}`}>
             {speakingTextForUI}
           </div>
         )}
@@ -1967,7 +1982,7 @@ export default function App() {
               amplitude={ttsAmplitude}
               energy={moodEnergy}
               recenterTrigger={orbRecenterCounter}
-              cubeMorphEnabled={PRESENCE_V2_ENABLED}
+              cubeMorphEnabled={PRESENCE_V2_CUBE_MORPH_ENABLED}
             />
             {/* Offline overlay text */}
             {connOffline && (
@@ -2006,10 +2021,8 @@ export default function App() {
           </div>
         )}
         {PRESENCE_V2_ENABLED && (
-          <div
-            key={innerStateLine || "empty"}
-            className={`presence-inner-state-line ${innerStateLine ? "live" : "empty"}`}
-          >
+          // No `key=` — same rationale as presence-speaking-text above.
+          <div className={`presence-inner-state-line ${innerStateLine ? "live" : "empty"}`}>
             {innerStateLine}
           </div>
         )}
