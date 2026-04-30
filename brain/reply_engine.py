@@ -74,16 +74,48 @@ def run_ava(
     _trace(f"re.run_ava.entered chars={len(user_input or '')}")  # TRACE-PHASE1
     global _RUN_AVA_TUNING_SOURCE_LOGGED
     _import_t0 = time.time()  # TRACE-PHASE1
+
+    _t = time.time()  # TRACE-PHASE1
+    _trace("re.import.avaagent.start")  # TRACE-PHASE1
     import avaagent as _av
+    _trace(f"re.import.avaagent.done ms={int((time.time()-_t)*1000)}")  # TRACE-PHASE1
     _g = vars(_av)
 
+    _t = time.time()  # TRACE-PHASE1
+    _trace("re.import.prompt_builder.start")  # TRACE-PHASE1
     from brain.prompt_builder import build_prompt, build_prompt_fast
+    _trace(f"re.import.prompt_builder.done ms={int((time.time()-_t)*1000)}")  # TRACE-PHASE1
+
+    _t = time.time()  # TRACE-PHASE1
+    _trace("re.import.turn_handler.start")  # TRACE-PHASE1
     from brain.turn_handler import finalize_ava_turn
+    _trace(f"re.import.turn_handler.done ms={int((time.time()-_t)*1000)}")  # TRACE-PHASE1
+
+    _t = time.time()  # TRACE-PHASE1
+    _trace("re.import.langchain_ollama.start")  # TRACE-PHASE1
     from langchain_ollama import ChatOllama
+    _trace(f"re.import.langchain_ollama.done ms={int((time.time()-_t)*1000)}")  # TRACE-PHASE1
+
+    _t = time.time()  # TRACE-PHASE1
+    _trace("re.import.turn_visual.start")  # TRACE-PHASE1
     from brain.turn_visual import default_visual_payload
+    _trace(f"re.import.turn_visual.done ms={int((time.time()-_t)*1000)}")  # TRACE-PHASE1
+
+    _t = time.time()  # TRACE-PHASE1
+    _trace("re.import.output_guard.start")  # TRACE-PHASE1
     from brain.output_guard import scrub_visible_reply
+    _trace(f"re.import.output_guard.done ms={int((time.time()-_t)*1000)}")  # TRACE-PHASE1
+
+    _t = time.time()  # TRACE-PHASE1
+    _trace("re.import.selfstate.start")  # TRACE-PHASE1
     from brain.selfstate import is_selfstate_query, build_selfstate_reply
+    _trace(f"re.import.selfstate.done ms={int((time.time()-_t)*1000)}")  # TRACE-PHASE1
+
+    _t = time.time()  # TRACE-PHASE1
+    _trace("re.import.shutdown_ritual.start")  # TRACE-PHASE1
     from brain.shutdown_ritual import is_shutdown_trigger, run_shutdown_ritual
+    _trace(f"re.import.shutdown_ritual.done ms={int((time.time()-_t)*1000)}")  # TRACE-PHASE1
+
     _trace(f"re.imports_done ms={int((time.time()-_import_t0)*1000)}")  # TRACE-PHASE1
 
     llm = _av.llm
