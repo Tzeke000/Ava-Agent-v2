@@ -1,5 +1,14 @@
 import json
 import os
+# Install debug stdout/stderr capture rings as early as possible so the
+# /api/v1/debug/full endpoint can serve last 200 stdout lines + last 100
+# [trace] lines + last 50 errors. Before the heavy imports below so we
+# capture their startup output too.
+try:
+    from brain.debug_state import install as _install_debug_capture
+    _install_debug_capture()
+except Exception as _dbg_e:  # never let this block startup
+    print(f"[debug_state] capture install failed: {_dbg_e}")
 import cv2
 import warnings
 import random
