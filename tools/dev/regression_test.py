@@ -375,11 +375,86 @@ def _ext_test_wake_source_variety() -> dict:
     }
 
 
+def _ext_test_weird_inputs() -> dict:
+    """Verify the endpoint handles boundary inputs without hanging or
+    crashing. Each case has its own pass criteria.
+
+    Cases:
+      empty:       "" → endpoint returns ok=False with "empty text" error
+                       (validated server-side, doesn't reach run_ava).
+      whitespace:  "   \\t\\n   " → same — text.strip() empty.
+      single_char: "?" → run_ava reaches the LLM (no voice_command match,
+                       no fast-path pattern). Reply may be empty or a
+                       short clarification — either is fine; what matters
+                       is that we get a 200 OK in <30s, not a hang.
+      long_500:    a 500-character utterance → must complete in under
+                       30s without timeout or unhandled exception.
+
+    None of these should produce errors_during_turn entries (those
+    represent unexpected exceptions, not graceful empty-reply cases).
+    """
+    label = "weird_inputs"
+    t0 = time.time()
+    fails: list[str] = []
+    details: dict = {"cases": {}}
+
+    cases = [
+        ("empty",       "",                          {"expect_ok_false": True,  "max_seconds": 5.0}),
+        ("whitespace",  "   \t\n   ",                {"expect_ok_false": True,  "max_seconds": 5.0}),
+        ("single_char", "?",                         {"expect_ok_false": False, "max_seconds": 30.0}),
+        ("long_500",    "Tell me " + ("a" * 490),    {"expect_ok_false": False, "max_seconds": 30.0}),
+    ]
+    for case_name, text, expectations in cases:
+        per: dict = {"text_len": len(text)}
+        c_t0 = time.time()
+        status, payload, err = _inject(
+            text, speak=False, timeout_s=expectations["max_seconds"]
+        )
+        per["http_status"] = status
+        per["http_error"] = err
+        per["elapsed"] = round(time.time() - c_t0, 3)
+        if per["elapsed"] > expectations["max_seconds"]:
+            fails.append(f"{case_name}: timing_over_target {per['elapsed']:.2f}s")
+        if status != 200:
+            # We only accept HTTP 200 with a JSON payload; the endpoint
+            # returns ok=False inline rather than HTTP errors for empty.
+            fails.append(f"{case_name}: http_status={status}")
+            details["cases"][case_name] = per
+            continue
+        if not isinstance(payload, dict):
+            fails.append(f"{case_name}: no_payload err={err}")
+            details["cases"][case_name] = per
+            continue
+        per["ok"] = bool(payload.get("ok"))
+        per["reply_chars"] = int(payload.get("reply_chars") or 0)
+        per["error"] = str(payload.get("error") or payload.get("run_ava_error") or "")
+        errs_during = payload.get("errors_during_turn") or []
+        per["errors_during_turn_count"] = len(errs_during)
+        if expectations["expect_ok_false"]:
+            if per["ok"]:
+                fails.append(f"{case_name}: expected ok=False, got ok=True")
+        # errors_during_turn should be empty for graceful handling.
+        if errs_during:
+            fails.append(
+                f"{case_name}: {len(errs_during)} errors_during_turn (graceful failure expected)"
+            )
+        details["cases"][case_name] = per
+
+    return {
+        "label": label,
+        "wall_seconds": round(time.time() - t0, 3),
+        "passed": not fails,
+        "fail_reasons": fails,
+        "details": details,
+    }
+
+
 EXTENDED_TESTS = [
     _ext_test_conversation_active_gating,
     _ext_test_self_listen_guard_observable,
     _ext_test_attentive_window_observable,
     _ext_test_wake_source_variety,
+    _ext_test_weird_inputs,
 ]
 
 
