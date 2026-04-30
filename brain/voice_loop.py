@@ -22,6 +22,12 @@ import time
 from typing import Any
 
 
+def _trace(label: str) -> None:  # TRACE-PHASE1
+    """Timestamped diagnostic trace for the voice path. Removed/gated in Phase 3."""  # TRACE-PHASE1
+    ts = time.strftime("%H:%M:%S") + f".{int(time.time()*1000)%1000:03d}"  # TRACE-PHASE1
+    print(f"[trace] {ts} {label}")  # TRACE-PHASE1
+
+
 _ATTENTIVE_TIMEOUT_SEC = 60.0       # decay back to passive after this long
 _ATTENTIVE_MIN_SPEECH_SEC = 1.0     # speech longer than this counts as input
 _DEFAULT_SILENCE_SEC = 2.5          # initial wait
@@ -147,6 +153,7 @@ class VoiceLoop:
                     pass
             # Silence-only branch: time out after 60s.
             if (time.time() - self._last_speak_end_ts) >= _ATTENTIVE_TIMEOUT_SEC:
+                _trace("vl.enter_passive attentive_timeout")  # TRACE-PHASE1
                 return False
             time.sleep(0.4)
         return False
@@ -171,6 +178,7 @@ class VoiceLoop:
 
         # ── LISTEN ────────────────────────────────────────────────────────────
         self._set_state("listening")
+        _trace("vl.enter_listening")  # TRACE-PHASE1
         print("[voice_loop] listening…")
         initial_text = str(self._g.pop("_attentive_initial_text", "") or "").strip()
         try:
@@ -212,6 +220,7 @@ class VoiceLoop:
             print("[voice_loop] empty transcription after listen")
             self._set_state("passive")
             return
+        _trace(f"vl.heard chars={len(text)}")  # TRACE-PHASE1
         print(f"[voice_loop] heard: {text[:120]!r}")
 
         # ── WAKE-WORD CHECK (passive mode only) ───────────────────────────────
@@ -267,11 +276,13 @@ class VoiceLoop:
 
         # ── THINKING ──────────────────────────────────────────────────────────
         self._set_state("thinking")
+        _trace(f"vl.calling_run_ava chars={len(text)}")  # TRACE-PHASE1
         print(f"[voice_loop] calling run_ava with: {text[:100]!r}")
         try:
             from brain.reply_engine import run_ava
             run_ava_result = run_ava(text)
             reply, _visual, _profile, _actions, _reflection = run_ava_result
+            _trace(f"vl.run_ava_returned chars={len(str(reply or ''))}")  # TRACE-PHASE1
             print(f"[voice_loop] run_ava returned reply_chars={len(str(reply or ''))}")
         except Exception as e:
             import traceback as _tb
@@ -302,14 +313,18 @@ class VoiceLoop:
             self._set_state("passive")
             return
 
+        _trace(f"vl.tts_enqueued chars={len(clean)}")  # TRACE-PHASE1
         spoke_ok = self._speak(clean)
         self._last_speak_end_ts = time.time() if spoke_ok else 0.0
+        _trace(f"vl.tts_done ok={spoke_ok}")  # TRACE-PHASE1
 
         # Drop into attentive so a quick follow-up doesn't need a wake word.
         if spoke_ok:
             self._set_state("attentive")
+            _trace("vl.enter_attentive")  # TRACE-PHASE1
         else:
             self._set_state("passive")
+            _trace("vl.enter_passive ok_false")  # TRACE-PHASE1
 
     # ── helpers ───────────────────────────────────────────────────────────────
 

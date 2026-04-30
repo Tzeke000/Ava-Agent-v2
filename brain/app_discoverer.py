@@ -30,6 +30,12 @@ _LEARNED_PATH = "state/learned_apps.json"
 _REFRESH_INTERVAL_SEC = 24 * 3600  # 24 hours
 
 
+def _trace(label: str) -> None:  # TRACE-PHASE1
+    """Timestamped diagnostic trace for app discovery. Removed/gated in Phase 3."""  # TRACE-PHASE1
+    ts = time.strftime("%H:%M:%S") + f".{int(time.time()*1000)%1000:03d}"  # TRACE-PHASE1
+    print(f"[trace] {ts} {label}")  # TRACE-PHASE1
+
+
 # ── Category heuristics ───────────────────────────────────────────────────────
 
 _BROWSER_EXES = {"chrome.exe", "firefox.exe", "msedge.exe", "brave.exe", "opera.exe"}
@@ -234,6 +240,8 @@ class AppDiscoverer:
 
     def discover_all(self, g: Optional[dict[str, Any]] = None) -> int:
         """Full scan. Replaces existing registry. Returns number of entries."""
+        _t0 = time.time()  # TRACE-PHASE1
+        _trace("app_disc.discover_all_start")  # TRACE-PHASE1
         with self._lock:
             self._registry = {}
             self._scan_lnk_dirs(self._lnk_dirs())
@@ -246,10 +254,13 @@ class AppDiscoverer:
             apps = sum(1 for e in entries if e.get("category") != "game")
             games = sum(1 for e in entries if e.get("category") == "game")
             print(f"[app_discovery] found {apps} apps, {games} games (total {len(entries)})")
+            _trace(f"app_disc.discover_all_done ms={int((time.time()-_t0)*1000)} apps={apps} games={games}")  # TRACE-PHASE1
             return len(entries)
 
     def discover_new_since_last(self, g: Optional[dict[str, Any]] = None) -> int:
         """Re-scan and add only new entries (preserving launch_count etc)."""
+        _t0 = time.time()  # TRACE-PHASE1
+        _trace("app_disc.discover_incremental_start")  # TRACE-PHASE1
         prior = {k: dict(v) for k, v in self._registry.items()}
         with self._lock:
             self._registry = {}
@@ -268,6 +279,7 @@ class AppDiscoverer:
             self._save()
             if new_count or removed:
                 print(f"[app_discovery] {new_count} new, {removed} removed apps/games")
+            _trace(f"app_disc.discover_incremental_done ms={int((time.time()-_t0)*1000)} new={new_count} removed={removed}")  # TRACE-PHASE1
             return new_count
 
     def fuzzy_match(self, query: str) -> Optional[dict[str, Any]]:
@@ -342,6 +354,9 @@ class AppDiscoverer:
 
     def _scan_lnk_dirs(self, dirs: Iterable[Path]) -> None:
         for d in dirs:
+            _t0 = time.time()  # TRACE-PHASE1
+            _before = len(self._registry)  # TRACE-PHASE1
+            _trace(f"app_disc.scan_start root={d}")  # TRACE-PHASE1
             try:
                 for lnk in d.rglob("*.lnk"):
                     if not lnk.is_file():
@@ -357,6 +372,7 @@ class AppDiscoverer:
                     self._add_entry(target, name, source="shortcut")
             except Exception as e:
                 print(f"[app_discovery] lnk scan {d} error: {e}")
+            _trace(f"app_disc.scan_done root={d} ms={int((time.time()-_t0)*1000)} found={len(self._registry)-_before}")  # TRACE-PHASE1
 
     def _scan_program_files(self) -> None:
         paths = _expand_search_paths()
@@ -366,6 +382,9 @@ class AppDiscoverer:
         for root in paths["program_files"] + paths["local_app_data"]:
             if not root.is_dir():
                 continue
+            _t0 = time.time()  # TRACE-PHASE1
+            _before = len(self._registry)  # TRACE-PHASE1
+            _trace(f"app_disc.scan_start root={root}")  # TRACE-PHASE1
             try:
                 for exe in self._iter_exes(root, max_depth=3):
                     name = exe.stem
@@ -376,6 +395,7 @@ class AppDiscoverer:
                     self._add_entry(str(exe), name, source="program_files")
             except Exception as e:
                 print(f"[app_discovery] program_files {root} error: {e}")
+            _trace(f"app_disc.scan_done root={root} ms={int((time.time()-_t0)*1000)} found={len(self._registry)-_before}")  # TRACE-PHASE1
 
     def _iter_exes(self, root: Path, max_depth: int) -> Iterable[Path]:
         root_parts = len(root.parts)

@@ -147,6 +147,12 @@ _LIVE_AMPLITUDE: float = 0.0
 _AMP_LOCK = threading.Lock()
 
 
+def _trace(label: str) -> None:  # TRACE-PHASE1
+    """Timestamped diagnostic trace for the TTS path. Removed/gated in Phase 3."""  # TRACE-PHASE1
+    ts = time.strftime("%H:%M:%S") + f".{int(time.time()*1000)%1000:03d}"  # TRACE-PHASE1
+    print(f"[trace] {ts} {label}")  # TRACE-PHASE1
+
+
 def get_live_amplitude() -> float:
     """Current speech amplitude (0..1). 0 when not speaking."""
     with _AMP_LOCK:
@@ -352,6 +358,8 @@ class TTSWorker:
 
     def _speak_kokoro(self, text: str, emotion: str, intensity: float) -> None:
         """Generate audio via Kokoro and stream live amplitude while it plays."""
+        _synth_t0 = time.time()  # TRACE-PHASE1
+        _trace(f"tts.synth_start chars={len(text)}")  # TRACE-PHASE1
         voice, speed = _emotion_to_kokoro(emotion, intensity)
         try:
             generator = self._kokoro_pipeline(text, voice=voice, speed=speed)
@@ -379,7 +387,11 @@ class TTSWorker:
         full = full.astype(self._np.float32, copy=False)
 
         sample_rate = 24000
+        _trace(f"tts.synth_done ms={int((time.time()-_synth_t0)*1000)} samples={int(full.shape[0])}")  # TRACE-PHASE1
+        _trace(f"tts.playback_start samples={int(full.shape[0])}")  # TRACE-PHASE1
+        _playback_t0 = time.time()  # TRACE-PHASE1
         self._play_with_amplitude(full, sample_rate)
+        _trace(f"tts.playback_done ms={int((time.time()-_playback_t0)*1000)}")  # TRACE-PHASE1
         preview = text[:60].replace("\n", " ")
         print(f"[tts_worker] kokoro spoke voice={voice} speed={speed:.2f} chars={len(text)}: {preview!r}")
 
@@ -481,6 +493,7 @@ class TTSWorker:
             # by labelling emotion="neutral" and intensity=0; pyttsx3 path then
             # overrides with the legacy values.
             pass
+        _trace(f"tts.enqueue chars={len(text.strip())} blocking={blocking}")  # TRACE-PHASE1
         item = (text.strip(), emotion or "neutral", float(intensity), None)
         if blocking:
             done = threading.Event()

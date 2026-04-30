@@ -15,6 +15,12 @@ from typing import Any
 _RUN_AVA_TUNING_SOURCE_LOGGED = False
 _PROMPT_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="ava-prompt")
 
+
+def _trace(label: str) -> None:  # TRACE-PHASE1
+    """Timestamped diagnostic trace for the run_ava path. Removed/gated in Phase 3."""  # TRACE-PHASE1
+    ts = time.strftime("%H:%M:%S") + f".{int(time.time()*1000)%1000:03d}"  # TRACE-PHASE1
+    print(f"[trace] {ts} {label}")  # TRACE-PHASE1
+
 # Simple greetings / mood checks — bypass full pipeline for sub-5s response
 _SIMPLE_PATTERNS = (
     "how are you", "how do you feel", "what are you doing",
@@ -92,6 +98,7 @@ def run_ava(
     def _elapsed() -> str:
         return f"{time.time()-_t_start:.2f}s"
 
+    _trace(f"re.run_ava.start chars={len(_inp)}")  # TRACE-PHASE1
     print(f"[perf] run_ava start person={active_person_id} has_image={image is not None} input_chars={len(_inp)}")
 
     # ── VOICE COMMAND ROUTER (intercept before LLM) ──────────────────────────
@@ -198,6 +205,7 @@ def run_ava(
         # privacy scan, dual-brain, etc. Just identity + mood + last 2 messages
         # + LLM. Target: sub-5-second response for "hey ava" style inputs.
         if _is_simple_question(_inp):
+            _trace("re.run_ava.fast_path_entered")  # TRACE-PHASE1
             print(f"[run_ava] FAST PATH: simple question (t={time.time()-_t_start:.2f}s)")
             try:
                 from langchain_core.messages import HumanMessage
@@ -246,10 +254,13 @@ def run_ava(
                 print(f"[perf] fast post-llm-init {_elapsed()}")
                 from brain.ollama_lock import with_ollama
                 print(f"[perf] fast pre-invoke {_elapsed()} model={_fast_model}")
+                _trace(f"re.ollama_invoke_start fast model={_fast_model}")  # TRACE-PHASE1
+                _fast_invoke_t0 = time.time()  # TRACE-PHASE1
                 _fp_result = with_ollama(
                     lambda: _llm_fast.invoke([HumanMessage(content=_simple_prompt)]),
                     label=f"fast:{_fast_model}",
                 )
+                _trace(f"re.ollama_invoke_done fast ms={int((time.time()-_fast_invoke_t0)*1000)}")  # TRACE-PHASE1
                 _g["_last_invoked_model"] = _fast_model
                 print(f"[perf] fast post-invoke {_elapsed()}")
                 _reply_text = (getattr(_fp_result, "content", str(_fp_result)) or "").strip()
@@ -273,6 +284,7 @@ def run_ava(
                 )
                 if _profile_for_fp is None:
                     _profile_for_fp = _av.load_profile_by_id(active_person_id)
+                _trace(f"re.run_ava.return path=fast ms={int((time.time()-_t_start)*1000)}")  # TRACE-PHASE1
                 return _reply_text, _vis_fast, _profile_for_fp, [], {"fast_path": True}
             except Exception as _fpe:
                 print(f"[run_ava] FAST PATH error: {_fpe!r} — falling through to normal path")
@@ -442,6 +454,7 @@ def run_ava(
 
         # ── Step: prompt building (with 30s timeout) ──────────────────────────
         print(f"[perf] pre-build-prompt {_elapsed()} path={'fast' if use_fast_path else 'deep'}")
+        _prompt_t0 = time.time()  # TRACE-PHASE1
         if use_fast_path:
             _prompt_callable = lambda: build_prompt_fast(user_input, image=image, active_person_id=active_person_id)
         else:
@@ -452,6 +465,7 @@ def run_ava(
             fallback=None,
             label="build_prompt",
         )
+        _trace(f"re.prompt_built ms={int((time.time()-_prompt_t0)*1000)}")  # TRACE-PHASE1
         if _prompt_result is None:
             # Prompt build timed out — fall back to minimal prompt
             print("[run_ava] step: prompt build timed out, using minimal fallback")
@@ -500,10 +514,13 @@ def run_ava(
             _used_model_label = getattr(_invoke_llm, 'model', '?')
             print(f"[perf] pre-invoke {_elapsed()} model={_used_model_label}")
             from brain.ollama_lock import with_ollama
+            _trace(f"re.ollama_invoke_start deep model={_used_model_label}")  # TRACE-PHASE1
+            _deep_invoke_t0 = time.time()  # TRACE-PHASE1
             result = with_ollama(
                 lambda: _invoke_llm.invoke(messages),
                 label=f"main:{_used_model_label}",
             )
+            _trace(f"re.ollama_invoke_done deep ms={int((time.time()-_deep_invoke_t0)*1000)}")  # TRACE-PHASE1
             _g["_last_invoked_model"] = str(_used_model_label)
             print(f"[perf] post-invoke {_elapsed()} model={_used_model_label}")
             raw_reply = getattr(result, "content", str(result)).strip()
@@ -604,6 +621,7 @@ def run_ava(
 
         _vroute = isinstance(visual, dict) and visual.get("turn_route")
         print(f"[run_ava] step: finalize_ava_turn route={_vroute or 'llm'} path={'fast' if use_fast_path else 'deep'} (t={time.time()-_t_start:.2f}s)")
+        _trace(f"re.run_ava.return path={'fast' if use_fast_path else 'deep'} ms={int((time.time()-_t_start)*1000)}")  # TRACE-PHASE1
         return finalize_ava_turn(
             user_input, ai_reply, visual, active_profile, actions, turn_route=_vroute or "llm"
         )
