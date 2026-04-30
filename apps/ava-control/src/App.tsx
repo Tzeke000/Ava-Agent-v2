@@ -598,6 +598,69 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [poll]);
 
+  // ── Drift diagnostic ────────────────────────────────────────────────────
+  // Measurement-only — DO NOT add fixes here. Three rounds of fix→regression
+  // on the orb-drift bug means we don't actually know what's growing or
+  // where the scroll is happening. This effect samples DOM measurements
+  // every 5s on the same cadence as the snapshot poll, tagged with a tick
+  // counter, so the user can paste 12+ ticks of console output and we can
+  // diff tick=1 vs tick=12 to find the actual culprit.
+  useEffect(() => {
+    let tick = 0;
+    const measure = () => {
+      const sample = (sel: string) => {
+        const el = document.querySelector(sel) as HTMLElement | null;
+        if (!el) return { found: false } as const;
+        const cs = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return {
+          found: true,
+          clientHeight: el.clientHeight,
+          scrollHeight: el.scrollHeight,
+          scrollTop: el.scrollTop,
+          offsetHeight: el.offsetHeight,
+          computedHeight: cs.height,
+          computedMinHeight: cs.minHeight,
+          rectTop: Math.round(rect.top * 100) / 100,
+          rectBottom: Math.round(rect.bottom * 100) / 100,
+        } as const;
+      };
+      const docEl = document.documentElement;
+      const body = document.body;
+      const data = {
+        tick,
+        time: new Date().toISOString().slice(11, 23),
+        windowInner: { w: window.innerWidth, h: window.innerHeight },
+        documentElement: {
+          scrollTop: docEl.scrollTop,
+          scrollHeight: docEl.scrollHeight,
+          clientHeight: docEl.clientHeight,
+        },
+        body: {
+          scrollTop: body.scrollTop,
+          scrollHeight: body.scrollHeight,
+          clientHeight: body.clientHeight,
+        },
+        presenceRoot: sample(".presence-root"),
+        presenceStage: sample(".presence-stage"),
+        presenceHudRow: sample(".presence-hud-row"),
+        presenceSpeakingText: sample(".presence-speaking-text"),
+        presenceOrbWrap: sample(".presence-orb-wrap"),
+        orbCanvasShell: sample(".orb-canvas-shell"),
+        presenceInnerStateLine: sample(".presence-inner-state-line"),
+        presenceHudRowBottom: sample(".presence-hud-row-bottom"),
+        presenceInputRow: sample(".presence-input-row"),
+      };
+      // One line per tick, structured — copy/paste-friendly for diffing.
+      // eslint-disable-next-line no-console
+      console.log(`[drift-debug tick=${tick}]`, JSON.stringify(data));
+      tick += 1;
+    };
+    measure(); // tick=0 baseline at mount
+    const id = window.setInterval(measure, 5000);
+    return () => window.clearInterval(id);
+  }, []);
+
   // Live TTS amplitude — polls /api/v1/tts/state at 100ms while online so the
   // orb reacts to the actual audio Kokoro is producing in real time.
   useEffect(() => {
