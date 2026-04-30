@@ -1,7 +1,7 @@
 # Ava Agent v2 — Complete Development Roadmap
-**Last updated:** 2026-04-29
+**Last updated:** 2026-04-30
 **Repo:** `Tzeke000/Ava-Agent-v2` (public)
-**Total commits:** 184 (`git log --oneline | wc -l`)
+**Total commits:** 230+ (see Section 6 for the 2026-04-30 stabilization arc)
 
 This is the complete historical record. Phases 1–100 plus all post-100 stabilization, every significant hot fix, current status, and next priorities. Reconstructed from `git log --reverse` and existing phase docs.
 
@@ -533,3 +533,65 @@ When the final phase is complete, Ava should be capable of writing her own next 
 - `ava_core/IDENTITY.md` — Ava's core self anchor
 - `ava_core/SOUL.md` — values, boundaries, three laws
 - `ava_core/USER.md` — the durable relationship anchor
+
+---
+
+## Section 6 — 2026-04-30 Stabilization Arc
+
+Three sessions in one day pushed the system from "voice path crashes on first turn" to "voice path verified on real hardware + memory architecture rewrite started." Reports were written at the end of each session as standalone files at the repo root.
+
+### Overnight session (02:03–03:52 EDT) — `MORNING_REPORT.md`
+
+14 commits. Core unblock was the cold-start hang root cause — `import avaagent as _av` from a worker thread re-imported the script (Python registers `__main__` not `avaagent` when run via `py -3.11 avaagent.py`), triggering a fresh `_run_startup` execution that deadlocked. Aliasing `__main__` to `avaagent` at the top of the script fixed it (`f99804e`).
+
+Other notable fixes:
+- `ava-personal:latest` reordered ahead of `ava-gemma4:latest` in `_pick_fast_model_fallback` — gemma4's "Thinking…" reasoning prefix consumed the fast-path's `num_predict=80` budget and produced empty `.content` (fallback to "I'm here.") (`f38d948`)
+- ChatOllama instance caching keyed on `(model, num_predict)` saves ~1s of constructor cost per turn (`f38d948`)
+- Boot-time fast-path prewarm thread pins `ava-personal` in VRAM and stashes the warmed instance in `_fast_llm_cache` so the first real turn lands on a cache hit (`c14afed`)
+- TTS self-listen guard in `voice_loop` drops VAD-confirmed audio while `_tts_speaking` so Whisper never transcribes Ava's own voice as user input (`163a7cc`)
+- `concept_graph._save` exponential backoff (1, 2, 4, 8, 16, 32, 60s capped) on WinError 5/32 — bootstrap with 100+ nodes no longer floods stderr (`7e22bcf`)
+
+Voice regression battery hit 6 consecutive green runs by end of session.
+
+### Lunch session (07:35–11:53 EDT) — `LUNCH_REPORT.md`
+
+11 commits, additive-only mode (don't-touch list active). Wrote `docs/ARCHITECTURE.md` (10-minute system map with code citations), 7 new extended regression tests (`conversation_active_gating`, `self_listen_guard_observable`, `attentive_window_observable`, `wake_source_variety`, `weird_inputs`, `sequential_fast_path_latency`, `concept_graph_save_under_load`), `docs/FIRST_RUN.md` (zero-to-Ava walkthrough), and `.gitignore` patterns for diagnostic scratch logs.
+
+Voice path remained green for 6 consecutive runs across the session. The lunch voice test on real hardware was the verifying moment — Ava replied for the first time end-to-end through microphone + speakers.
+
+### Afternoon session (12:49–EOD EDT) — `AFTERNOON_REPORT.md`
+
+The lunch voice test surfaced 6 real issues. All 6 fixed plus the memory architecture rewrite started:
+
+| Issue | Fix | Commit |
+| --- | --- | --- |
+| 150s reply latency after 13min idle (Ollama VRAM eviction) | `keep_alive=-1` on fast-path ChatOllama + 5min periodic re-warm tick + smaller-model rule for background work | `f96c6c9` |
+| Time/date queries reaching the LLM (hallucinated "9:47 AM") | Expanded voice_command regex to match natural variants ("tell me the time", "got the time", "what day is it", etc.) + new regression test asserting no `re.ollama_invoke_start` fires for these queries | `044f594` |
+| openWakeWord catching "hey ava" as `hey_jarvis` | Disabled jarvis proxy by default; wake source now comes from clap + custom hey_ava.onnx (if trained) + transcript_wake via Whisper. Override via `AVA_USE_HEY_JARVIS_PROXY=1` | `382255c` |
+| Second-turn TTS dropped silently | Added `tts.last_playback_dropped` snapshot field + back-to-back-turn regression test. Tts_worker stamps the flag when the OutputStream loop breaks early on `_muted()` or `_stop_evt`. Doesn't fix root cause — makes future drops VISIBLE so we can act on them. | `53c12fa` |
+| Brain tab 15fps (654 nodes / 6122 edges feeding WebGL every 5s) | Cap to 200 nodes by weight + 500 edges by strength + skip graphData updates when tab not focused + `pauseAnimation()` when not focused | `5d3f433` |
+| Claude Code identified as Zeke during tests | New `claude_code` developer profile (in `brain/dev_profiles.py`, written to `profiles/claude_code.json` on demand because `profiles/` is gitignored) + `as_user` param on `inject_transcript` + regression test verifying both routing paths | `504d1e8` |
+
+Memory architecture rewrite — Phase 2 of the work order:
+- `docs/MEMORY_REWRITE_PLAN.md` (`9c3c22c`) — audit of all 12 memory layers + the 10-level decay design, with the concept graph as the single seam.
+- Step 3 (`59ebd51`): `level: int` + `archive_streak: int` + `archived_at: float` fields added to `ConceptNode`. `decay_levels(now=None)` walker demotes inactive nodes per the per-level threshold table; archived nodes clamp to 1, unarchived hit-zero nodes get deleted with a tombstone in `state/memory_tombstones.jsonl`. Hourly daemon thread fires the tick. Promotions land in step 5.
+- Step 4 (`36f9856`): `brain/memory_reflection.py` new module. Post-turn LLM scorer asks "which retrieved memories were load-bearing?" and writes one row per turn to `state/memory_reflection_log.jsonl`. Hooked into `turn_handler.finalize_ava_turn` as a daemon thread (no user-facing latency). Doesn't apply level changes — gathering data first.
+
+### Section 5 (Next Priorities) — updated state
+
+Earlier priorities that are now DONE:
+
+- ~~Test full conversation end-to-end~~ — verified at lunch.
+- ~~Verify ava-gemma4 in production~~ — confirmed it isn't suitable for the fast path; ava-personal is now the primary foreground model with ava-gemma4 reserved for the deep path.
+- The `hey_jarvis` proxy is no longer the bottleneck — disabled by default. Custom `hey_ava.onnx` training is the next planned wake-source upgrade but no longer urgent.
+
+Updated priorities (replacing the older Section 5 list):
+
+1. **User verifies the 6 afternoon fixes on real hardware** — clap + "hey ava what time is it" should reply correctly within 1-3s, time should be deterministic (no LLM), wake should log as `transcript_wake:hey_ava` not `openwakeword`, second-turn TTS should play through speakers, brain tab should feel fluid, test runs should attribute to claude_code not Zeke.
+2. **Memory rewrite step 5** — wire promotion/demotion based on the reflection log scores. Wait for ~50-100 turns of logged data first to validate the heuristics. The reflection scorer writes to `state/memory_reflection_log.jsonl`; once scores look reasonable, flip on level changes in a single targeted commit.
+3. **Memory rewrite steps 6 + 7** — archiving (3-streak rule) and gone-forever delete with tombstone log.
+4. **Train custom hey_ava.onnx** — still useful eventually; transcript_wake covers the gap fine for now.
+5. **Run onboarding** — `faces/zeke/` is still empty.
+6. **Audit mem0 fact extraction quality** — check `state/memory/mem0_chroma/` after ~30 real turns.
+7. **Boot time optimization** — currently 3 minutes cold; parallelize the four scan roots in `app_discoverer.py`.
+8. **Optional history rewrite** — public repo still has face photos and old state snapshots in earlier commits.
