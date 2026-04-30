@@ -7912,6 +7912,63 @@ if os.environ.get("AVA_PERIODIC_REWARM", "1").strip() != "0":
         daemon=True,
     ).start()
 
+
+# ── Memory level decay tick (Phase 2 step 3) ────────────────────────────
+# Walks the concept graph every hour, demoting levels of un-accessed
+# nodes per docs/MEMORY_REWRITE_PLAN.md § 2.2. At level 0, unarchived
+# nodes are deleted with a tombstone. Archived nodes clamp to level 1.
+#
+# IMPORTANT: this is the FIRST-half implementation — only DEMOTIONS run
+# right now. Promotions land in Phase 2 step 5 (after step 4 has
+# gathered reflection data to validate the scoring heuristics). Until
+# step 5, levels only go DOWN, not up; the rate is conservative enough
+# (12-hour threshold at level 5, the default) that this is safe over
+# a couple of days while step 4 runs.
+#
+# Kill switches:
+#   AVA_DECAY_DISABLED=1     → decay_levels() is a no-op
+#   AVA_DECAY_TICK_DISABLED=1 → daemon thread doesn't start at all
+def _ava_memory_decay_tick() -> None:
+    import time as _t
+    interval_s = 3600.0  # 1 hour
+    try:
+        _t.sleep(120.0)  # don't fire until 2 minutes after boot
+    except Exception:
+        return
+    while not bool(globals().get("_ava_shutdown")):
+        try:
+            _t.sleep(interval_s)
+            if bool(globals().get("_ava_shutdown")):
+                break
+            cg = globals().get("_concept_graph") or globals().get("concept_graph")
+            if cg is None or not callable(getattr(cg, "decay_levels", None)):
+                continue
+            try:
+                stats = cg.decay_levels()
+                if any(int(stats.get(k, 0)) for k in ("demoted", "deleted", "archived_floor")):
+                    print(
+                        f"[memory_decay] tick examined={stats.get('examined', 0)} "
+                        f"demoted={stats.get('demoted', 0)} "
+                        f"deleted={stats.get('deleted', 0)} "
+                        f"archived_floor={stats.get('archived_floor', 0)}"
+                    )
+            except Exception as _de:
+                print(f"[memory_decay] tick error (non-fatal): {_de!r}")
+        except Exception as _e:
+            print(f"[memory_decay] outer error: {_e!r}")
+            try:
+                _t.sleep(120.0)
+            except Exception:
+                return
+
+if os.environ.get("AVA_DECAY_TICK_DISABLED", "0").strip() != "1":
+    import threading as _decay_threading
+    _decay_threading.Thread(
+        target=_ava_memory_decay_tick,
+        name="ava-memory-decay",
+        daemon=True,
+    ).start()
+
 import signal as _signal
 
 _ava_shutdown = False

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import threading
 import time
@@ -40,6 +41,16 @@ class ConceptNode:
     color: str
     notes: str
     archived: bool = False
+    # Memory-rewrite fields (see docs/MEMORY_REWRITE_PLAN.md). The level
+    # is 1-10; 10 = highest priority (recently load-bearing), 1 =
+    # nearly forgotten. Decay walks levels down over time per the
+    # threshold table; reflection scoring (Phase 2 step 4+) walks
+    # them up. archive_streak counts consecutive load-bearing turns
+    # — at 3 streak hits, archived flips True and the node becomes
+    # immune to gone-forever delete at level 0.
+    level: int = 5
+    archive_streak: int = 0
+    archived_at: float = 0.0
 
 
 @dataclass
@@ -93,6 +104,16 @@ class ConceptGraph:
                 if not isinstance(row, dict):
                     continue
                 try:
+                    # New memory-rewrite fields default per docs/MEMORY_REWRITE_PLAN.md
+                    # so old concept_graph.json files load cleanly without rewrite.
+                    _level_raw = row.get("level")
+                    if _level_raw is None:
+                        _level = 5
+                    else:
+                        try:
+                            _level = max(1, min(10, int(_level_raw)))
+                        except (TypeError, ValueError):
+                            _level = 5
                     node = ConceptNode(
                         id=str(row.get("id") or ""),
                         label=str(row.get("label") or ""),
@@ -103,6 +124,9 @@ class ConceptGraph:
                         color=str(row.get("color") or TYPE_COLORS.get(str(row.get("type") or "topic"), "#4299e1")),
                         notes=str(row.get("notes") or ""),
                         archived=bool(row.get("archived", False)),
+                        level=_level,
+                        archive_streak=int(row.get("archive_streak") or 0),
+                        archived_at=float(row.get("archived_at") or 0.0),
                     )
                     if node.id:
                         self.nodes[node.id] = node
@@ -436,6 +460,132 @@ class ConceptGraph:
         if decayed:
             self._save()
         return decayed
+
+    # ── 10-level decay (memory rewrite Phase 2 step 3) ─────────────────────
+    # Per-level inactivity thresholds (seconds). Higher levels decay more
+    # slowly. See docs/MEMORY_REWRITE_PLAN.md § 2.2 for rationale.
+    _LEVEL_DECAY_THRESHOLDS_S: dict[int, float] = {
+        10: 7 * 86400,   # 7 days
+        9:  5 * 86400,   # 5 days
+        8:  3 * 86400,   # 3 days
+        7:  2 * 86400,   # 2 days
+        6:  1 * 86400,   # 1 day
+        5:  12 * 3600,   # 12 hours
+        4:  6 * 3600,    # 6 hours
+        3:  3 * 3600,    # 3 hours
+        2:  1 * 3600,    # 1 hour
+        1:  1 * 3600,    # 1 hour (then deletion)
+    }
+
+    def decay_levels(self, now: float | None = None) -> dict[str, int]:
+        """Walk all nodes; demote level if untouched past threshold.
+
+        At level 0, an unarchived node is deleted permanently and a
+        tombstone is appended to state/memory_tombstones.jsonl. Archived
+        nodes clamp to level 1 instead of being deleted.
+
+        Returns a counts dict for diagnostics:
+          {
+            "demoted": <int>,
+            "deleted": <int>,
+            "archived_floor": <int>,  # archived nodes prevented from delete
+            "examined": <int>,
+          }
+
+        Honors the AVA_DECAY_DISABLED env kill-switch — when set to "1"
+        this method is a no-op so the user can pause decay without a
+        code change if the rate proves wrong.
+        """
+        if os.environ.get("AVA_DECAY_DISABLED", "0").strip() == "1":
+            return {"demoted": 0, "deleted": 0, "archived_floor": 0, "examined": 0, "skipped": 1}
+
+        t_now = now if now is not None else time.time()
+        demoted = 0
+        deleted_ids: list[str] = []
+        archived_floor = 0
+        tombstones: list[dict[str, Any]] = []
+
+        for node_id, node in list(self.nodes.items()):
+            inactive_s = t_now - float(node.last_activated or 0.0)
+            threshold = self._LEVEL_DECAY_THRESHOLDS_S.get(int(node.level), 12 * 3600)
+            if inactive_s < threshold:
+                continue
+            # Past threshold for current level — demote.
+            new_level = int(node.level) - 1
+            if new_level >= 1:
+                node.level = new_level
+                node.last_activated = t_now  # reset timer for next level
+                demoted += 1
+                continue
+            # Hit level 0 — archived nodes clamp to 1, others get deleted.
+            if node.archived:
+                node.level = 1
+                node.last_activated = t_now
+                archived_floor += 1
+                continue
+            tombstones.append({
+                "ts": t_now,
+                "node_id": node_id,
+                "label": node.label,
+                "type": node.type,
+                "last_level": int(node.level),
+                "deleted_reason": "decay_floor",
+            })
+            deleted_ids.append(node_id)
+
+        # Remove deleted nodes + their incident edges.
+        for nid in deleted_ids:
+            self.nodes.pop(nid, None)
+        if deleted_ids:
+            self.edges = [
+                e for e in self.edges
+                if e.source not in deleted_ids and e.target not in deleted_ids
+            ]
+
+        # Append tombstones to log (best-effort; non-fatal).
+        if tombstones:
+            try:
+                tomb_path = self.base_dir / "state" / "memory_tombstones.jsonl"
+                tomb_path.parent.mkdir(parents=True, exist_ok=True)
+                with tomb_path.open("a", encoding="utf-8") as f:
+                    for t in tombstones:
+                        f.write(json.dumps(t, ensure_ascii=False) + "\n")
+            except OSError as _e:
+                print(f"[concept_graph] tombstone write failed (non-fatal): {_e!r}")
+
+        if demoted or deleted_ids or archived_floor:
+            self._save()
+
+        return {
+            "demoted": demoted,
+            "deleted": len(deleted_ids),
+            "archived_floor": archived_floor,
+            "examined": len(self.nodes) + len(deleted_ids),
+        }
+
+    def reset_node_level(self, node_id: str, level: int = 5) -> bool:
+        """Set a node's level explicitly. Used by reflection scoring
+        (Phase 2 step 5) to apply promotions/demotions. Clamps to 1-10.
+        """
+        node = self.nodes.get(node_id)
+        if node is None:
+            return False
+        node.level = max(1, min(10, int(level)))
+        node.last_activated = time.time()
+        self._save()
+        return True
+
+    def adjust_node_level(self, node_id: str, delta: int) -> bool:
+        """Adjust a node's level by delta, clamping to 1-10. Resets the
+        decay timer (last_activated). Returns True if the node existed.
+        """
+        node = self.nodes.get(node_id)
+        if node is None:
+            return False
+        node.level = max(1, min(10, int(node.level) + int(delta)))
+        node.last_activated = time.time()
+        self._save()
+        return True
 
 
 def _safe_read_json(path: Path) -> Any:
