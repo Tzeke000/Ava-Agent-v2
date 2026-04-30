@@ -314,7 +314,17 @@ def run_ava(
                 _cache_key = (str(_fast_model), 80)
                 _llm_fast = _llm_fast_cache.get(_cache_key)
                 if _llm_fast is None:
-                    _llm_fast = ChatOllama(model=_fast_model, temperature=0.7, num_predict=80)
+                    # keep_alive=-1 pins the model in Ollama's VRAM so it
+                    # never evicts on the default 5-minute timeout. Without
+                    # this, an idle gap of >5min causes the next user turn
+                    # to pay a 30-150s cold reload (observed in the lunch
+                    # voice test: 150914ms invoke after 13min idle).
+                    _llm_fast = ChatOllama(
+                        model=_fast_model,
+                        temperature=0.7,
+                        num_predict=80,
+                        keep_alive=-1,
+                    )
                     _llm_fast_cache[_cache_key] = _llm_fast
                 print(f"[perf] fast post-llm-init {_elapsed()}")
                 from brain.ollama_lock import with_ollama
