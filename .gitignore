@@ -8,11 +8,10 @@ memory/**/*.tmp
 
 chatlog.jsonl
 
-memory/chroma.sqlite3
+memory/
 state/
 profiles/
 ava_mood.json
-memory/self reflection/
 chatlog.jsonl
 
 apps/ava-control/src-tauri/target/
@@ -22,3 +21,12 @@ apps/ava-control/dist/
 state/camera/
 state/face_model.yml
 tmp_chat.json
+
+# Biometric data — face encodings + onboarding photos. Privacy-sensitive.
+faces/
+
+# Local Claude Code settings (per-machine config / permission allowlists)
+.claude/
+
+# Wake-word custom models — large ONNX, generated locally per machine.
+models/wake_words/*.onnx
