@@ -1,6 +1,6 @@
 # AVA HANDOFF
-**Last updated:** April 29, 2026 (voice-first upgrade pass)
-**Latest commit on master:** see `git log --oneline -1`
+**Last updated:** 2026-04-29 (post wake-word + signal-bus pass)
+**Latest commit:** see `git log --oneline -1`
 
 ---
 
@@ -8,14 +8,14 @@
 
 Ava Agent v2 is a local-first desktop AI companion running on:
 
-- **Python 3.11** + **Ollama** (local LLMs, optional cloud models via Ollama Cloud)
+- **Python 3.11** + **Ollama** (local LLMs, optional cloud via Ollama Cloud)
 - **FastAPI** operator server at `http://127.0.0.1:5876` (HTTP + WebSocket)
 - **Tauri v2** + **React 18** + **Three.js** desktop app (`apps/ava-control`)
-- **No Gradio** — Tauri is the only UI. Port 5876 is the only HTTP control plane.
+- **No Gradio** — Tauri is the only UI; port 5876 is the only HTTP control plane.
 
-She has emotions, memory, vision (live camera + InsightFace + eye tracking + expression calibration), voice (Kokoro neural TTS + Whisper base STT + always-on voice loop with attentive state), concept graph, episodic memory, dual-brain parallel inference, self-modification proposals, trust system, and a self-aware identity system.
+She has emotions, memory, vision (live camera + InsightFace + eye tracking + per-person expression calibration), voice (Kokoro neural TTS + Whisper base STT + Silero VAD + openWakeWord + always-on voice loop with attentive state), concept graph, episodic memory, dual-brain parallel inference, self-modification proposals, trust system, signal bus, and a self-aware identity system.
 
-All 100 phases complete. Recent passes have layered InsightFace + Kokoro + 3D brain graph + smart wake word + attentive voice state + per-person expression calibration on top.
+All 100 phases complete. Recent passes layered: InsightFace + Kokoro + 3D brain graph + smart wake word + attentive voice state + per-person expression calibration + voice command router + app discoverer + signal bus + openWakeWord + Silero VAD on top.
 
 ---
 
@@ -43,89 +43,111 @@ git add -A && git commit -m "..." && git push origin master
 
 **First-run notes:**
 - InsightFace `buffalo_l` weights (~280MB) download on first init.
-- ORT cudnn EXHAUSTIVE algorithm search runs ~60–90s on first init, then caches to disk; subsequent inits are fast.
+- ORT cudnn EXHAUSTIVE algorithm search runs ~60–90s on first init, then caches to disk.
 - Kokoro `hexgrad/Kokoro-82M` weights and spaCy `en_core_web_sm` download on first TTS use.
-- All three are background-thread loads — main startup reaches operator HTTP in <10s.
+- openWakeWord pre-trained `hey_jarvis_v0.1.onnx` is bundled with the package.
+- Silero VAD model downloads on first STT init.
+- All five are background-thread loads — main startup reaches operator HTTP in <10s.
 
 ---
 
-## Model Setup
+## Voice Pipeline (full flow)
 
-| Role | Model |
-|---|---|
-| Primary conversational | `ava-personal:latest` (fine-tuned) |
-| Foreground stream (dual-brain) | `ava-personal:latest` |
-| Background stream (dual-brain) | `qwen2.5:14b` / `kimi-k2.6:cloud` (when online) |
-| Deep reasoning | `qwen2.5:14b` |
-| Maintenance/evaluation | `mistral:7b` |
-| Embeddings | `nomic-embed-text` |
-| Cloud (when online) | `kimi-k2.6:cloud`, `qwen3.5:cloud`, `glm-5.1:cloud`, `minimax-m2.7:cloud` |
+```
+┌──────────────┐                        ┌──────────────┐
+│   PASSIVE    │  (always listening)    │              │
+│ openWakeWord │ ──────────────────────►│   LISTEN     │
+│  + ClapDet   │                        │ Silero VAD   │
+└──────────────┘                        │  + Whisper   │
+       │                                └──────┬───────┘
+       │ wake_source = "openwakeword"          │ transcribed
+       │             or "clap"                 │ + Eva→Ava normalized
+       │                                       ▼
+       │                                ┌──────────────┐
+       │                                │  WAKE GATE   │
+       │                                │ classify or  │
+       │                                │ short-circuit│
+       │                                └──────┬───────┘
+       │ direct address                        │
+       ▼                                       ▼
+                              ┌──────────────────────────┐
+                              │  Voice Command Router    │
+                              │ 40 builtins + custom     │
+                              └──────┬───────────────────┘
+                                     │ no match
+                                     ▼
+                              ┌──────────────────────────┐
+                              │       run_ava()          │
+                              │ fast-path or deep-path   │
+                              └──────┬───────────────────┘
+                                     │ reply text
+                                     ▼
+                              ┌──────────────────────────┐
+                              │   Kokoro TTS Worker      │
+                              │ OutputStream protected   │
+                              │ amplitude → orb pulse    │
+                              └──────┬───────────────────┘
+                                     │ playback complete
+                                     ▼
+                              ┌──────────────────────────┐
+                              │      ATTENTIVE 60s       │
+                              │ any speech > 0.8s        │
+                              │ → run_ava (no wake)      │
+                              └──────────────────────────┘
+```
 
-`brain/connectivity.py` polls `1.1.1.1` / `8.8.8.8` on a 30s cache. Cloud models are filtered out of routing when offline.
+**Wake word stack:**
+- `brain/wake_word.py` runs openWakeWord (ONNX, < 1% CPU). Currently uses `hey_jarvis` as a proxy until a custom `models/wake_words/hey_ava.onnx` is trained — see `docs/TRAIN_WAKE_WORD.md`. Verified by benchmark: `hey_jarvis` peaks 0.917 on Kokoro-synthesized "hey ava (af_bella)"; `hey_mycroft` and `hey_rhasspy` never cross 0.02 on the same samples.
+- `brain/clap_detector.py` runs alongside as the always-reliable wake. Floor 0.35 (keyboard/mouse never cross), double-clap window 0.6s, min separation 0.1s, 4s cooldown.
+- Either wake source stamps `g["_wake_source"]` so `wake_detector.classify` short-circuits to direct address (no clarification) and `voice_loop` skips classification entirely.
 
-**Ollama lock**: `brain/ollama_lock.py` provides a process-wide RLock around every Ollama invocation. Stream A and Stream B can't fight for the GPU. Stream B also calls `dual_brain.pause_background_now(30s)` on every turn entry so Zeke's request goes through cleanly.
+**STT:**
+- `WhisperModel("base")` on `cuda+float16` (or CPU int8 fallback)
+- `beam_size=5`, `language="en"`, `initial_prompt="Ava, hey Ava,"` (biases the model to keep "Ava" in transcripts), `vad_filter=True`
+- Tries `hotwords="Ava"` first; falls back gracefully if the installed faster-whisper version doesn't accept the kwarg
+- **Silero VAD** (`silero_vad.load_silero_vad()`) replaces RMS-energy speech detection — RTF ≈ 0.004, robust to keyboard/mouse/HVAC noise
+- Transcripts pass through `_normalize_transcript` to fix Whisper mishearings: `Eva → Ava`, `Aye va → Ava`, `A va → Ava`, `Hey Ada → Hey Ava` (with all punctuation variants)
 
----
+**TTS:**
+- `brain/tts_worker.py` runs Kokoro on a dedicated thread with `THREAD_PRIORITY_HIGHEST`
+- 28 voices. Default `af_heart` (warm). Per-emotion mapping picks `af_bella` (high-intensity expressive), `af_nicole` (soft/sad), `af_sky` (bright). Speed 0.7–1.3 scaled toward neutral by intensity.
+- Falls back to pyttsx3 + Zira (COM-isolated thread) if Kokoro can't init.
+- Playback uses `sd.OutputStream` chunked at 2048 samples — cannot be interrupted by window focus changes, mouse clicks, or other apps grabbing audio. The ONLY mid-stream aborts are explicit `g["_tts_muted"]=True` or worker shutdown.
+- Live amplitude: per-chunk RMS published to `g["_tts_amplitude"]` and module-level state for orb animation.
 
-## Voice Stack
-
-### TTS — Kokoro neural (CPU/GPU)
-- `brain/tts_worker.py` runs Kokoro on a dedicated thread.
-- Voices: 28 total. Default `af_heart`. Per-emotion mapping picks `af_bella` (high intensity expressive), `af_nicole` (soft / sad), `af_sky` (bright). Speed 0.7–1.3 scaled toward neutral by intensity.
-- Falls back to pyttsx3 + Zira if Kokoro can't init.
-- Live amplitude: RMS computed in 50ms windows during playback, exposed via `get_live_amplitude()` and `/api/v1/tts/state`.
-
-### STT — Whisper base
-- `brain/stt_engine.py` loads `WhisperModel("base")` on `cuda+float16` if available, falls back to `cpu+int8`.
-- `beam_size=5`, `language="en"`, `vad_filter=True`.
-- VAD threshold 0.008 RMS, min speech 0.3s, default silence 2.5s.
-- `listen_session()` returns `audio_array` and `sample_rate` so voice_mood_detector can reuse it (no extra recording).
-
-### Voice loop — passive / attentive / listening / thinking / speaking
-- `brain/voice_loop.py` state machine.
-- After speaking, drops into **attentive** for 60s: mic polls every 0.8s; speech > 1s treated as direct address (no wake word).
-- Wake word (passive only): `brain/wake_detector.py` regex DIRECT vs INDIRECT classifier; ambiguous → `brain/wake_learner.py` asks for clarification (5-min cooldown) and records the answer.
-- After STT, runs `brain/voice_mood_detector.py` on the audio array (reused, not re-recorded).
-- Word-count-aware silence: <3 words → 4s additional listening; ≥10 words → 1.5s end.
-
-### Voice mood
-- librosa-based pitch / energy / tempo / question detection.
-- Result `{label, energy, speed, is_question, avg_pitch}` stored in `g["_voice_mood"]` with `ts`.
-- `prompt_builder.py` injects `VOICE TONE: {label}` into both fast and deep paths when fresh (<60s).
+**Voice loop (state machine):**
+- `passive` — openWakeWord + clap detector listening
+- `attentive` — 60s post-speak window; mic polls every 0.8s; speech > 1s → run_ava without wake
+- `listening` — recording the user's utterance with Silero VAD silence detection
+- `thinking` — `run_ava()` is producing a reply
+- `speaking` — TTS is playing
 
 ---
 
 ## Vision Stack
 
 ### Face recognition — InsightFace (GPU)
-- `brain/insight_face_engine.py` loads buffalo_l: RetinaFace + ArcFace + 106-pt landmarks + age/gender + 3D head pose.
-- Provider: `CUDAExecutionProvider`. Pip-installed CUDA libs (`nvidia-cublas-cu12`, `nvidia-cufft-cu12`, `nvidia-curand-cu12`, `nvidia-cusolver-cu12`, `nvidia-cusparse-cu12`, `nvidia-cudnn-cu12`, `nvidia-cuda-runtime-cu12`, `nvidia-cuda-nvrtc-cu12`, `nvidia-nvjitlink-cu12`) are auto-registered with `os.add_dll_directory` before ORT import.
+- `brain/insight_face_engine.py` loads buffalo_l: RetinaFace + ArcFace + 106-pt landmarks + age/gender + 3D head pose
+- Runs on **CUDAExecutionProvider** via pip-installed CUDA libs (`cublas`, `cudnn`, `cufft`, `curand`, `cusolver`, `cusparse`, `cuda_runtime`, `cuda_nvrtc`, `nvjitlink`). `_add_cuda_paths()` registers each `site-packages/nvidia/*/bin/` with `os.add_dll_directory` BEFORE the ORT import.
 - Inference ~41ms/frame at runtime on RTX 5060.
-- `background_ticks._video_frame_capture_thread` runs InsightFace every 3rd frame (~5fps), pushes annotated frame to `frame_store`.
+- `background_ticks._video_frame_capture_thread` runs InsightFace every 3rd frame (~5fps), pushes annotated frame to `frame_store`, fires `SIGNAL_FACE_APPEARED` / `SIGNAL_FACE_LOST` / `SIGNAL_FACE_CHANGED` / `SIGNAL_EXPRESSION_CHANGED`.
 
 ### Camera annotator — `brain/camera_annotator.py`
-- Bounding box (green known / yellow unknown).
-- 106 landmarks (key points larger).
-- Head pose arrows from nose tip (green up / red right / blue forward).
-- Age + gender label.
-- Attention state at bottom-left (default "focused").
+- Bounding box (green known / yellow unknown), 106 landmarks (key points larger), head pose arrows from nose tip (green up / red right / blue forward), age + gender label, attention state at bottom-left.
 
 ### Per-person expression calibration — `brain/expression_calibrator.py`
-- EMA baseline of `eyebrow_ratio` and `mouth_corner_offset` per person, α=0.001.
-- 300 samples → calibrated. Persists to `state/expression_baseline_{person_id}.json`.
-- `detect_expression(person_id, landmarks)` returns deviation-from-baseline label: `surprised`, `frowning`, `smiling`, `neutral`. Solves the "naturally elevated eyebrows are read as surprised" problem.
+- EMA baseline of `eyebrow_ratio` and `mouth_corner_offset` per person, α=0.001
+- 300 samples → calibrated. Persists to `state/expression_baseline_{pid}.json`
+- Detects `surprised` / `frowning` / `smiling` / `neutral` as deviations from THAT person's baseline. Solves the "naturally elevated eyebrows are read as surprised" problem.
 
-### Eye tracking — MediaPipe (still used)
-- `brain/eye_tracker.py` for iris / gaze. Requires `protobuf 3.20.x` (downgraded from the 7.x InsightFace pulls).
-
-### Expression detector (legacy, fallback)
-- `brain/expression_detector.py` MediaPipe-based 468-pt detector. Still imported by some helper paths (`avaagent.analyze_expression`, `brain/camera.py`, `tools/system/eye_tracking_tool.py`). Useful when InsightFace is unavailable.
+### Eye tracking — MediaPipe
+- `brain/eye_tracker.py` for iris / gaze. Requires `protobuf 3.20.x` (pinned — InsightFace and others want newer; this is the constraint that broke during training-deps install attempt and was rolled back).
 
 ---
 
 ## Bootstrap Philosophy (CRITICAL — never violate)
 
-**NEVER choose Ava's personal preferences for her.** Every system involving preferences, style, or identity must build a discovery mechanism — Ava forms that aspect of herself through experience. Goals, hobbies, communication style, expression mappings, voice rate/volume, multitasking pattern, trust thresholds, and now per-person expression baselines + learned wake patterns all emerge from experience.
+**NEVER choose Ava's personal preferences for her.** Every system involving preferences, style, or identity must build a discovery mechanism — Ava forms that aspect of herself through experience. Goals, hobbies, communication style, expression mappings, voice rate/volume, multitasking pattern, trust thresholds, per-person expression baselines, learned wake patterns, custom commands, custom tabs, discovered apps — all emerge from experience.
 
 ---
 
@@ -145,9 +167,7 @@ Onboarding is the only way Ava learns to recognize a new person. Trigger it by s
 
 13 stages: `greeting → photo_front → photo_left → photo_right → photo_up → photo_down → confirm_photos → name_capture → pronouns → favorite_color → relationship → one_thing → complete`.
 
-For each photo stage, Ava waits for "ready", then captures 3 frames from the camera. Photos saved to `faces/{person_id}/{stage}_{n}.jpg`.
-
-**InsightFace integration** (post-audit): each captured frame is pushed into `engine.add_face(person_id, frame)` immediately, so recognition starts working within seconds — no restart needed. After the final stage, `engine.update_known_faces(faces/)` does a full reload to pick up anything missed. The legacy face_recognition lib also gets refreshed for fallback.
+Each captured frame is pushed into `engine.add_face(person_id, frame)` immediately, so recognition starts working within seconds — no restart needed. After the final stage, `engine.update_known_faces(faces/)` does a full reload to pick up anything missed. The legacy face_recognition lib is also refreshed for fallback purposes.
 
 ---
 
@@ -155,14 +175,17 @@ For each photo stage, Ava waits for "ready", then captures 3 frames from the cam
 
 | System | Status | Where |
 |---|---|---|
-| InsightFace init | wired | `startup.py` background thread + status print |
+| Signal bus | wired | `startup.py` (early bootstrap), heartbeat consume, prompt_builder peek |
+| openWakeWord | wired | `startup.py` calls `WakeWordDetector.start()` |
+| Silero VAD | wired | `STTEngine._init_vad`, used by `_has_speech` |
+| Kokoro TTS | wired | `tts_worker` singleton, OutputStream protected playback |
 | InsightFace per-frame | wired | `background_ticks._video_frame_capture_thread` every 3rd frame |
 | Camera annotator | wired | annotates `_face_results` cache, pushes to `frame_store` |
 | Expression calibrator | wired | per-frame `cal.calibrate_baseline + detect_expression` |
 | Onboarding → InsightFace | wired | `add_face` per-stage + `update_known_faces` on completion |
 | Voice loop attentive | wired | post-speak, 60s window, faster mic poll |
-| Wake detector | wired | classifies every transcript in passive |
-| Wake learner | wired | borderline conf → ask clarification |
+| Wake detector clap+oww shortcut | wired | classify short-circuits both sources to (True, 1.0) |
+| Wake learner | wired | borderline conf → ask + listen 8s for yes/no |
 | Voice mood (reuses STT audio) | wired | `_analyze_voice_mood_from_result(stt_result)` |
 | Voice mood prompt injection | wired | both fast and deep paths in `prompt_builder.py` |
 | Question engine | wired | heartbeat tick — speaks via tts_worker, mark_asked |
@@ -170,10 +193,16 @@ For each photo stage, Ava waits for "ready", then captures 3 frames from the cam
 | Ollama lock | wired | reply_engine fast + main, dual_brain live_thought + critique + creative |
 | Stream B pause on turn | wired | `pause_background_now(30)` at run_ava entry |
 | Chat history persistence | wired | `state/chat_history.jsonl` append in turn_handler |
-| Clipboard monitor | wired | `background_ticks._clipboard_monitor_loop` 2s |
-| TTS worker → main + widget orb | wired | `_tts_worker` singleton, live amplitude |
+| Voice command router | wired | top of run_ava — 40 built-ins + custom |
+| App discoverer | wired | `startup.py` background thread, daily incremental rescan |
+| Reminder system | wired | heartbeat sweep + urgent SIGNAL_REMINDER_DUE handler |
 | 3D brain graph | wired | `3d-force-graph 1.80` in App.tsx, init-once + graphData updates |
 | Orb breathing + drift | wired | rootGroup scale + position every frame in animate() |
+| Custom tabs | wired | `/api/v1/ui/custom_tabs` + CustomTabRenderer |
+| Tab routing | wired | `/api/v1/ui/tab` polled every 1s |
+| Win32 clipboard hook | wired | AddClipboardFormatListener → SIGNAL_CLIPBOARD_CHANGED |
+| Win32 window hook | wired | SetWinEventHook(EVENT_SYSTEM_FOREGROUND) → SIGNAL_ACTIVE_WINDOW_CHANGED |
+| Win32 app install hook | wired | ReadDirectoryChangesW → SIGNAL_NEW_APP_INSTALLED |
 
 ---
 
@@ -206,7 +235,9 @@ For each photo stage, Ava waits for "ready", then captures 3 frames from the cam
 |---|---|
 | `state/chat_history.jsonl` | Persisted user/assistant turns with model, emotion, route |
 | `state/expression_baseline_{pid}.json` | Per-person eyebrow + mouth EMA baseline |
+| `state/wake_patterns.json` | Wake activations with hour + source |
 | `state/wake_patterns_learned.json` | Patterns Ava learned from clarification answers |
+| `state/clap_calibration.json` | Auto-calibrated clap threshold (deleted on every audit) |
 | `state/question_history.jsonl` | Questions Ava asked + answers received |
 | `state/voice_style.json` | Adaptive voice rate/volume |
 | `state/connectivity_log.jsonl` | Online/offline transitions |
@@ -219,30 +250,42 @@ For each photo stage, Ava waits for "ready", then captures 3 frames from the cam
 | `state/trust_scores.json` | Per-person progressive trust |
 | `state/eye_tracking/` | Calibration + gaze samples |
 | `state/video_memory/` | Visual episodic clusters |
+| `state/discovered_apps.json` | Found apps + games registry |
+| `state/learned_apps.json` | Phrase → exe path mapping |
+| `state/learned_commands.json` | Correction-learned mappings |
+| `state/correction_log.jsonl` | Append-only correction history |
+| `state/reminders.jsonl` | Pending + delivered reminders |
+| `state/custom_commands.json` | Voice commands Ava/Zeke created |
+| `state/custom_tabs.json` | UI tabs Ava/Zeke created |
 
 ---
 
-## Module Map (current brain/)
+## Module Map (current `brain/`)
 
 | Module | Role |
 |---|---|
 | `avaagent.py` | Main runtime; delegates startup |
 | `brain/startup.py` | All subsystem init in background daemon threads |
+| `brain/signal_bus.py` | Lightweight event bus — peripheral awareness |
 | `brain/operator_server.py` | FastAPI HTTP + WebSocket |
 | `brain/reply_engine.py` | `run_ava` — main turn pipeline + simple-question fast path |
-| `brain/prompt_builder.py` | System + memory + voice-tone block |
+| `brain/prompt_builder.py` | System + memory + voice-tone + signal-bus context blocks |
 | `brain/dual_brain.py` | Foreground + background parallel inference |
 | `brain/ollama_lock.py` | Process-wide Ollama serialization |
 | `brain/voice_loop.py` | passive / attentive / listening / thinking / speaking |
-| `brain/wake_detector.py` | Direct vs indirect address regex classifier |
+| `brain/wake_word.py` | openWakeWord (ONNX) + Whisper-poll fallback |
+| `brain/wake_detector.py` | Direct vs indirect classifier; clap + oww shortcut |
 | `brain/wake_learner.py` | Clarification + learned-pattern persistence |
 | `brain/voice_mood_detector.py` | librosa pitch/energy/tempo/question |
+| `brain/voice_commands.py` | 40 built-ins + custom command router |
+| `brain/command_builder.py` | Custom command + custom tab CRUD |
+| `brain/correction_handler.py` | "no, I meant X" detection + learning |
+| `brain/app_discoverer.py` | Desktop / Start Menu / Program Files / Steam / Epic scan |
 | `brain/question_engine.py` | When Ava asks Zeke things; cooldowns |
-| `brain/tts_worker.py` | Kokoro + pyttsx3 fallback, live amplitude |
+| `brain/tts_worker.py` | Kokoro + pyttsx3 fallback, OutputStream protected, live amplitude |
 | `brain/tts_engine.py` | TTS coordinator (wraps worker) |
-| `brain/stt_engine.py` | Whisper base; returns audio_array for reuse |
-| `brain/clap_detector.py` | Double-clap wake (5× ambient, 0.15 floor) |
-| `brain/wake_word.py` | Porcupine + whisper-poll wake |
+| `brain/stt_engine.py` | Whisper base + Silero VAD; transcript normalization |
+| `brain/clap_detector.py` | Double-clap wake (floor 0.35, window 0.6s) |
 | `brain/insight_face_engine.py` | InsightFace buffalo_l GPU engine |
 | `brain/camera_annotator.py` | Per-frame face overlays |
 | `brain/expression_calibrator.py` | Per-person expression baseline |
@@ -252,7 +295,7 @@ For each photo stage, Ava waits for "ready", then captures 3 frames from the cam
 | `brain/video_memory.py` | Persistent visual episodes |
 | `brain/connectivity.py` | Online/offline monitor |
 | `brain/frame_store.py` | Buffered live-frame publisher |
-| `brain/heartbeat.py` | Periodic background tasks; question + proactive checks |
+| `brain/heartbeat.py` | Periodic background tasks; signal consume; question + proactive checks |
 | `brain/concept_graph.py` | Concept graph; Windows-safe save |
 | `brain/episodic_memory.py` | Episode store + recall |
 | `brain/relationship_arc.py` | Familiarity → relationship stage |
@@ -260,69 +303,7 @@ For each photo stage, Ava waits for "ready", then captures 3 frames from the cam
 | `brain/proactive_triggers.py` | Face greeting + Stream B insight delivery |
 | `brain/person_onboarding.py` | 13-stage flow; pushes embeddings to InsightFace |
 | `brain/health.py` | Health check (camera reads frame_store now) |
-| `brain/background_ticks.py` | Heartbeat + video capture + clipboard daemons |
-| `brain/voice_commands.py` | VoiceCommandRouter — 37 built-ins + custom commands |
-| `brain/command_builder.py` | Custom command + custom tab CRUD |
-| `brain/correction_handler.py` | "no, I meant X" detection + learning |
-| `brain/app_discoverer.py` | Desktop / Start Menu / Program Files / Steam / Epic scan |
-| `tools/system/reminder_tool.py` | set_reminder / get_reminders / cancel_reminders + heartbeat delivery |
-| `tools/system/pointer_tool.py` | point_at_element + point_at_screen_object via LLaVA |
-
----
-
-## Voice-first stack (NEW)
-
-**VoiceCommandRouter** — `brain/voice_commands.py` runs at the very top of
-`run_ava` for every input. 37 built-in commands cover:
-
-- **UI navigation**: "show me your brain", "open journal", "show status", etc
-- **Journal**: "what did you write in your journal", "write in journal about X"
-- **Inner life**: "what are you thinking", "what's your mood"
-- **Time / date**: "what time is it", "what's today's date"
-- **System**: "check the system", "how's the computer"
-- **Voice control**: "mute", "unmute", "go to sleep", "wake up", "help"
-- **Apps**: "open chrome", "close notepad", "play dino game"
-- **Widget**: "move to top right", "come here", "get out of the way"
-- **Reminders**: "remind me to X in N minutes", "list reminders", "cancel reminders"
-- **Builder**: "make a command", "remember that X means Y", "make a tab called X"
-- **Pointing**: "show me X", "where is X"
-
-Custom commands live in `state/custom_commands.json` (created via
-`brain/command_builder.create_command` — Ava builds her own at runtime).
-Trigger format examples:
-- action `tab:brain` → switch tab
-- action `open:chrome` → launch app
-- action `move:top_right` → reposition widget
-- action `say:Hello` → speak literal text
-- action `tool:set_reminder:{"text":"foo","minutes":5}` → invoke any registered tool
-
-**App discoverer** — `brain/app_discoverer.py` scans Desktop, Start Menu,
-Program Files (x86 + 64), LOCALAPPDATA, Steam (libraryfolders.vdf-aware), and
-Epic Games on startup (background thread) and refreshes every 24h. Provides
-fuzzy match on name + aliases (e.g. "vscode" → Visual Studio Code) used by
-the voice command router and the `open_app` tool.
-
-**Correction handler** — `brain/correction_handler.py` detects "no, I meant
-X" / "wrong one" / "I said X not Y" patterns. When triggered, looks up
-`g["_last_action"]` and either re-routes the replacement phrase or asks for
-clarification. Mappings persist to `state/learned_commands.json`.
-
-**Reminders** — `tools/system/reminder_tool.py` persists pending reminders
-to `state/reminders.jsonl`. The heartbeat tick checks every cycle and
-speaks any due reminders via the TTS worker.
-
-**Tab routing** — `POST /api/v1/ui/tab` sets `g["_requested_tab"]`; the
-frontend polls `GET /api/v1/ui/tab` every 1s, switches tab, server clears
-the flag on read.
-
-**Custom tabs** — `state/custom_tabs.json` stores tab configs created via
-`command_builder.create_tab`. Frontend polls `/api/v1/ui/custom_tabs` every
-30s and renders via `CustomTabRenderer`. Supported types: `web_embed`,
-`journal_view`, `data_display`, `image_gallery`, `custom_stats`, `chat_log`.
-
-**Screen object pointing** — `pointer_tool.point_at_screen_object` takes a
-screenshot, asks LLaVA for percent coordinates, moves the widget orb to the
-located point, morphs to pointer shape for 5 seconds.
+| `brain/background_ticks.py` | Heartbeat + video capture + Win32 clipboard / window / app-install watchers |
 
 ---
 
@@ -330,25 +311,55 @@ located point, morphs to pointer shape for 5 seconds.
 
 ORT 1.25.1 expects CUDA 12 runtime libs. They are pip-installed via:
 ```
-nvidia-cublas-cu12, nvidia-cudnn-cu12, nvidia-cuda-runtime-cu12, nvidia-cuda-nvrtc-cu12,
-nvidia-cufft-cu12, nvidia-curand-cu12, nvidia-cusolver-cu12, nvidia-cusparse-cu12,
-nvidia-nvjitlink-cu12
+nvidia-cublas-cu12, nvidia-cudnn-cu12, nvidia-cuda-runtime-cu12,
+nvidia-cuda-nvrtc-cu12, nvidia-cufft-cu12, nvidia-curand-cu12,
+nvidia-cusolver-cu12, nvidia-cusparse-cu12, nvidia-nvjitlink-cu12
 ```
 
-`brain/insight_face_engine._add_cuda_paths()` registers each `site-packages/nvidia/*/bin/` with `os.add_dll_directory` BEFORE the ORT import. This is the Python 3.8+ Windows-recommended way — `PATH` alone isn't enough for ORT's native loader on modern Windows.
+`brain/insight_face_engine._add_cuda_paths()` registers each `site-packages/nvidia/*/bin/` with `os.add_dll_directory` BEFORE the ORT import.
 
 Verified providers: `['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']`. All 5 buffalo_l ONNX sessions report `Applied providers: ['CUDAExecutionProvider', 'CPUExecutionProvider']`.
 
 ---
 
-## Known Issues / Open Items (for testing)
+## protobuf Pin
 
-1. **Voice mood now reuses STT audio** — no extra recording, no added latency. Verify in logs: `[voice_mood] ... (reused STT audio)`.
-2. **Camera health check** — now reads `frame_store.peek_buffer_age_sec()` first; only reports `error` if no frames for >10s. Earlier "Health: ERROR | camera:error" should no longer fire when capture is running.
-3. **First-run InsightFace warmup ~80s** — startup logs warn about this; subsequent runs hit the cudnn cache.
-4. **Simple question fast path** — verified end-to-end in `reply_engine.run_ava`. Logs `[run_ava] FAST PATH: simple question` and `FAST PATH complete in {time}s`.
-5. **face_recognition lib** still used as fallback when InsightFace is unavailable. Keep dlib-built install around.
-6. **expression_detector.py (MediaPipe)** still wired in 5 helper paths. Coexists with `expression_calibrator` (which uses InsightFace landmarks). Either is acceptable.
+`protobuf` is **pinned to 3.20.x**. MediaPipe (used by `brain/eye_tracker.py`) requires `<4`. InsightFace pulls 7.x and several training extras (`audiomentations`, `onnx`, `proto-plus`) want 7.x — those are tolerated as warnings; the runtime works with 3.20.3.
+
+If a future install bumps protobuf, MediaPipe will fail with `'MessageFactory' object has no attribute 'GetPrototype'`. Restore with:
+```bash
+py -3.11 -m pip install "protobuf>=3.20,<4" --force-reinstall
+```
+
+---
+
+## Hot Fix History (chronological — newest first)
+
+| Commit | Fix |
+|---|---|
+| `4477aa2` | openWakeWord + Silero VAD — production wake word + speech detection |
+| `a740bcc` | Voice — clap=direct wake, Whisper Ava bias, clarification waits, OutputStream protected playback, clap floor 0.35 |
+| `755f539` | Event-driven signal bus, Win32 clipboard / window / app-install watchers, zero-poll architecture |
+| `8affd49` | Voice-first UI, app discovery, voice commands, custom tabs, correction handler, pointing, reminders |
+| `94bca07` | Audit pass — dead code cleanup, wiring verification, onboarding InsightFace, perf, health |
+| `9d07838` | Register pip-installed CUDA DLL dirs so InsightFace runs on GPU |
+| `3a5a333` | InsightFace overlays, smart wake word, attentive state, expression calibration, voice mood, 3D brain |
+| `357dd69` | InsightFace GPU face overlay, 3D brain graph, Whisper base, orb breathing, chat fixes |
+| `346d30c` | Kokoro neural TTS, orb voice reactions, real amplitude, companion orb sync |
+| `fa583ea` | TTS COM thread, Ollama lock, fast path timing, chat history, face greeting, clipboard, proactive |
+| `e80e1d3` | Phase 100 — Ava is alive |
+
+---
+
+## Known Issues / What Needs Testing
+
+1. **Wake word**: `hey_jarvis` is a proxy — fires reliably on some "hey ava" voices (af_bella scored 0.917) but not all (af_heart 0.307, af_nicole 0.001). Mitigated by clap detector and attentive state. Custom `hey_ava.onnx` training requires WSL2 — see `docs/TRAIN_WAKE_WORD.md`.
+2. **First-run InsightFace warmup ~80s** — startup logs warn about this; subsequent runs hit the cudnn cache.
+3. **face_recognition lib** still used as fallback when InsightFace is unavailable. Keep dlib-built install around.
+4. **expression_detector.py (MediaPipe)** still wired in 5 helper paths. Coexists with `expression_calibrator` (which uses InsightFace landmarks). Either is acceptable.
+5. **App discoverer scan ~47s** — one-time startup cost in a background thread; 24h refresh is incremental.
+6. **Clap detector** — floor 0.35 + 4s cooldown should prevent keyboard false-positives. Verify in real-world use.
+7. **Game category** in app discoverer over-includes Steam helper binaries (`gameoverlayui64.exe`, `steamservice.exe`). Fuzzy match prioritises user-friendly names; cosmetic only.
 
 ---
 
@@ -356,16 +367,14 @@ Verified providers: `['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPU
 
 | Test | Result |
 |---|---|
-| `wake_detector` 10/10 cases | PASS |
-| `expression_calibrator` neutral / surprised / smiling on synthetic 106-pt | PASS |
-| `voice_mood_detector` excited / neutral / question on synthetic tones | PASS |
-| `question_engine` cooldown + busy-mode skip | PASS |
-| InsightFace GPU initialization | PASS (`provider=CUDAExecutionProvider`, ~41ms/frame) |
-| `tts_worker` Kokoro speak with emotion + live amplitude RMS | PASS (45 non-zero amplitude samples / 50 chars) |
-| Ollama lock serialization | PASS (concurrent calls serialize as expected) |
-| `protobuf 3.20.3` — both mediapipe and insightface working | PASS |
-| `tsc --noEmit` clean | PASS |
-| `npm run tauri:build` | PASS |
+| openWakeWord install + hey_jarvis load | PASS |
+| Silero VAD install + load_silero_vad() | PASS |
+| Wake detector: clap → (True, 1.0, "clap_triggered") | PASS |
+| Wake detector: openwakeword → (True, 1.0, "openwakeword_triggered") | PASS |
+| STTEngine._normalize_transcript: 5/5 mishearings normalized | PASS |
+| Phonetic benchmark: hey_jarvis vs mycroft vs rhasspy on Kokoro samples | DONE — hey_jarvis is the only viable proxy |
+| `tsc --noEmit` | PASS |
+| `npm run tauri:build` | (last verified `8affd49`) |
 
 ---
 
@@ -376,8 +385,9 @@ Verified providers: `['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPU
 - Model routing
 - Strategic continuity / memory
 - Self-improvement loop state
-- Deep self snapshot (mood, energy, critique averages, pending repairs)
+- Deep self snapshot
 - Connectivity state
-- Dual-brain status (foreground busy, background queue, live thought)
+- Dual-brain status
 - Vision: recognized person, expression, attention, gaze
+- Signal bus stats
 - Full snapshot JSON (truncated)
