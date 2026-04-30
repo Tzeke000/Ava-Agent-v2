@@ -70,6 +70,13 @@ class ConceptGraph:
         self.last_updated: float = time.time()
         self.last_bootstrap: float = 0.0
         self.version: int = 1
+        # Save throttle — when concept_graph.json is locked by another
+        # process (antivirus / OneDrive sync / file explorer preview) the
+        # tmp-replace step fails with WinError 5/32. Without backoff, every
+        # subsequent add_node call retries immediately and floods stderr.
+        # Exponential backoff: 1, 2, 4, 8, 16, 32, capped at 60 seconds.
+        self._save_backoff_until: float = 0.0
+        self._save_consecutive_failures: int = 0
         self._load()
 
     def _load(self) -> None:
@@ -120,7 +127,14 @@ class ConceptGraph:
             return
 
     def _save(self) -> None:
-        self.last_updated = time.time()
+        # Honor backoff window — if a recent save hit a lock conflict, skip
+        # silently until the backoff_until timestamp passes. This stops tight
+        # add_node/_save loops from retrying every 50ms while concept_graph.json
+        # is locked by an external process (antivirus / OneDrive / preview).
+        now = time.time()
+        if self._save_backoff_until > now:
+            return
+        self.last_updated = now
         payload = {
             "nodes": [asdict(n) for n in self.nodes.values()],
             "edges": [asdict(e) for e in self.edges],
@@ -129,6 +143,17 @@ class ConceptGraph:
             "version": self.version,
         }
         tmp = self.path.with_suffix(".json.tmp")
+
+        def _bump_backoff(reason: str) -> None:
+            # 1, 2, 4, 8, 16, 32, then capped at 60 seconds.
+            self._save_consecutive_failures += 1
+            delay = min(60.0, 2.0 ** max(0, self._save_consecutive_failures - 1))
+            self._save_backoff_until = time.time() + delay
+            # Only print on the first failure of a streak so logs stay quiet
+            # when the lock is held for minutes.
+            if self._save_consecutive_failures == 1:
+                print(f"[concept_graph] save throttled ({reason}) — backoff {delay:.0f}s")
+
         # All file operations must happen under the lock to prevent TOCTOU races
         # between concurrent threads in the same process.
         with _SAVE_LOCK:
@@ -137,6 +162,7 @@ class ConceptGraph:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
             except OSError as _mkdir_e:
                 print(f"[concept_graph] mkdir failed for {self.path.parent}: {_mkdir_e!r}")
+                _bump_backoff("mkdir_failed")
                 return
             # Stale .tmp from previous crashed instance — try to clear it
             if tmp.is_file():
@@ -144,10 +170,14 @@ class ConceptGraph:
                     tmp.unlink()
                 except OSError:
                     # Still locked by another process — skip this save
+                    _bump_backoff("tmp_locked")
                     return
             try:
                 tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
                 tmp.replace(self.path)
+                # Successful save — reset backoff state.
+                self._save_consecutive_failures = 0
+                self._save_backoff_until = 0.0
             except OSError as _e:
                 _winerr = getattr(_e, "winerror", None)
                 if _winerr in (5, 32):
@@ -156,11 +186,14 @@ class ConceptGraph:
                         tmp.unlink(missing_ok=True)
                     except Exception:
                         pass
+                    _bump_backoff(f"winerror_{_winerr}")
                 else:
                     # Unexpected OSError — log full paths to aid diagnosis
                     print(f"[concept_graph] save failed path={self.path} tmp={tmp}: {_e!r}")
+                    _bump_backoff("oserror")
             except Exception as _e2:
                 print(f"[concept_graph] save unexpected error path={self.path}: {_e2!r}")
+                _bump_backoff("unexpected")
 
     def add_node(self, label: str, type: NodeType, notes: str = "") -> str:
         node_id = _slugify(label)
