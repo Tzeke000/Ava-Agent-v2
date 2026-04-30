@@ -523,6 +523,96 @@ def _ext_test_sequential_fast_path_latency() -> dict:
     }
 
 
+def _ext_test_concept_graph_save_under_load() -> dict:
+    """Verify concept_graph backoff prevents save-failure log spam under
+    rapid turn pressure.
+
+    Background: brain/concept_graph.py:_save() now has exponential
+    backoff (1, 2, 4, 8, 16, 32, 60s capped) when concept_graph.json
+    is locked by an external process. Without backoff, 10+ rapid
+    add_node calls would each retry immediately, flooding stderr.
+
+    Steps:
+      1. Baseline: read /debug/full — count concept_graph_state.total_nodes
+         and how many errors_recent entries mention concept_graph
+      2. Inject 10 fast-path turns rapidly with varying short text so
+         the concept graph has fresh material to add (proper turns
+         exercise the add_node/_save path)
+      3. Brief settle (1.5s)
+      4. Final: read /debug/full again
+      5. Pass if no NEW concept_graph errors appeared in errors_recent
+
+    Pass:  errors_during_load_count == 0
+    Fail:  errors_recent grew with messages containing "concept_graph"
+
+    Note: this doesn't force a lock conflict (the file probably isn't
+    locked by an external process during the test). What it DOES test
+    is that the save path doesn't throw under rapid-fire turn load —
+    if the backoff state gets confused or a race condition exists,
+    we'd see exceptions in errors_recent.
+    """
+    label = "concept_graph_save_under_load"
+    t0 = time.time()
+    fails: list[str] = []
+    details: dict = {}
+
+    pre = _debug_full() or {}
+    pre_nodes = int((pre.get("concept_graph_state") or {}).get("total_nodes") or 0)
+    pre_cg_errors = sum(
+        1 for e in (pre.get("errors_recent") or [])
+        if "concept_graph" in str(e.get("message", "") + e.get("module", ""))
+    )
+    details["pre_total_nodes"] = pre_nodes
+    details["pre_cg_error_count"] = pre_cg_errors
+
+    # 10 rapid fast-path turns. Vary the content slightly so the
+    # concept_graph might extract different concepts each time.
+    inputs = [
+        "hi ava", "what time is it", "thanks", "got it", "ok ava",
+        "hey ava", "hello", "what's up", "how are you", "tell me a joke",
+    ]
+    inject_t0 = time.time()
+    completed = 0
+    for text in inputs:
+        status, payload, _err = _inject(text, speak=False, timeout_s=15.0)
+        if status == 200 and isinstance(payload, dict) and payload.get("ok"):
+            completed += 1
+    details["completed_turns"] = completed
+    details["total_inject_seconds"] = round(time.time() - inject_t0, 2)
+
+    # Brief settle so background concept_graph saves complete.
+    time.sleep(1.5)
+
+    post = _debug_full() or {}
+    post_nodes = int((post.get("concept_graph_state") or {}).get("total_nodes") or 0)
+    post_cg_errors_list = [
+        e for e in (post.get("errors_recent") or [])
+        if "concept_graph" in str(e.get("message", "") + e.get("module", ""))
+    ]
+    details["post_total_nodes"] = post_nodes
+    details["post_cg_error_count"] = len(post_cg_errors_list)
+    details["new_cg_errors"] = len(post_cg_errors_list) - pre_cg_errors
+    if details["new_cg_errors"] > 0:
+        # Capture a sample for the report.
+        details["new_cg_error_samples"] = [
+            e for e in post_cg_errors_list[-5:]
+        ]
+        fails.append(
+            f"{details['new_cg_errors']} new concept_graph error(s) during load"
+        )
+
+    if completed < 8:
+        fails.append(f"only {completed}/10 turns completed (system instability under load)")
+
+    return {
+        "label": label,
+        "wall_seconds": round(time.time() - t0, 3),
+        "passed": not fails,
+        "fail_reasons": fails,
+        "details": details,
+    }
+
+
 EXTENDED_TESTS = [
     _ext_test_conversation_active_gating,
     _ext_test_self_listen_guard_observable,
@@ -530,6 +620,7 @@ EXTENDED_TESTS = [
     _ext_test_wake_source_variety,
     _ext_test_weird_inputs,
     _ext_test_sequential_fast_path_latency,
+    _ext_test_concept_graph_save_under_load,
 ]
 
 
