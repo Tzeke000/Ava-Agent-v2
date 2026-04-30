@@ -56,8 +56,15 @@ TEST_BATTERY = [
 # are independent — each can be removed without breaking the others.
 
 def _inject(text: str, *, source: str = "regression", speak: bool = False,
+            as_user: str = "claude_code",
             timeout_s: float = 30.0) -> tuple[int, dict | None, str]:
-    """Helper: drive a synthetic turn and return (status, payload, err)."""
+    """Helper: drive a synthetic turn and return (status, payload, err).
+
+    All test injects route through the claude_code developer profile by
+    default — keeps Zeke's relationship state, mood history, threads, and
+    memory clean of regression-test traffic. Override with as_user="zeke"
+    when explicitly testing the real-user identity-resolution path.
+    """
     return _http_post_json(
         f"{DEFAULT_BASE}/api/v1/debug/inject_transcript",
         {
@@ -65,6 +72,7 @@ def _inject(text: str, *, source: str = "regression", speak: bool = False,
             "wake_source": source,
             "wait_for_audio": False,
             "speak": speak,
+            "as_user": as_user,
             "timeout_seconds": timeout_s,
         },
         timeout=timeout_s + 30.0,
@@ -781,6 +789,77 @@ def _ext_test_back_to_back_tts_no_drop() -> dict:
     }
 
 
+def _ext_test_identity_routing() -> dict:
+    """Verify as_user routing — claude_code turns are isolated from Zeke,
+    real-user turns (as_user unset) still resolve to Zeke.
+
+    The lunch voice test exposed that test traffic from Claude Code was
+    pulluting Zeke's relationship state. Fix: inject_transcript accepts
+    an as_user param; tests default to claude_code; real voice turns
+    (which never use inject_transcript) continue to use Zeke. This test
+    asserts both code paths.
+
+    Steps:
+      1. Inject "hi there" with as_user=claude_code — verify trace shows
+         person=claude_code in [perf] line
+      2. Inject "hi there" with as_user=zeke — verify person=zeke
+      3. Both must produce non-empty replies (proves both profiles load
+         correctly and run_ava handles each)
+    """
+    label = "identity_routing"
+    t0 = time.time()
+    fails: list[str] = []
+    details: dict = {"calls": []}
+
+    cases = [
+        ("claude_code", "hi there"),
+        ("zeke", "hi there"),
+    ]
+    for as_user, text in cases:
+        per: dict = {"as_user": as_user, "text": text}
+        c_t0 = time.time()
+        status, payload, err = _inject(
+            text, speak=False, as_user=as_user, timeout_s=10.0
+        )
+        per["http_status"] = status
+        per["elapsed"] = round(time.time() - c_t0, 3)
+        if status != 200 or not isinstance(payload, dict):
+            fails.append(f"as_user={as_user!r}: inject failed status={status}")
+            details["calls"].append(per)
+            continue
+        per["reply_chars"] = int(payload.get("reply_chars") or 0)
+        if per["reply_chars"] <= 0:
+            fails.append(f"as_user={as_user!r}: empty reply")
+        # Inspect trace for person attribution.
+        traces = payload.get("trace_lines_for_turn") or []
+        person_lines = [t for t in traces if "person=" in t]
+        per["person_trace_sample"] = person_lines[:1]
+        # The [perf] start line stamps person=<id>. Test that it matches
+        # what we asked for.
+        person_in_trace = ""
+        for t in person_lines:
+            # extract person=foo
+            idx = t.find("person=")
+            if idx >= 0:
+                rest = t[idx + 7:]
+                person_in_trace = rest.split()[0].rstrip(",")
+                break
+        per["person_in_trace"] = person_in_trace
+        if person_in_trace and person_in_trace != as_user:
+            fails.append(
+                f"as_user={as_user!r}: trace says person={person_in_trace!r}"
+            )
+        details["calls"].append(per)
+
+    return {
+        "label": label,
+        "wall_seconds": round(time.time() - t0, 3),
+        "passed": not fails,
+        "fail_reasons": fails,
+        "details": details,
+    }
+
+
 EXTENDED_TESTS = [
     _ext_test_conversation_active_gating,
     _ext_test_self_listen_guard_observable,
@@ -791,6 +870,7 @@ EXTENDED_TESTS = [
     _ext_test_concept_graph_save_under_load,
     _ext_test_time_date_no_llm,
     _ext_test_back_to_back_tts_no_drop,
+    _ext_test_identity_routing,
 ]
 
 
@@ -967,6 +1047,7 @@ def run_battery(warmup_s: float = 30.0) -> dict:
                 "wake_source": "regression",
                 "wait_for_audio": False,
                 "speak": False,  # don't block on audio for battery — TTS path tested separately
+                "as_user": "claude_code",  # don't pollute Zeke's profile state with test traffic
                 "timeout_seconds": target_s + 5.0,
             }
             status, payload, err = _http_post_json(

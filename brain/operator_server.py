@@ -2060,6 +2060,21 @@ def create_app():
         wake_source = (str(body.get("wake_source") or "test_wake")).strip() or "test_wake"
         wait_for_audio = bool(body.get("wait_for_audio") or False)
         do_speak = bool(body.get("speak") if body.get("speak") is not None else True)
+        # Identity routing — defaults to "zeke" for backwards compatibility
+        # so existing callers (and real voice turns going through other code
+        # paths) don't change behaviour. Setting as_user=claude_code routes
+        # the turn through the developer profile, isolating test runs from
+        # Zeke's relationship state, mood history, and memory.
+        as_user = (str(body.get("as_user") or "")).strip() or "zeke"
+        # Ensure the claude_code profile file exists before run_ava tries to
+        # load it. profiles/ is gitignored so the file isn't checked in;
+        # the dev_profiles module writes it on first claude_code request.
+        if as_user == "claude_code":
+            try:
+                from brain.dev_profiles import ensure_claude_code_profile
+                ensure_claude_code_profile(host.get("BASE_DIR"))
+            except Exception as _ee:
+                print(f"[inject_transcript] ensure_claude_code_profile failed: {_ee!r}")
         try:
             timeout_s = max(1.0, min(120.0, float(body.get("timeout_seconds") or 30.0)))
         except (TypeError, ValueError):
@@ -2086,7 +2101,11 @@ def create_app():
         try:
             from brain.reply_engine import run_ava as _run_ava
             t0 = time.time()
-            result = _run_ava(text)
+            # Pass active_person_id so claude_code (or any other registered
+            # profile) routes correctly. None falls through to whatever
+            # avaagent.get_active_person_id() returns — typically "zeke".
+            _ap_arg = as_user if as_user and as_user != "zeke" else None
+            result = _run_ava(text, None, _ap_arg)
             run_ava_ms = int((time.time() - t0) * 1000)
             try:
                 reply = str((result or [""])[0] or "")
