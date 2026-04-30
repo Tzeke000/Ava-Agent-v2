@@ -1160,12 +1160,17 @@ def build_debug_full(host: dict[str, Any]) -> dict[str, Any]:
         except Exception:
             ad = None
         if ad is not None:
+            # Reading ad.count would acquire self._lock, which discover_all
+            # holds for the entire 60-110s scan. Read _registry length
+            # directly — len() on a dict is atomic in CPython, and a
+            # transient mid-write count is fine for diagnostics.
             try:
-                count = int(getattr(ad, "count", 0))
+                _reg = getattr(ad, "_registry", None)
+                count = len(_reg) if isinstance(_reg, dict) else -1
             except Exception:
                 count = -1
             out["app_discovery_state"] = {
-                "last_scan_ts": float(getattr(ad, "last_scan_ts", 0.0) or 0.0),
+                "last_scan_ts": float(getattr(ad, "_last_scan_ts", 0.0) or 0.0),
                 "total_entries": count,
                 "scanning": bool(g.get("_app_discovery_scanning")),
                 "throttle_active": bool(g.get("_app_discovery_throttled")),
