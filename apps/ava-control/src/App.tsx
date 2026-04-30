@@ -10,6 +10,15 @@ import { listen } from "@tauri-apps/api/event";
 type Snapshot = Record<string, unknown>;
 type ChatMessage = { role?: string; content?: string };
 
+// ── Presence-v2 feature flag ────────────────────────────────────────────
+// When false, the streaming speaking-text region, inner-state-line region,
+// and the listening/attentive cube-morph on the orb are all disabled. This
+// is the unblock for orb-drift while the root cause is investigated in
+// isolation. Re-enable only after the per-tick remount + entry-animation
+// interaction has been understood and fixed. Orb itself, HUD, brain tab,
+// middle-click recenter, and drift diagnostics all remain active.
+const PRESENCE_V2_ENABLED = false;
+
 const TABS = [
   { id: "voice" as const, label: "Voice" },
   { id: "chat" as const, label: "Chat" },
@@ -1940,12 +1949,14 @@ export default function App() {
             HEARTBEAT: {String(hb?.heartbeat_mode ?? "idle")}
           </div>
         </div>
-        <div
-          key={speakingTextForUI || "empty"}
-          className={`presence-speaking-text ${speakingTextForUI ? "live" : "empty"}`}
-        >
-          {speakingTextForUI}
-        </div>
+        {PRESENCE_V2_ENABLED && (
+          <div
+            key={speakingTextForUI || "empty"}
+            className={`presence-speaking-text ${speakingTextForUI ? "live" : "empty"}`}
+          >
+            {speakingTextForUI}
+          </div>
+        )}
         <div className="presence-orb-wrap">
           <div className={`orb-canvas-shell${orbRecenterPulse ? " recenter-pulse" : ""}`}>
             <OrbCanvas
@@ -1956,6 +1967,7 @@ export default function App() {
               amplitude={ttsAmplitude}
               energy={moodEnergy}
               recenterTrigger={orbRecenterCounter}
+              cubeMorphEnabled={PRESENCE_V2_ENABLED}
             />
             {/* Offline overlay text */}
             {connOffline && (
@@ -1993,12 +2005,14 @@ export default function App() {
             Ava is thinking…
           </div>
         )}
-        <div
-          key={innerStateLine || "empty"}
-          className={`presence-inner-state-line ${innerStateLine ? "live" : "empty"}`}
-        >
-          {innerStateLine}
-        </div>
+        {PRESENCE_V2_ENABLED && (
+          <div
+            key={innerStateLine || "empty"}
+            className={`presence-inner-state-line ${innerStateLine ? "live" : "empty"}`}
+          >
+            {innerStateLine}
+          </div>
+        )}
         <div className="presence-input-row">
           <input
             type="text"
