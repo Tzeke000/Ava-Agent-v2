@@ -258,14 +258,50 @@ def _cmd_mood(text, m, g):
 
 
 # ── Time / date ──────────────────────────────────────────────────────────────
+#
+# These MUST stay deterministic — never invoke the LLM. The lunch voice test
+# (2026-04-30) caught ava-personal hallucinating "9:47 AM" when actual time
+# was 12:16 PM, because the user's phrasing didn't match a previously-narrow
+# regex and fell through to the LLM. Patterns below cover the common natural
+# variants while staying conservative enough to avoid false positives.
 
-@_builtin(r"\bwhat (?:time is it|is the time)\b")
+@_builtin(
+    r"\b(?:"
+    # "what time is it", "what's the time", "what is the time"
+    r"what(?:'s|s| is)? (?:the )?time(?: is it)?"
+    # "what time"
+    r"|what time"
+    # "tell me the time", "tell me what time it is"
+    r"|tell me (?:the time|what time)"
+    # "do you (have|know) the time", "got the time"
+    r"|do you (?:have|know) (?:the )?time"
+    r"|got the time"
+    # "current time"
+    r"|current time"
+    # "the time" (must be preceded by ?)
+    r"|^the time$"
+    r")\b"
+)
 def _cmd_time(text, m, g):
     now = _dt.datetime.now()
     return now.strftime("It's %I:%M %p.").lstrip("0"), "neutral"
 
 
-@_builtin(r"\bwhat(?:'s|s)? (?:today(?:'s|s)?|the) date\b")
+@_builtin(
+    r"\b(?:"
+    # "what's today's date", "what's the date", "what is the date", "what date is it"
+    r"what(?:'s|s| is)? (?:today(?:'s|s)?|the) date"
+    r"|what date is it"
+    # "what day is it", "what day"
+    r"|what day(?: is it)?"
+    # "what's today", "what is today" (asking about date)
+    r"|what(?:'s|s| is) today"
+    # "tell me the date", "tell me today's date"
+    r"|tell me (?:the |today(?:'s|s)? )?date"
+    # "current date"
+    r"|current date"
+    r")\b"
+)
 def _cmd_date(text, m, g):
     now = _dt.datetime.now()
     return now.strftime("Today is %A, %B ") + str(now.day) + ".", "neutral"
