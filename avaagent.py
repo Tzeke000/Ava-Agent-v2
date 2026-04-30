@@ -7825,7 +7825,11 @@ def _ava_prewarm_fast_path() -> None:
         from langchain_ollama import ChatOllama as _CO
         from langchain_core.messages import HumanMessage as _HM
         from brain.ollama_lock import with_ollama as _wo
-        _llm = _CO(model=_model, temperature=0.7, num_predict=80)
+        # keep_alive=-1 pins the model in Ollama VRAM so it doesn't get
+        # evicted by the default 5-min idle timeout. Without this, the
+        # next conversational turn after a long pause (>5min) pays a
+        # 30-150s cold reload — observed in the lunch voice test.
+        _llm = _CO(model=_model, temperature=0.7, num_predict=80, keep_alive=-1)
         _t0 = _t.time()
         _wo(lambda: _llm.invoke([_HM(content="Say 'ready' in one word.")]),
             label=f"prewarm:{_model}")
@@ -7847,6 +7851,64 @@ if os.environ.get("AVA_PREWARM_FAST", "1").strip() != "0":
     _prewarm_threading.Thread(
         target=_ava_prewarm_fast_path,
         name="ava-prewarm-fast",
+        daemon=True,
+    ).start()
+
+
+# ── Periodic re-warm tick ───────────────────────────────────────────────
+# Even with keep_alive=-1 set on the ChatOllama instance, defensive
+# re-warming every ~5 min protects against:
+#   - keep_alive header not being honoured by some Ollama versions
+#   - Concurrent heavy model loads (gemma4:latest, qwen2.5:14b) pushing
+#     the fast model out of VRAM regardless of keep_alive
+#   - General "did this thing actually stay loaded" sanity check
+# Skipped while a conversation is active so we never compete with a
+# real turn for the lock. Gated by AVA_PERIODIC_REWARM!=0.
+def _ava_periodic_rewarm() -> None:
+    import time as _t
+    interval_s = 300.0  # 5 minutes
+    try:
+        _t.sleep(60.0)  # don't fire until a minute after boot
+    except Exception:
+        return
+    while not bool(globals().get("_ava_shutdown")):
+        try:
+            _t.sleep(interval_s)
+            if bool(globals().get("_ava_shutdown")):
+                break
+            # Skip if the user is mid-conversation — never compete with
+            # a real turn for the Ollama lock.
+            if bool(globals().get("_conversation_active")) or bool(globals().get("_turn_in_progress")):
+                continue
+            cache = globals().get("_fast_llm_cache") or {}
+            if not isinstance(cache, dict) or not cache:
+                continue
+            from brain.ollama_lock import with_ollama as _wo
+            from langchain_core.messages import HumanMessage as _HM
+            for (model, _np), llm in list(cache.items()):
+                if bool(globals().get("_ava_shutdown")):
+                    return
+                try:
+                    _t0 = _t.time()
+                    _wo(
+                        lambda _l=llm: _l.invoke([_HM(content="ok")]),
+                        label=f"rewarm:{model}",
+                    )
+                    print(f"[rewarm] {model} re-pinged in {int((_t.time()-_t0)*1000)}ms")
+                except Exception as _re:
+                    print(f"[rewarm] {model} ping failed (non-fatal): {_re!r}")
+        except Exception as _e:
+            print(f"[rewarm] tick error: {_e!r}")
+            try:
+                _t.sleep(60.0)
+            except Exception:
+                return
+
+if os.environ.get("AVA_PERIODIC_REWARM", "1").strip() != "0":
+    import threading as _rewarm_threading
+    _rewarm_threading.Thread(
+        target=_ava_periodic_rewarm,
+        name="ava-periodic-rewarm",
         daemon=True,
     ).start()
 
