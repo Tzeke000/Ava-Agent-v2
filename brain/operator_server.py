@@ -291,8 +291,22 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
     }
 
     rm = dict(getattr(perception, "routing_meta", {}) or {}) if perception else {}
+    # Source of truth for the live foreground model: dual_brain.foreground_model.
+    # routing_selected_model can lag (it's only refreshed when classify_reply_depth
+    # runs); reading dual_brain directly mirrors what Stream A would actually use
+    # right now. Fallback chain: dual_brain → routing_selected_model → LLM_MODEL.
+    _live_foreground_model = ""
+    try:
+        from brain.dual_brain import get_dual_brain as _gdb
+        _db_for_models = _gdb(host)
+        if _db_for_models is not None:
+            _live_foreground_model = str(getattr(_db_for_models, "foreground_model", "") or "")
+    except Exception:
+        _live_foreground_model = ""
     models_block = {
-        "selected_model": (getattr(perception, "routing_selected_model", "") if perception else "") or str(host.get("LLM_MODEL") or "ava-personal:latest"),
+        "selected_model": _live_foreground_model
+            or (getattr(perception, "routing_selected_model", "") if perception else "")
+            or str(host.get("LLM_MODEL") or "ava-personal:latest"),
         "cognitive_mode": getattr(perception, "cognitive_mode", "") if perception else "",
         "fallback_model": getattr(perception, "routing_fallback_model", "") if perception else "",
         "routing_reason": str((getattr(perception, "routing_reason", "") if perception else "") or "")[:900],

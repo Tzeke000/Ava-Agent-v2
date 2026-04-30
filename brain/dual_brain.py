@@ -206,6 +206,12 @@ class DualBrain:
         return (time.time() - last_msg) < 45.0 or self.foreground_busy
 
     def should_pause_background(self) -> bool:
+        # Also honour the voice-loop turn-in-progress flag set the moment Zeke
+        # speaks — this stops Stream B from starting NEW work while Stream A
+        # is mid-turn. (In-flight tasks still finish: lock contention is then
+        # only as bad as the remaining duration of the running task.)
+        if bool(self._g.get("_turn_in_progress")):
+            return True
         return self.is_zeke_active() or bool(self._g.get("_dual_brain_pause_until_ts", 0) > time.time())
 
     def pause_background_now(self, seconds: float = 30.0) -> None:

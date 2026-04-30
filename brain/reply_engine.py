@@ -71,7 +71,9 @@ def _with_timeout(fn, timeout: float, fallback=None, label: str = ""):
 def run_ava(
     user_input: str, image: Any = None, active_person_id: str | None = None
 ) -> tuple[str, dict, dict, list[str], dict]:
+    _trace(f"re.run_ava.entered chars={len(user_input or '')}")  # TRACE-PHASE1
     global _RUN_AVA_TUNING_SOURCE_LOGGED
+    _import_t0 = time.time()  # TRACE-PHASE1
     import avaagent as _av
     _g = vars(_av)
 
@@ -82,6 +84,7 @@ def run_ava(
     from brain.output_guard import scrub_visible_reply
     from brain.selfstate import is_selfstate_query, build_selfstate_reply
     from brain.shutdown_ritual import is_shutdown_trigger, run_shutdown_ritual
+    _trace(f"re.imports_done ms={int((time.time()-_import_t0)*1000)}")  # TRACE-PHASE1
 
     llm = _av.llm
     workspace = _av.workspace
@@ -93,7 +96,9 @@ def run_ava(
         _RUN_AVA_TUNING_SOURCE_LOGGED = True
         print("[run_ava] tuning layer: config/ava_tuning.py")
 
+    _person_t0 = time.time()  # TRACE-PHASE1
     active_person_id = active_person_id or _av.get_active_person_id()
+    _trace(f"re.active_person_resolved ms={int((time.time()-_person_t0)*1000)}")  # TRACE-PHASE1
     _inp = (user_input or "").strip()
     _g["_last_user_interaction_ts"] = time.time()
     _g["_last_user_message_ts"] = time.time()

@@ -37,11 +37,20 @@ _OLLAMA_LOCK = threading.RLock()
 _LAST_HOLDER: dict = {"thread": "", "label": "", "since": 0.0}
 
 
+def _trace(label: str) -> None:  # TRACE-PHASE1
+    """Timestamped diagnostic trace for the Ollama lock path."""  # TRACE-PHASE1
+    ts = time.strftime("%H:%M:%S") + f".{int(time.time()*1000)%1000:03d}"  # TRACE-PHASE1
+    print(f"[trace] {ts} {label}")  # TRACE-PHASE1
+
+
 def with_ollama(fn: Callable[[], T], label: str = "") -> T:
     """Run fn() while holding the global Ollama lock. Logs wait time if >2s."""
+    _holder = _LAST_HOLDER.get("label") or "<none>"  # TRACE-PHASE1
+    _trace(f"re.lock_wait_start label={label or 'invoke'} prior_holder={_holder}")  # TRACE-PHASE1
     t0 = time.time()
     _OLLAMA_LOCK.acquire()
     waited = time.time() - t0
+    _trace(f"re.lock_wait_acquired label={label or 'invoke'} waited_ms={int(waited*1000)}")  # TRACE-PHASE1
     if waited > 2.0:
         print(f"[ollama_lock] {label or 'invoke'} waited {waited:.1f}s for prior holder={_LAST_HOLDER.get('label')}")
     _LAST_HOLDER["thread"] = threading.current_thread().name
@@ -51,14 +60,18 @@ def with_ollama(fn: Callable[[], T], label: str = "") -> T:
         return fn()
     finally:
         _OLLAMA_LOCK.release()
+        _trace(f"re.lock_released label={label or 'invoke'}")  # TRACE-PHASE1
 
 
 @contextlib.contextmanager
 def ollama_call(label: str = ""):
     """Context-manager form. Same semantics as with_ollama."""
+    _holder = _LAST_HOLDER.get("label") or "<none>"  # TRACE-PHASE1
+    _trace(f"re.lock_wait_start label={label or 'invoke'} prior_holder={_holder}")  # TRACE-PHASE1
     t0 = time.time()
     _OLLAMA_LOCK.acquire()
     waited = time.time() - t0
+    _trace(f"re.lock_wait_acquired label={label or 'invoke'} waited_ms={int(waited*1000)}")  # TRACE-PHASE1
     if waited > 2.0:
         print(f"[ollama_lock] {label or 'invoke'} waited {waited:.1f}s for prior holder={_LAST_HOLDER.get('label')}")
     _LAST_HOLDER["thread"] = threading.current_thread().name
@@ -68,6 +81,7 @@ def ollama_call(label: str = ""):
         yield
     finally:
         _OLLAMA_LOCK.release()
+        _trace(f"re.lock_released label={label or 'invoke'}")  # TRACE-PHASE1
 
 
 def lock_status() -> dict:
