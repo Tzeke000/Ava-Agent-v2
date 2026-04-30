@@ -2016,6 +2016,173 @@ def create_app():
         # the schema. Used by tools/dev/dump_debug.py and the regression test.
         return build_debug_full(_g())
 
+    class InjectTranscriptIn(BaseModel):
+        text: str = ""
+        wake_source: str = "test_wake"
+        wait_for_audio: bool = False
+        speak: bool = True
+        timeout_seconds: float = 30.0
+
+    @app.post("/api/v1/debug/inject_transcript")
+    def debug_inject_transcript(payload: InjectTranscriptIn) -> dict[str, Any]:
+        # Synthetic-turn driver — bypasses the microphone and runs a transcript
+        # straight through run_ava, then optionally through TTS. Returns full
+        # timing + reply + the trace-line diff captured during the turn.
+        # Gated by AVA_DEBUG=1 so production builds don't expose it.
+        if os.environ.get("AVA_DEBUG", "").strip() != "1":
+            return {"ok": False, "error": "disabled (set AVA_DEBUG=1 to enable)"}
+
+        text = (payload.text or "").strip()
+        if not text:
+            return {"ok": False, "error": "empty text"}
+
+        host = _g()
+        wake_source = (payload.wake_source or "test_wake").strip() or "test_wake"
+        wait_for_audio = bool(payload.wait_for_audio)
+        do_speak = bool(payload.speak)
+        timeout_s = max(1.0, min(120.0, float(payload.timeout_seconds or 30.0)))
+
+        from brain.debug_state import get_traces, get_errors, record_turn
+
+        traces_before_len = len(get_traces(100))
+        errors_before_len = len(get_errors(50))
+        t_start = time.time()
+
+        # Mark synthetic wake — voice_loop's wake_detector short-circuits when
+        # _wake_source is set, which we mirror here for downstream gating.
+        host["_wake_source"] = wake_source
+        host["_last_wake_ts"] = t_start
+        host["_turn_in_progress"] = True
+        host["_turn_started_ts"] = t_start
+        host["_conversation_active"] = True
+        host["_last_user_input"] = text
+
+        reply: str = ""
+        run_ava_ms = 0
+        run_ava_error: str | None = None
+        try:
+            from brain.reply_engine import run_ava as _run_ava
+            t0 = time.time()
+            result = _run_ava(text)
+            run_ava_ms = int((time.time() - t0) * 1000)
+            try:
+                reply = str((result or [""])[0] or "")
+            except Exception:
+                reply = ""
+        except Exception as e:
+            import traceback as _tb
+            run_ava_error = f"{type(e).__name__}: {e}"
+            try:
+                from brain.debug_state import record_error as _rec
+                _rec("inject_transcript", run_ava_error, traceback=_tb.format_exc())
+            except Exception:
+                pass
+        finally:
+            # Don't clear _conversation_active here — voice_loop normally
+            # holds it through the attentive window. Clear _turn_in_progress
+            # so next call isn't blocked.
+            host.pop("_turn_in_progress", None)
+            host.pop("_turn_started_ts", None)
+
+        # Optional TTS — call the worker directly, blocking until playback
+        # done if wait_for_audio is True.
+        tts_ms = 0
+        tts_attempted = False
+        tts_played = False
+        tts_error: str | None = None
+        if do_speak and reply:
+            tts_attempted = True
+            import re as _re
+            clean = _re.sub(r"[*_`#\[\]()]", "", reply)
+            clean = _re.sub(r"\s+", " ", clean).strip()[:400]
+            if clean and _re.search(r"[A-Za-z0-9]", clean):
+                worker = host.get("_tts_worker")
+                try:
+                    t1 = time.time()
+                    if worker is not None and getattr(worker, "available", False):
+                        worker.speak_with_emotion(
+                            clean,
+                            emotion="neutral",
+                            intensity=0.5,
+                            blocking=bool(wait_for_audio),
+                        )
+                    else:
+                        tts_eng = host.get("tts_engine")
+                        if tts_eng is not None and callable(getattr(tts_eng, "speak", None)):
+                            tts_eng.speak(clean, blocking=bool(wait_for_audio))
+                        else:
+                            tts_error = "no TTS worker or engine available"
+                    tts_ms = int((time.time() - t1) * 1000)
+                    tts_played = tts_error is None
+                except Exception as e:
+                    tts_error = f"{type(e).__name__}: {e}"
+                # If we started non-blocking but caller wants to wait, poll
+                # _tts_speaking for transition to false (bounded).
+                if wait_for_audio and tts_played:
+                    deadline = time.time() + timeout_s
+                    while time.time() < deadline:
+                        if not bool(host.get("_tts_speaking")):
+                            break
+                        time.sleep(0.05)
+
+        total_ms = int((time.time() - t_start) * 1000)
+        traces_after = get_traces(100)
+        new_traces = traces_after[traces_before_len:] if len(traces_after) >= traces_before_len else traces_after
+        errors_after = get_errors(50)
+        new_errors = errors_after[errors_before_len:] if len(errors_after) >= errors_before_len else errors_after
+
+        # Best-effort parse of trace timings for headline metrics — keeps
+        # the regression report compact without re-parsing in the test.
+        ollama_ms_total = 0
+        for line in new_traces:
+            # Trace lines look like "<ts> [trace] <ts2> re.lock_wait_acquired ... waited_ms=N"
+            # We extract waited_ms tokens that immediately follow the
+            # "lock_wait_acquired" or "ollama_call.done" markers as crude
+            # ollama-busy metric.
+            if "lock_wait_acquired" in line and "waited_ms=" in line:
+                try:
+                    ollama_ms_total += int(line.split("waited_ms=")[1].split()[0])
+                except Exception:
+                    pass
+
+        result_payload: dict[str, Any] = {
+            "ok": run_ava_error is None and bool(reply),
+            "input_text": text,
+            "wake_source": wake_source,
+            "reply_text": reply,
+            "reply_chars": len(reply),
+            "total_ms": total_ms,
+            "run_ava_ms": run_ava_ms,
+            "run_ava_error": run_ava_error,
+            "ollama_lock_wait_ms_total": ollama_ms_total,
+            "tts": {
+                "attempted": tts_attempted,
+                "played": tts_played,
+                "elapsed_ms": tts_ms,
+                "wait_for_audio": wait_for_audio,
+                "error": tts_error,
+            },
+            "trace_lines_for_turn": new_traces,
+            "errors_during_turn": new_errors,
+        }
+        # Stamp last_turn so /api/v1/debug/full surfaces this run.
+        try:
+            record_turn({
+                "input_text": text,
+                "reply_text": reply,
+                "total_ms": total_ms,
+                "run_ava_ms": run_ava_ms,
+                "tts_ms": tts_ms,
+                "wake_source": wake_source,
+                "ok": result_payload["ok"],
+                "trace_count": len(new_traces),
+                "error_count": len(new_errors),
+                "ollama_lock_wait_ms_total": ollama_ms_total,
+            })
+        except Exception:
+            pass
+        return result_payload
+
     @app.get("/api/v1/vision/latest_frame")
     def vision_latest_frame():
         h = _g()
