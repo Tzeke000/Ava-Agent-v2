@@ -528,6 +528,98 @@ def _cmd_point_at(text, m, g):
     return "", ""
 
 
+# ── mem0 memory commands ─────────────────────────────────────────────────────
+
+@_builtin(r"\bwhat do you (?:remember|know) about me\b|\bwhat do you (?:remember|know) about (?:zeke|ezekiel)\b")
+def _cmd_remember_me(text, m, g):
+    am = g.get("_ava_memory")
+    if am is None or not getattr(am, "available", False):
+        return "My long-term memory isn't ready yet.", "calm"
+    try:
+        hits = am.search("zeke preferences personality habits values", user_id="zeke", limit=5)
+    except Exception as e:
+        print(f"[voice_cmd remember_me] {e}")
+        return "I'm having trouble pulling that up right now.", "calm"
+    if not hits:
+        return "Nothing's stuck yet — we haven't talked enough for me to remember much.", "calm"
+    lines = [str(h.get("memory") or "").strip() for h in hits if h.get("memory")]
+    lines = [l for l in lines if l][:3]
+    if not lines:
+        return "Nothing solid to share yet.", "calm"
+    return "I remember: " + "; ".join(lines) + ".", "curiosity"
+
+
+@_builtin(r"\bdo you remember (?:when|that) (.+?)\??$")
+def _cmd_remember_when(text, m, g):
+    query = (m.group(1) or "").strip()
+    am = g.get("_ava_memory")
+    if am is None or not getattr(am, "available", False) or not query:
+        return "I'd need a memory system to answer that.", "calm"
+    try:
+        hits = am.search(query, user_id="zeke", limit=3)
+    except Exception:
+        return "Can't search right now.", "calm"
+    if not hits:
+        return f"Nothing on '{query[:30]}' in my memory.", "calm"
+    top = str(hits[0].get("memory") or "").strip()
+    if not top:
+        return "Found something but it's empty.", "calm"
+    return f"Yes — {top}.", "curiosity"
+
+
+@_builtin(r"^\s*(?:forget that|forget what i (?:just )?said)\s*$")
+def _cmd_forget_that(text, m, g):
+    am = g.get("_ava_memory")
+    if am is None or not getattr(am, "available", False):
+        return "I can't forget what I never wrote down.", "calm"
+    # Find the most recent memory and delete it.
+    try:
+        all_mem = am.get_all(user_id="zeke", limit=200)
+    except Exception:
+        return "Can't reach memory right now.", "calm"
+    if not all_mem:
+        return "Nothing to forget.", "calm"
+    # Sort by created_at desc and take the newest.
+    def _ts(m):
+        return str(m.get("created_at") or "")
+    all_mem.sort(key=_ts, reverse=True)
+    target = all_mem[0]
+    mid = target.get("id")
+    if mid and am.delete(mid):
+        snippet = str(target.get("memory") or "")[:60]
+        return f"Forgot that ({snippet}).", "neutral"
+    return "Couldn't delete it.", "calm"
+
+
+@_builtin(r"\bforget everything (?:you know )?about (.+?)$")
+def _cmd_forget_about(text, m, g):
+    topic = (m.group(1) or "").strip()
+    am = g.get("_ava_memory")
+    if am is None or not getattr(am, "available", False) or not topic:
+        return "Can't do that right now.", "calm"
+    try:
+        n = am.delete_matching(topic, user_id="zeke")
+    except Exception:
+        return "Couldn't reach memory.", "calm"
+    if n == 0:
+        return f"Nothing matching '{topic[:30]}' found.", "calm"
+    return f"Cleared {n} memor{'ies' if n != 1 else 'y'} about {topic[:30]}.", "neutral"
+
+
+@_builtin(r"^\s*remember this[:,]?\s*(.+?)$")
+def _cmd_remember_this(text, m, g):
+    fact = (m.group(1) or "").strip()
+    am = g.get("_ava_memory")
+    if am is None or not getattr(am, "available", False) or not fact:
+        return "Memory not ready.", "calm"
+    try:
+        am.add_fact(fact, user_id="zeke")
+    except Exception as e:
+        print(f"[voice_cmd remember_this] {e}")
+        return "Couldn't save that.", "calm"
+    return "Got it — I'll remember.", "joy"
+
+
 # ── Signal-bus awareness ────────────────────────────────────────────────────
 
 @_builtin(r"\bwhat (?:was )?the last thing (?:i|you) copied\b")

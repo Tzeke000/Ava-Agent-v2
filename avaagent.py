@@ -6578,8 +6578,12 @@ def _execute_tool_tags_from_reply(reply: str) -> tuple[str, list[str]]:
 
 
 def _pick_fast_model_fallback() -> str | None:
-    """Prefer smallest fast local tags for quick conversational acknowledgements."""
-    preferred = ["mistral:7b", "mistral", "llama3.1:8b", "llama3.1", "llama3:8b", "llama3"]
+    """Prefer Ava's identity-baked model for fast conversational replies."""
+    preferred = [
+        "ava-gemma4", "ava-gemma4:latest",
+        "ava-personal:latest", "ava-personal",
+        "mistral:7b", "mistral", "llama3.1:8b", "llama3.1", "llama3:8b", "llama3",
+    ]
     try:
         from brain.model_routing import discover_available_model_tags
 
@@ -6594,7 +6598,7 @@ def _pick_fast_model_fallback() -> str | None:
 
 
 def _pick_deep_model_fallback() -> str | None:
-    preferred = ["qwen2.5:14b", "deepseek-r1:8b", "llama3.1:8b", "gemma2:9b"]
+    preferred = ["gemma4:latest", "gemma4", "qwen2.5:14b", "deepseek-r1:14b", "deepseek-r1:8b", "llama3.1:8b", "gemma2:9b"]
     try:
         from brain.model_routing import discover_available_model_tags
 

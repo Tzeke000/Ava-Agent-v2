@@ -386,6 +386,16 @@ def run_startup(g: dict[str, Any]) -> None:
         g["_question_engine"] = None
         print(f"[question_engine] startup skipped: {e}")
 
+    # Ava memory (mem0 + ChromaDB + Ollama). Initializes in a background
+    # thread because the first add() warms up the LLM.
+    print("[startup] step: ava memory (mem0)")
+    try:
+        from brain.ava_memory import bootstrap_ava_memory
+        bootstrap_ava_memory(g)
+    except Exception as e:
+        g["_ava_memory"] = None
+        print(f"[ava_memory] startup skipped: {e}")
+
     # Command builder + voice command router (must come BEFORE app discovery
     # init so VoiceCommandRouter sees an empty custom-commands list, then
     # reload happens automatically when Ava/Zeke create new commands).

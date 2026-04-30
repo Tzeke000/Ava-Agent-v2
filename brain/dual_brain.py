@@ -38,14 +38,23 @@ class BrainTask:
 
 class DualBrain:
 
-    FOREGROUND_MODEL = "ava-personal:latest"
+    # Stream A — Ava's primary voice. Prefer the identity-baked ava-gemma4
+    # model; fall back to ava-personal:latest if it isn't installed yet.
+    FOREGROUND_MODEL_PREFERRED = "ava-gemma4"
+    FOREGROUND_MODEL_FALLBACK = "ava-personal:latest"
+
+    # Stream B — background reasoning. Prefer raw gemma4:latest; cloud
+    # alternatives kick in when online.
+    BACKGROUND_MODEL_LOCAL = "gemma4:latest"
+    BACKGROUND_MODEL_CLOUD = "kimi-k2.6:cloud"
+    BACKGROUND_MODEL_FALLBACK = "qwen2.5:14b"
 
     def __init__(self, g: dict[str, Any]):
         self._g = g
         self._lock = threading.Lock()
 
-        # Stream A
-        self.foreground_model: str = self.FOREGROUND_MODEL
+        # Stream A — pick the best foreground model that's actually installed.
+        self.foreground_model: str = self._resolve_foreground_model()
         self.foreground_busy: bool = False
         self.last_foreground_ts: float = 0.0
 
@@ -156,8 +165,40 @@ class DualBrain:
     def get_thinking_model(self) -> str:
         g = self._g
         if g.get("_is_online") and g.get("_ollama_cloud_reachable"):
-            return "kimi-k2.6:cloud"
-        return "qwen2.5:14b"
+            return self.BACKGROUND_MODEL_CLOUD
+        # Prefer raw gemma4 (matches the foreground identity model and is
+        # natively multimodal). If it isn't installed, fall back to qwen2.5:14b.
+        installed = self._installed_models()
+        if self.BACKGROUND_MODEL_LOCAL in installed:
+            return self.BACKGROUND_MODEL_LOCAL
+        return self.BACKGROUND_MODEL_FALLBACK
+
+    @classmethod
+    def _installed_models(cls) -> set[str]:
+        """Cheap probe of the local Ollama tag list. Cached for 60s."""
+        cache = getattr(cls, "_installed_cache", None)
+        cache_ts = getattr(cls, "_installed_cache_ts", 0.0)
+        if cache is not None and (time.time() - cache_ts) < 60.0:
+            return cache
+        try:
+            import requests
+            r = requests.get("http://localhost:11434/api/tags", timeout=2)
+            names = {m.get("name", "") for m in (r.json().get("models") or [])}
+            cls._installed_cache = names  # type: ignore[attr-defined]
+            cls._installed_cache_ts = time.time()  # type: ignore[attr-defined]
+            return names
+        except Exception:
+            return set()
+
+    def _resolve_foreground_model(self) -> str:
+        """Pick the best installed Stream A model."""
+        installed = self._installed_models()
+        for candidate in (self.FOREGROUND_MODEL_PREFERRED,
+                          f"{self.FOREGROUND_MODEL_PREFERRED}:latest",
+                          self.FOREGROUND_MODEL_FALLBACK):
+            if candidate in installed:
+                return candidate
+        return self.FOREGROUND_MODEL_FALLBACK
 
     def is_zeke_active(self) -> bool:
         g = self._g
