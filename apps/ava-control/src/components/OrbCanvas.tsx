@@ -107,6 +107,9 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
   const emotionRef = useRef<string>(emotion);
   const shapeOverrideRef = useRef<string | undefined>(shapeOverride);
   const energyRef = useRef<number>(energy);
+  // listening/attentive cube morph: target 1.0 when listening, 0.0 otherwise.
+  // The animate loop eases this toward the target so the morph is smooth.
+  const morphRef = useRef<number>(0);
   stateRef.current = state;
   amplitudeRef.current = amplitude;
   emotionRef.current = emotion;
@@ -227,6 +230,8 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
       const sp = c.particleSpread, gy = c.gravityY, tx = c.tiltX;
       const shape = shapeOverrideRef.current || c.shape;
       const pa = pGeo.attributes.position as THREE.BufferAttribute;
+      // Listening cube morph factor (0..1). Eased toward target in animate().
+      const cubeMorph = morphRef.current;
 
       // Per-state amplitude/scale envelopes — read live each frame.
       const speakingScale = currentState === "speaking" ? (1 + currentAmp * 0.35) : 1;
@@ -302,6 +307,32 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
           mz *= fast * thinkingScale;
         }
 
+        // ── Listening soft-cube morph ─────────────────────────────────────
+        // Blend each particle toward a rounded-cube surface using an Lp-norm
+        // projection (p=8 ≈ soft cube). At cubeMorph=1 the cloud reads as a
+        // gentle cube; at 0 it stays a sphere. All other shape/state work
+        // above is preserved so breathing/drift/color logic continue to apply.
+        if (cubeMorph > 0.001) {
+          const r = Math.sqrt(mx*mx + my*my + mz*mz);
+          if (r > 1e-5) {
+            const ux = mx / r, uy = my / r, uz = mz / r;
+            const p = 8;
+            const lp = Math.pow(
+              Math.pow(Math.abs(ux), p) +
+              Math.pow(Math.abs(uy), p) +
+              Math.pow(Math.abs(uz), p),
+              1 / p
+            ) || 1e-6;
+            const scf = 1 / lp;
+            const cx = ux * scf * r;
+            const cy = uy * scf * r;
+            const cz = uz * scf * r;
+            mx = mx + (cx - mx) * cubeMorph;
+            my = my + (cy - my) * cubeMorph;
+            mz = mz + (cz - mz) * cubeMorph;
+          }
+        }
+
         pa.setXYZ(i,mx,my,mz);
       }
       pa.needsUpdate=true;
@@ -322,18 +353,32 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
       const s=spd(liveState);
       const r=s*0.001;
 
+      // ── Cube-morph easing (listening/attentive only) ─────────────────────
+      // Target = 1 while listening/attentive, 0 otherwise. Per-frame lerp at
+      // ~0.05 reaches ~95% in ~700ms at 60fps which matches the spec.
+      const morphTarget = (liveState === "listening" || liveState === "attentive") ? 1.0 : 0.0;
+      morphRef.current += (morphTarget - morphRef.current) * 0.05;
+      if (morphRef.current < 0.001) morphRef.current = 0;
+      else if (morphRef.current > 0.999) morphRef.current = 1;
+      const cubeFactor = morphRef.current;
+
       // ── Breathing (always-on) ─────────────────────────────────────────────
       // Period shrinks with energy (0 → 3.5s, 1 → 2.0s). Attentive shaves 0.3s
       // off the period so the orb feels slightly more alert without being busy.
       let breathPeriod = 3.5 - liveEnergy * 1.5;
       if (liveState === "attentive") breathPeriod = Math.max(1.2, breathPeriod - 0.3);
-      const breath = 1 + Math.sin((t / breathPeriod) * Math.PI * 2) * 0.03;
+      // When the cube is fully formed, slow breathing slightly — she feels
+      // attentive and steady, not jittery.
+      breathPeriod = breathPeriod + cubeFactor * 0.6;
+      const breathAmp = 0.03 * (1 - cubeFactor * 0.4);
+      const breath = 1 + Math.sin((t / breathPeriod) * Math.PI * 2) * breathAmp;
 
       // ── Drift (always-on) ─────────────────────────────────────────────────
       // Two superimposed sines on each axis so the motion never repeats cleanly.
       // Amplitude is in scene units (camera at z=2.8); these translate to ~6-12
       // pixels at the canvas size, matching the user's spec of ~8/6 px.
-      const driftScale = 0.012;  // tuned so the orb wanders within the frame
+      // Drift amplitude is reduced when the cube is formed so it feels steady.
+      const driftScale = 0.012 * (1 - cubeFactor * 0.5);
       const dx = (Math.sin(t * 0.30) * 8 + Math.sin(t * 0.70) * 4) * driftScale;
       const dy = (Math.cos(t * 0.40) * 6 + Math.cos(t * 0.11) * 3) * driftScale;
       rootGroup.position.set(dx, dy, 0);
