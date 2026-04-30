@@ -487,6 +487,9 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
             "voice": str(getattr(tts_worker, "voice_name", lambda: "unknown")()),
             "tts_speaking": bool(getattr(tts_worker, "is_speaking", lambda: False)()),
             "tts_amplitude": _live_amp,
+            "muted": bool(host.get("_tts_muted")),
+            "last_playback_dropped": bool(host.get("_tts_last_playback_dropped")),
+            "last_playback_dropped_ts": float(host.get("_tts_last_playback_dropped_ts") or 0.0),
         }
     else:
         tts_block = {
@@ -496,6 +499,9 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
             "voice": str(getattr(tts_obj, "voice_name", lambda: "unknown")()) if tts_obj is not None else "unknown",
             "tts_speaking": bool(getattr(tts_obj, "speaking", False)) if tts_obj is not None else bool(host.get("_tts_speaking", False)),
             "tts_amplitude": float(getattr(tts_obj, "amplitude", 0.0)) if tts_obj is not None else float(host.get("_tts_amplitude", 0.0) or 0.0),
+            "muted": bool(host.get("_tts_muted")),
+            "last_playback_dropped": bool(host.get("_tts_last_playback_dropped")),
+            "last_playback_dropped_ts": float(host.get("_tts_last_playback_dropped_ts") or 0.0),
         }
     # Live speech progress — what Ava is currently speaking, word by word.
     speech_block: dict[str, Any] = {
@@ -1095,6 +1101,8 @@ def build_debug_full(host: dict[str, Any]) -> dict[str, Any]:
             "speaking": bool(g.get("_tts_speaking")),
             "muted": bool(g.get("_tts_muted")),
             "queue_depth": int(g.get("_tts_queue_depth") or 0),
+            "last_playback_dropped": bool(g.get("_tts_last_playback_dropped")),
+            "last_playback_dropped_ts": float(g.get("_tts_last_playback_dropped_ts") or 0.0),
         }
         health["stt_engine"] = {"available": bool(g.get("_stt_ready"))}
         health["kokoro_loaded"] = bool(g.get("_kokoro_ready"))
