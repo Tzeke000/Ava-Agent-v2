@@ -74,6 +74,26 @@ def finalize_ava_turn(
     except Exception as _e:
         print(f"[chat_history] persist failed: {_e}")
 
+    # mem0 fact extraction. Runs in a background thread because mem0 calls
+    # the LLM to decide what's worth remembering — we don't want to block
+    # finalize_ava_turn waiting for that. Best-effort; errors are swallowed.
+    try:
+        _ava_memory = _g.get("_ava_memory")
+        if _ava_memory is not None and getattr(_ava_memory, "available", False):
+            import threading as _t
+            def _bg_mem():
+                try:
+                    _ava_memory.add_conversation_turn(
+                        user_text=str(user_input or ""),
+                        ava_text=str(ai_reply or ""),
+                        user_id=str(person_id or "zeke"),
+                    )
+                except Exception as _me:
+                    print(f"[ava_memory] add_conversation_turn error: {_me}")
+            _t.Thread(target=_bg_mem, daemon=True, name="ava-memory-add").start()
+    except Exception as _me:
+        print(f"[ava_memory] dispatch error: {_me}")
+
     try:
         from brain.event_extractor import maybe_extract_prospective_events
         st = _av.load_session_state()

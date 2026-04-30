@@ -442,6 +442,22 @@ Respond as Ava.
                 injected += "\n\n" + "\n".join(extras)
         except Exception:
             pass
+        # mem0 — semantic recall of relevant facts about the active person.
+        try:
+            ava_memory = _g.get("_ava_memory")
+            if ava_memory is not None and getattr(ava_memory, "available", False):
+                pid = str(active_person_id or "zeke")
+                hits = ava_memory.search(user_input or "", user_id=pid, limit=4)
+                if hits:
+                    lines = []
+                    for h in hits:
+                        text = str(h.get("memory") or "").strip()
+                        if text:
+                            lines.append(f"- {text}")
+                    if lines:
+                        injected += "\n\nMEMORIES:\n" + "\n".join(lines[:4])
+        except Exception:
+            pass
         if messages and isinstance(messages[0], SystemMessage):
             messages[0].content = injected + "\n\n" + messages[0].content
         else:

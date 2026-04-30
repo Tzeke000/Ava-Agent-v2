@@ -1622,6 +1622,47 @@ def create_app():
         except Exception as e:
             return {"ok": False, "error": str(e)[:200]}
 
+    # ── mem0 memory endpoints ────────────────────────────────────────────────
+    @app.get("/api/v1/memory/mem0")
+    def mem0_list() -> dict[str, Any]:
+        h = _g()
+        am = h.get("_ava_memory")
+        if am is None or not getattr(am, "available", False):
+            return {"ok": False, "error": "memory_not_ready", "entries": [], "count": 0}
+        try:
+            entries = am.get_all(user_id="zeke", limit=500)
+            return {"ok": True, "entries": entries, "count": len(entries)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200], "entries": []}
+
+    @app.delete("/api/v1/memory/mem0/{memory_id}")
+    def mem0_delete(memory_id: str) -> dict[str, Any]:
+        h = _g()
+        am = h.get("_ava_memory")
+        if am is None or not getattr(am, "available", False):
+            return {"ok": False, "error": "memory_not_ready"}
+        try:
+            ok = am.delete(memory_id)
+            return {"ok": ok, "id": memory_id}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200]}
+
+    @app.post("/api/v1/memory/mem0/search")
+    async def mem0_search(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+        h = _g()
+        am = h.get("_ava_memory")
+        if am is None or not getattr(am, "available", False):
+            return {"ok": False, "error": "memory_not_ready", "results": []}
+        query = str(body.get("query") or "").strip()
+        if not query:
+            return {"ok": False, "error": "query_required", "results": []}
+        try:
+            limit = int(body.get("limit") or 10)
+            results = am.search(query, user_id="zeke", limit=limit)
+            return {"ok": True, "results": results, "count": len(results)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)[:200], "results": []}
+
     @app.get("/api/v1/discovered_apps")
     def discovered_apps_get() -> dict[str, Any]:
         try:

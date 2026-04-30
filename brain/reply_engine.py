@@ -236,7 +236,11 @@ def run_ava(
                     f"User just said: {user_input}\n"
                     f"Respond naturally and warmly in 1-3 sentences. Don't add any tool blocks or formatting."
                 )
-                _fast_model = str(_av.LLM_MODEL or "ava-personal:latest")
+                # Prefer the identity-baked ava-gemma4 model for the simple
+                # fast path; fall back to whatever _pick_fast_model_fallback
+                # finds, then to the configured LLM_MODEL.
+                _fast_pick = _av._pick_fast_model_fallback()
+                _fast_model = _fast_pick or str(_av.LLM_MODEL or "ava-personal:latest")
                 print(f"[perf] fast pre-llm-init {_elapsed()}")
                 _llm_fast = ChatOllama(model=_fast_model, temperature=0.7)
                 print(f"[perf] fast post-llm-init {_elapsed()}")

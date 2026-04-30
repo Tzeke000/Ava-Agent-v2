@@ -419,6 +419,11 @@ export default function App() {
   const [onboardingStageCount, setOnboardingStageCount] = useState(13);
   const PHOTO_STAGES_UI = ["photo_front", "photo_left", "photo_right", "photo_up", "photo_down"];
   const [liveFrameSrc, setLiveFrameSrc] = useState<string | null>(null);
+  // mem0 memory state — refreshed every 30s while Memory tab is active.
+  const [mem0Entries, setMem0Entries] = useState<Array<Record<string, unknown>>>([]);
+  const [mem0Searching, setMem0Searching] = useState<boolean>(false);
+  const [mem0SearchQuery, setMem0SearchQuery] = useState<string>("");
+  const [mem0SearchResults, setMem0SearchResults] = useState<Array<Record<string, unknown>> | null>(null);
   // Fast TTS amplitude poll — drives the orb's real-time speech reaction.
   // Pulled separately from the slow snapshot poll so the orb pulses with each
   // syllable instead of every 5 seconds.
@@ -630,6 +635,45 @@ export default function App() {
     const id = window.setInterval(tick, 1000);
     return () => { active = false; window.clearInterval(id); };
   }, [online]);
+
+  // ── Mem0 memories — polled when Memory tab is open. Lightweight list.
+  useEffect(() => {
+    if (!online || tab !== "memory") return;
+    let active = true;
+    const fetchMem = async () => {
+      try {
+        const r = await getJson<{ ok?: boolean; entries?: Array<Record<string, unknown>> }>("/api/v1/memory/mem0");
+        if (active && Array.isArray(r?.entries)) setMem0Entries(r.entries);
+      } catch { /* ignore */ }
+    };
+    void fetchMem();
+    const id = window.setInterval(fetchMem, 30000);
+    return () => { active = false; window.clearInterval(id); };
+  }, [online, tab]);
+
+  const runMem0Search = useCallback(async () => {
+    const q = mem0SearchQuery.trim();
+    if (!q) return;
+    setMem0Searching(true);
+    try {
+      const r = await postJson<{ ok?: boolean; results?: Array<Record<string, unknown>> }>(
+        "/api/v1/memory/mem0/search", { query: q, limit: 10 }
+      );
+      setMem0SearchResults(Array.isArray(r?.results) ? r.results : []);
+    } catch {
+      setMem0SearchResults([]);
+    } finally {
+      setMem0Searching(false);
+    }
+  }, [mem0SearchQuery]);
+
+  const deleteMem0Entry = useCallback(async (id: string) => {
+    try {
+      await fetch(`${API_BASE}/api/v1/memory/mem0/${id}`, { method: "DELETE" });
+      setMem0Entries((prev) => prev.filter((e) => String(e.id) !== id));
+      setMem0SearchResults((prev) => prev ? prev.filter((e) => String(e.id) !== id) : prev);
+    } catch { /* ignore */ }
+  }, []);
 
   // ── Custom tabs — polled at mount and every 30s. Tab list is small.
   useEffect(() => {
@@ -2346,6 +2390,73 @@ export default function App() {
                       <p className="op-muted">No structured threads in snapshot.</p>
                     ) : (
                       <JsonBlock data={threadList} />
+                    )}
+                  </Section>
+
+                  <Section title={`Mem0 — what Ava knows about you (${mem0Entries.length})`}>
+                    <p className="op-muted" style={{ marginTop: 0 }}>
+                      Long-term semantic memory. Entries are extracted from conversations by{" "}
+                      <code>ava-gemma4</code>. Backed by ChromaDB at <code>memory/mem0_chroma/</code>.
+                    </p>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                      <input
+                        type="text"
+                        value={mem0SearchQuery}
+                        onChange={(e) => setMem0SearchQuery(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") void runMem0Search(); }}
+                        placeholder="Search memories…"
+                        style={{
+                          flex: 1, padding: "6px 10px", background: "#0b0f1a",
+                          border: "1px solid #2a3548", color: "#dbe6f5", borderRadius: 4,
+                        }}
+                      />
+                      <button
+                        type="button" className="btn"
+                        disabled={mem0Searching || !mem0SearchQuery.trim()}
+                        onClick={() => void runMem0Search()}
+                      >
+                        {mem0Searching ? "Searching…" : "Search"}
+                      </button>
+                      {mem0SearchResults !== null && (
+                        <button type="button" className="btn ghost" onClick={() => { setMem0SearchResults(null); setMem0SearchQuery(""); }}>
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    {mem0Entries.length === 0 && mem0SearchResults === null ? (
+                      <p className="op-muted">No memories yet — Ava hasn't been told (or learned) anything to remember.</p>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {(mem0SearchResults ?? mem0Entries).map((entry, i) => {
+                          const id = String(entry.id ?? i);
+                          const text = String(entry.memory ?? "");
+                          const created = String(entry.created_at ?? "").slice(0, 19).replace("T", " ");
+                          const score = typeof entry.score === "number" ? entry.score : null;
+                          return (
+                            <div key={id} style={{
+                              padding: "10px 12px", background: "#0b0f1a",
+                              border: "1px solid #1f2a3d", borderRadius: 6,
+                              display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12,
+                            }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ color: "#dbe6f5" }}>{text}</div>
+                                <div style={{ fontSize: 11, color: "#7a8aa3", marginTop: 4 }}>
+                                  {created || "—"}
+                                  {score !== null && <span style={{ marginLeft: 12 }}>score {score.toFixed(2)}</span>}
+                                </div>
+                              </div>
+                              <button
+                                type="button" className="btn ghost"
+                                onClick={() => void deleteMem0Entry(id)}
+                                title="Delete this memory"
+                                style={{ flexShrink: 0 }}
+                              >
+                                Forget
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
                     )}
                   </Section>
                 </>
