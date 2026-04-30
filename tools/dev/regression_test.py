@@ -315,10 +315,71 @@ def _ext_test_attentive_window_observable() -> dict:
     }
 
 
+def _ext_test_wake_source_variety() -> dict:
+    """Verify inject_transcript propagates wake_source through to voice_loop
+    state and run_ava produces a reply for each source label.
+
+    Wake sources in production: clap detector, openWakeWord, transcript-poll
+    fallback. Each sets _g["_wake_source"] before voice_loop transitions to
+    listening; the wake_detector short-circuits to (True, 1.0) when present.
+    inject_transcript mirrors this by accepting wake_source and stamping
+    _g["_wake_source"] before calling run_ava.
+
+    Steps for each source in {clap, openwakeword, transcript_wake:hey_ava}:
+      1. Inject "what time is it" with that wake_source
+      2. Verify reply produced (reply_chars > 0)
+      3. Read /debug/full — voice_loop.last_wake_source must equal the
+         injected value
+
+    Uses voice_command_router-matched text ("what time is it") so each
+    iteration completes in ~0.4s without hitting the LLM. Total test
+    runtime ~2-3s.
+    """
+    label = "wake_source_variety"
+    t0 = time.time()
+    fails: list[str] = []
+    details: dict = {"sources": {}}
+
+    sources = ["clap", "openwakeword", "transcript_wake:hey_ava"]
+    for src in sources:
+        per: dict = {}
+        s_t0 = time.time()
+        status, payload, err = _inject(
+            "what time is it", source=src, speak=False, timeout_s=5.0
+        )
+        per["http_status"] = status
+        per["http_error"] = err
+        per["elapsed"] = round(time.time() - s_t0, 3)
+        if status != 200 or not isinstance(payload, dict):
+            fails.append(f"{src}: inject failed status={status}")
+            details["sources"][src] = per
+            continue
+        per["reply_chars"] = int(payload.get("reply_chars") or 0)
+        per["reply_preview"] = (payload.get("reply_text") or "")[:80]
+        if per["reply_chars"] <= 0:
+            fails.append(f"{src}: empty reply")
+        # Verify wake_source landed on _g.
+        snap = _debug_full() or {}
+        actual = str((snap.get("voice_loop") or {}).get("last_wake_source") or "")
+        per["last_wake_source"] = actual
+        if actual != src:
+            fails.append(f"{src}: voice_loop.last_wake_source={actual!r} (expected {src!r})")
+        details["sources"][src] = per
+
+    return {
+        "label": label,
+        "wall_seconds": round(time.time() - t0, 3),
+        "passed": not fails,
+        "fail_reasons": fails,
+        "details": details,
+    }
+
+
 EXTENDED_TESTS = [
     _ext_test_conversation_active_gating,
     _ext_test_self_listen_guard_observable,
     _ext_test_attentive_window_observable,
+    _ext_test_wake_source_variety,
 ]
 
 
