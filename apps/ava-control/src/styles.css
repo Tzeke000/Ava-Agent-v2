@@ -1612,11 +1612,20 @@ body,
   justify-content: flex-start;
   gap: 0;
   padding-top: 0.7rem;
-  padding-bottom: 84px;
+  padding-bottom: 12px;
+  /* Lock the stage to the viewport so child content can never push the orb
+     off-screen or trigger page scroll. Every section below sets an explicit
+     height (no min-height growth), so the layout is deterministic across
+     snapshot ticks regardless of speaking-text length or inner-state changes. */
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 .presence-hud-row {
   width: min(760px, 92vw);
   height: 40px;
+  flex: 0 0 40px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1631,6 +1640,7 @@ body,
   justify-content: center;
   width: min(760px, 92vw);
   height: 340px;
+  flex: 0 0 340px;
   margin-top: 0;
 }
 .orb-canvas-shell {
@@ -1677,11 +1687,17 @@ body,
   text-align: center;
 }
 
-/* Speaking text — above the orb, streams word-by-word as Kokoro plays. */
+/* Speaking text — above the orb, streams word-by-word as Kokoro plays.
+   Strict fixed height (3 lines reserved). Empty state keeps the same height
+   so the orb never moves when text appears or disappears. Long text is
+   clipped from the TOP (align-items: flex-end) so the latest streamed words
+   are always visible — never overflows or pushes layout. */
 .presence-speaking-text {
   width: min(760px, 92vw);
-  min-height: 1.6em;
+  height: 4.5em;
+  flex: 0 0 4.5em;
   margin: 0.15rem auto 0.35rem;
+  padding: 0 1rem;
   text-align: center;
   font-size: 1.05rem;
   line-height: 1.45;
@@ -1690,6 +1706,11 @@ body,
   transition: opacity 1.2s ease;
   pointer-events: none;
   user-select: none;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  box-sizing: border-box;
 }
 .presence-speaking-text.empty {
   opacity: 0;
@@ -1706,7 +1727,8 @@ body,
 /* Inner-state line — below the orb. Crossfades on every change. */
 .presence-inner-state-line {
   width: min(760px, 92vw);
-  min-height: 1.4em;
+  height: 1.5em;
+  flex: 0 0 1.5em;
   margin: 0.2rem auto 0;
   text-align: center;
   font-family: monospace;
@@ -1717,6 +1739,13 @@ body,
   pointer-events: none;
   user-select: none;
   transition: opacity 0.7s ease;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
 }
 .presence-inner-state-line.empty {
   opacity: 0;
