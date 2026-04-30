@@ -977,6 +977,203 @@ def build_debug_export(host: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def build_debug_full(host: dict[str, Any]) -> dict[str, Any]:
+    """Unified debug payload for /api/v1/debug/full.
+
+    Pulls only from cached state — no live LLM calls, no slow file IO. Each
+    section is wrapped so a partial failure still returns the rest. Designed
+    to complete in <50ms.
+    """
+    out: dict[str, Any] = {}
+    # Server time — both wall and monotonic so the regression test can
+    # compute deltas across requests reliably.
+    try:
+        from datetime import datetime, timezone
+        out["server_time"] = {
+            "iso_utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            "monotonic_ns": time.monotonic_ns(),
+            "epoch": time.time(),
+        }
+    except Exception as e:
+        out["server_time"] = {"error": str(e)}
+
+    g = host or {}
+
+    # voice_loop state — read from globals stamped by voice_loop._set_state
+    # and the conversation_active flag plumbed in 2d4174c.
+    try:
+        last_speak_end_ts = float(g.get("_last_speak_end_ts") or 0.0)
+        attentive_window_sec = 180.0  # matches voice_loop's attentive timeout
+        attentive_remaining = 0.0
+        if last_speak_end_ts > 0:
+            attentive_remaining = max(0.0, attentive_window_sec - (time.time() - last_speak_end_ts))
+        out["voice_loop"] = {
+            "state": str(g.get("_voice_loop_state") or g.get("_vl_state") or "unknown"),
+            "last_state_change_ts": float(g.get("_voice_loop_state_change_ts") or 0.0),
+            "last_wake_source": str(g.get("_wake_source") or ""),
+            "last_wake_ts": float(g.get("_last_wake_ts") or 0.0),
+            "_conversation_active": bool(g.get("_conversation_active")),
+            "_turn_in_progress": bool(g.get("_turn_in_progress")),
+            "_tts_speaking": bool(g.get("_tts_speaking")),
+            "_tts_muted": bool(g.get("_tts_muted")),
+            "last_speak_end_ts": last_speak_end_ts,
+            "attentive_remaining_seconds": round(attentive_remaining, 2),
+        }
+    except Exception as e:
+        out["voice_loop"] = {"error": str(e)}
+
+    # last_turn — captured by debug_state.record_turn from inject_transcript
+    # or any other run_ava wrapper that opts in.
+    try:
+        from brain.debug_state import get_last_turn, get_traces, get_logs, get_errors
+        out["last_turn"] = get_last_turn()
+        out["recent_traces"] = get_traces(100)
+        out["recent_log_lines"] = get_logs(200)
+        out["errors_recent"] = get_errors(50)
+    except Exception as e:
+        out["debug_state_error"] = str(e)
+        out.setdefault("last_turn", {})
+        out.setdefault("recent_traces", [])
+        out.setdefault("recent_log_lines", [])
+        out.setdefault("errors_recent", [])
+
+    # dual_brain state.
+    try:
+        from brain.dual_brain import get_dual_brain
+        db = get_dual_brain(g)
+        if db is not None:
+            try:
+                queue_depth = int(db.background_queue.qsize())
+            except Exception:
+                queue_depth = -1
+            out["dual_brain_state"] = {
+                "foreground_model": str(getattr(db, "foreground_model", "") or ""),
+                "stream_a_busy": bool(getattr(db, "foreground_busy", False)),
+                "stream_a_last_active_ts": float(getattr(db, "last_foreground_ts", 0.0) or 0.0),
+                "stream_b_busy": bool(getattr(db, "background_busy", False)),
+                "stream_b_current_task": getattr(db, "current_background_task", None),
+                "stream_b_queue_depth": queue_depth,
+                "live_thinking_active": bool(getattr(db, "live_thinking_active", False)),
+                "tasks_completed_today": int(getattr(db, "tasks_completed_today", 0) or 0),
+            }
+        else:
+            out["dual_brain_state"] = {"available": False}
+    except Exception as e:
+        out["dual_brain_state"] = {"error": str(e)}
+
+    # Subsystem health — best-effort, non-blocking. Returns status flags
+    # that already exist on host globals; never tries to instantiate things.
+    try:
+        health: dict[str, Any] = {}
+        # Camera
+        cam = g.get("camera_manager")
+        health["camera"] = {
+            "status": "ok" if cam is not None and getattr(cam, "is_running", lambda: False)() else "down",
+            "available": cam is not None,
+        }
+        # mem0
+        try:
+            from brain.ava_memory import get_ava_memory  # type: ignore
+            mem = get_ava_memory() if callable(get_ava_memory) else None
+            health["mem0"] = {
+                "available": bool(getattr(mem, "available", False)) if mem is not None else False,
+                "init_error": getattr(mem, "_init_error", None) if mem is not None else None,
+            }
+        except Exception as _me:
+            health["mem0"] = {"available": False, "error": str(_me)}
+        # InsightFace
+        try:
+            from brain.insight_face_engine import get_insight_face_engine
+            ife = get_insight_face_engine()
+            health["insightface"] = {
+                "available": ife is not None and bool(getattr(ife, "ready", False)),
+                "providers": list(getattr(ife, "providers", []) or []),
+            }
+        except Exception as _ie:
+            health["insightface"] = {"available": False, "error": str(_ie)}
+        # tts_worker
+        health["tts_worker"] = {
+            "speaking": bool(g.get("_tts_speaking")),
+            "muted": bool(g.get("_tts_muted")),
+            "queue_depth": int(g.get("_tts_queue_depth") or 0),
+        }
+        # stt_engine
+        health["stt_engine"] = {
+            "available": bool(g.get("_stt_ready")),
+        }
+        # kokoro
+        health["kokoro_loaded"] = bool(g.get("_kokoro_ready"))
+        # ollama reachability — last known result
+        health["ollama_reachable"] = {
+            "last_ok": bool(g.get("_ollama_last_ok", True)),
+            "last_check_ts": float(g.get("_ollama_last_check_ts") or 0.0),
+            "last_error": str(g.get("_ollama_last_error") or ""),
+        }
+        out["subsystem_health"] = health
+    except Exception as e:
+        out["subsystem_health"] = {"error": str(e)}
+
+    # Ribbon and heartbeat — fresh snapshot read.
+    try:
+        snap = build_snapshot(g)
+        out["ribbon_and_heartbeat"] = {
+            "ribbon": snap.get("ribbon") or {},
+            "heartbeat": snap.get("heartbeat_runtime") or {},
+            "models": snap.get("models") or {},
+            "speech": snap.get("speech") or {},
+            "inner_state_line": snap.get("inner_state_line") or "",
+        }
+    except Exception as e:
+        out["ribbon_and_heartbeat"] = {"error": str(e)}
+
+    # Concept graph state — read from singleton if present.
+    try:
+        cg = g.get("concept_graph")
+        if cg is not None:
+            out["concept_graph_state"] = {
+                "total_nodes": len(getattr(cg, "nodes", {}) or {}),
+                "total_edges": len(getattr(cg, "edges", []) or []),
+                "last_save_ts": float(getattr(cg, "last_updated", 0.0) or 0.0),
+                "version": getattr(cg, "version", None),
+            }
+        else:
+            out["concept_graph_state"] = {"available": False}
+    except Exception as e:
+        out["concept_graph_state"] = {"error": str(e)}
+
+    # App discovery state.
+    try:
+        from brain.app_discoverer import get_app_discoverer
+        ad = get_app_discoverer()
+        if ad is not None:
+            try:
+                count = int(getattr(ad, "count", 0))
+            except Exception:
+                count = -1
+            out["app_discovery_state"] = {
+                "last_scan_ts": float(getattr(ad, "last_scan_ts", 0.0) or 0.0),
+                "total_entries": count,
+                "scanning": bool(g.get("_app_discovery_scanning")),
+                "throttle_active": bool(g.get("_app_discovery_throttled")),
+            }
+        else:
+            out["app_discovery_state"] = {"available": False}
+    except Exception as e:
+        out["app_discovery_state"] = {"error": str(e)}
+
+    # UI state — flags carried over from the desktop app via snapshot.
+    try:
+        out["ui_state"] = {
+            "presence_v2_enabled": bool(g.get("_presence_v2_enabled", False)),
+            "last_snapshot_poll_ts": float(g.get("_last_snapshot_poll_ts") or 0.0),
+            "active_tab": str(g.get("_ui_active_tab") or ""),
+        }
+    except Exception as e:
+        out["ui_state"] = {"error": str(e)}
+
+    return out
+
+
 def _read_identity_file(host: dict[str, Any], name: str) -> tuple[str, str]:
     base = Path(host.get("BASE_DIR") or Path.cwd())
     safe = {"IDENTITY": base / "ava_core" / "IDENTITY.md", "SOUL": base / "ava_core" / "SOUL.md", "USER": base / "ava_core" / "USER.md"}
@@ -1811,6 +2008,13 @@ def create_app():
     @app.get("/api/v1/debug/export", response_class=PlainTextResponse)
     def debug_export() -> str:
         return build_debug_export(_g())
+
+    @app.get("/api/v1/debug/full")
+    def debug_full() -> dict[str, Any]:
+        # Unified diagnostic payload — pulls only from cached state, no live
+        # LLM calls. Designed to complete in <50ms. See build_debug_full for
+        # the schema. Used by tools/dev/dump_debug.py and the regression test.
+        return build_debug_full(_g())
 
     @app.get("/api/v1/vision/latest_frame")
     def vision_latest_frame():
