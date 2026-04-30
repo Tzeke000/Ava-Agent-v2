@@ -10,6 +10,16 @@ import { listen } from "@tauri-apps/api/event";
 type Snapshot = Record<string, unknown>;
 type ChatMessage = { role?: string; content?: string };
 
+// ── Brain-tab performance caps ──────────────────────────────────────────
+// The 3D force-graph renders sluggishly with large graphs. The lunch run
+// had 654 nodes / 6122 edges and produced ~15fps. Caps below keep the
+// scene under what an RTX 5060 can render at 60fps with the OrbCanvas
+// also active. Nodes are kept by weight (top by activation_count *
+// last_activated freshness); edges are filtered to those connecting two
+// surviving nodes, then capped by strength.
+const BRAIN_GRAPH_MAX_NODES = 200;
+const BRAIN_GRAPH_MAX_EDGES = 500;
+
 // ── Presence-v2 feature flags ───────────────────────────────────────────
 // When PRESENCE_V2_ENABLED is true, the streaming speaking-text and
 // inner-state-line regions render. The earlier drift symptom (orb falling
@@ -1680,14 +1690,46 @@ export default function App() {
 
   // Push graph data into the 3D scene whenever it changes. Never blanks the
   // canvas — the graph just morphs to the new node/edge set.
+  // Optimization: the raw graph can have 600+ nodes and 6000+ edges, which
+  // tanks the renderer to ~15fps. Cap to BRAIN_GRAPH_MAX_NODES (top by
+  // weight) and BRAIN_GRAPH_MAX_EDGES (highest strength among surviving
+  // node pairs). Also skip the update entirely when the brain tab isn't
+  // visible — pointless work that can starve the orb's frame budget.
   useEffect(() => {
     const fg = brainGraph3DInstanceRef.current;
     if (!fg) return;
+    if (tab !== "brain") return;  // skip when tab not focused
     setBrainGraphSyncing(true);
     try {
+      const rawNodes = brainGraph.nodes || [];
+      const rawEdges = brainGraph.edges || [];
+      // Sort nodes by weight descending; keep the top N.
+      let topNodes = rawNodes;
+      if (rawNodes.length > BRAIN_GRAPH_MAX_NODES) {
+        topNodes = [...rawNodes]
+          .sort((a, b) => Number(b.weight || 0) - Number(a.weight || 0))
+          .slice(0, BRAIN_GRAPH_MAX_NODES);
+      }
+      const survivingIds = new Set(topNodes.map((n) => n.id));
+      // Keep edges where both endpoints survived; sort by strength descending.
+      const survivingEdges = rawEdges.filter(
+        (e) => survivingIds.has((e as any).source) && survivingIds.has((e as any).target)
+      );
+      let topEdges = survivingEdges;
+      if (survivingEdges.length > BRAIN_GRAPH_MAX_EDGES) {
+        topEdges = [...survivingEdges]
+          .sort((a, b) => Number((b as any).strength || 0) - Number((a as any).strength || 0))
+          .slice(0, BRAIN_GRAPH_MAX_EDGES);
+      }
+      if (rawNodes.length !== topNodes.length || rawEdges.length !== topEdges.length) {
+        console.info("[brain-3d] capped", {
+          nodes: `${rawNodes.length}->${topNodes.length}`,
+          edges: `${rawEdges.length}->${topEdges.length}`,
+        });
+      }
       fg.graphData({
-        nodes: brainGraph.nodes.map((n) => ({ ...n })),
-        links: brainGraph.edges.map((e) => ({ ...e })),
+        nodes: topNodes.map((n) => ({ ...n })),
+        links: topEdges.map((e) => ({ ...e })),
       });
     } catch (e) {
       console.error("[brain-3d] graphData failed", e);
@@ -1695,7 +1737,25 @@ export default function App() {
       // Quick clear — the sync indicator only flashes briefly.
       window.setTimeout(() => setBrainGraphSyncing(false), 250);
     }
-  }, [brainGraph]);
+  }, [brainGraph, tab]);
+
+  // Pause/resume the force simulation based on tab focus. 3d-force-graph
+  // runs the physics every frame even when the canvas isn't visible —
+  // pausing reclaims those cycles for the orb (the only thing the user
+  // is watching when the brain tab isn't active).
+  useEffect(() => {
+    const fg = brainGraph3DInstanceRef.current;
+    if (!fg) return;
+    try {
+      if (tab === "brain") {
+        if (typeof fg.resumeAnimation === "function") fg.resumeAnimation();
+      } else {
+        if (typeof fg.pauseAnimation === "function") fg.pauseAnimation();
+      }
+    } catch (e) {
+      console.warn("[brain-3d] pause/resume failed", e);
+    }
+  }, [tab]);
 
   // Active node pulse highlighting on the 3D graph.
   useEffect(() => {
