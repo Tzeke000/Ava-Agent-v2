@@ -36,12 +36,100 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PORT = 5876
 DEFAULT_BASE = f"http://127.0.0.1:{DEFAULT_PORT}"
 
-# Test battery — (label, transcript, fast_path?, timeout_seconds)
+# Core battery — (label, transcript, fast_path?, timeout_seconds).
+# Each entry is a single inject_transcript call. Pass criteria: HTTP 200,
+# payload.ok=True, reply_chars>0, wall_seconds<=target, no errors_during_turn.
 TEST_BATTERY = [
     ("time_query",  "what time is it",                          True,  3.0),
     ("date_query",  "what's today's date",                      True,  3.0),
     ("joke_llm",    "tell me a one sentence joke about clouds", False, 15.0),
     ("thanks",      "thank you",                                True,  2.0),
+]
+
+
+# ── Extended tests ──────────────────────────────────────────────────────
+# Each function below is registered in EXTENDED_TESTS and runs after the
+# core battery on the same Ava process. They may make multiple
+# inject_transcript calls, sleep, and inspect /api/v1/debug/full state
+# between calls. Each returns a test_result dict matching the core
+# schema (label, wall_seconds, passed, fail_reasons, details). Tests
+# are independent — each can be removed without breaking the others.
+
+def _inject(text: str, *, source: str = "regression", speak: bool = False,
+            timeout_s: float = 30.0) -> tuple[int, dict | None, str]:
+    """Helper: drive a synthetic turn and return (status, payload, err)."""
+    return _http_post_json(
+        f"{DEFAULT_BASE}/api/v1/debug/inject_transcript",
+        {
+            "text": text,
+            "wake_source": source,
+            "wait_for_audio": False,
+            "speak": speak,
+            "timeout_seconds": timeout_s,
+        },
+        timeout=timeout_s + 30.0,
+    )
+
+
+def _debug_full() -> dict | None:
+    """Helper: GET /api/v1/debug/full, return payload or None."""
+    _status, payload, _err = _http_get_json(
+        f"{DEFAULT_BASE}/api/v1/debug/full", timeout=8.0
+    )
+    return payload if isinstance(payload, dict) else None
+
+
+def _ext_test_conversation_active_gating() -> dict:
+    """Verify _conversation_active flag is True during a turn.
+
+    Pre-turn snapshot: _conversation_active should be False (passive).
+    Mid-turn: dispatch a turn, immediately check the flag — should be True.
+    Post-turn: should remain True for the attentive window.
+    """
+    label = "conversation_active_gating"
+    t0 = time.time()
+    fails: list[str] = []
+    details: dict = {}
+
+    pre = _debug_full() or {}
+    pre_active = bool((pre.get("voice_loop") or {}).get("_conversation_active"))
+    details["pre_turn_active"] = pre_active
+
+    status, payload, err = _inject("hey ava", timeout_s=5.0)
+    details["http_status"] = status
+    details["http_error"] = err
+    if status != 200:
+        fails.append(f"http_status={status}")
+    if not isinstance(payload, dict):
+        fails.append(f"no_payload err={err}")
+        return {
+            "label": label,
+            "wall_seconds": round(time.time() - t0, 3),
+            "passed": False,
+            "fail_reasons": fails,
+            "details": details,
+        }
+    details["reply_chars"] = int(payload.get("reply_chars") or 0)
+
+    # Immediately after the turn, _conversation_active should still be True
+    # (the attentive window holds it for 180s).
+    post = _debug_full() or {}
+    post_active = bool((post.get("voice_loop") or {}).get("_conversation_active"))
+    details["post_turn_active"] = post_active
+    if not post_active:
+        fails.append("conversation_active=False post-turn (attentive window not held)")
+
+    return {
+        "label": label,
+        "wall_seconds": round(time.time() - t0, 3),
+        "passed": not fails,
+        "fail_reasons": fails,
+        "details": details,
+    }
+
+
+EXTENDED_TESTS = [
+    _ext_test_conversation_active_gating,
 ]
 
 
@@ -267,6 +355,27 @@ def run_battery(warmup_s: float = 30.0) -> dict:
             else:
                 test_result["fail_reasons"] = [f"no_payload err={err}"]
             report["tests"].append(test_result)
+
+        # Extended tests — run after the core battery on the same Ava
+        # process. Each test handles its own injects + assertions and
+        # returns a result dict matching the core schema.
+        for fn in EXTENDED_TESTS:
+            try:
+                tr = fn()
+            except Exception as e:
+                tr = {
+                    "label": getattr(fn, "__name__", "unknown_extended"),
+                    "wall_seconds": 0.0,
+                    "passed": False,
+                    "fail_reasons": [f"raised {type(e).__name__}: {e}"],
+                    "details": {},
+                }
+            tr.setdefault("text", "")
+            tr.setdefault("expected_path", "ext")
+            tr.setdefault("target_seconds", 0.0)
+            tr.setdefault("reply_text", "")
+            tr.setdefault("reply_chars", 0)
+            report["tests"].append(tr)
 
         # Final /debug/full
         status, final, err = _http_get_json(f"{DEFAULT_BASE}/api/v1/debug/full", timeout=10.0)
