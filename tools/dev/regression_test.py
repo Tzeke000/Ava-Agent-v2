@@ -636,6 +636,82 @@ def _ext_test_concept_graph_save_under_load() -> dict:
     }
 
 
+def _ext_test_time_date_no_llm() -> dict:
+    """Verify time/date queries are handled deterministically by
+    voice_commands and NEVER reach the LLM.
+
+    Lunch voice test (2026-04-30) caught ava-personal hallucinating
+    "9:47 AM" when actual time was 12:16 PM, because the user's
+    phrasing fell through to the LLM. After expanding voice_commands
+    regex, every reasonable phrasing must match the deterministic
+    handler — proven here by asserting `re.ollama_invoke_start` does
+    NOT appear in trace_lines_for_turn.
+
+    Tests the natural variants: "what time is it", "tell me the time",
+    "do you know the time", "current time", and the date equivalents.
+    Each must:
+      1. Return a non-empty reply
+      2. Complete in under 1 second (deterministic, no LLM round-trip)
+      3. Have NO `re.ollama_invoke_start` line in its trace
+    """
+    label = "time_date_no_llm"
+    t0 = time.time()
+    fails: list[str] = []
+    details: dict = {"queries": []}
+
+    queries = [
+        # Time variants
+        "what time is it",
+        "tell me the time",
+        "do you know the time",
+        "got the time",
+        "current time",
+        # Date variants
+        "what's today's date",
+        "what date is it",
+        "what day is it",
+        "tell me the date",
+        "current date",
+    ]
+
+    for q in queries:
+        per: dict = {"q": q}
+        c_t0 = time.time()
+        status, payload, err = _inject(q, speak=False, timeout_s=5.0)
+        per["elapsed"] = round(time.time() - c_t0, 3)
+        per["http_status"] = status
+        if status != 200 or not isinstance(payload, dict):
+            fails.append(f"{q!r}: inject failed status={status} err={err}")
+            details["queries"].append(per)
+            continue
+        per["reply_text"] = (payload.get("reply_text") or "")[:120]
+        per["reply_chars"] = int(payload.get("reply_chars") or 0)
+        traces = payload.get("trace_lines_for_turn") or []
+        # Critical assertion: NO re.ollama_invoke_start anywhere in this turn.
+        invoke_lines = [t for t in traces if "re.ollama_invoke_start" in t]
+        per["ollama_invoke_count"] = len(invoke_lines)
+        if invoke_lines:
+            fails.append(
+                f"{q!r}: hit LLM ({len(invoke_lines)}x) — voice_commands didn't intercept"
+            )
+            per["invoke_lines_sample"] = invoke_lines[:2]
+        if per["reply_chars"] <= 0:
+            fails.append(f"{q!r}: empty reply")
+        if per["elapsed"] > 1.5:
+            fails.append(
+                f"{q!r}: {per['elapsed']}s > 1.5s (deterministic should be sub-second)"
+            )
+        details["queries"].append(per)
+
+    return {
+        "label": label,
+        "wall_seconds": round(time.time() - t0, 3),
+        "passed": not fails,
+        "fail_reasons": fails,
+        "details": details,
+    }
+
+
 EXTENDED_TESTS = [
     _ext_test_conversation_active_gating,
     _ext_test_self_listen_guard_observable,
@@ -644,6 +720,7 @@ EXTENDED_TESTS = [
     _ext_test_weird_inputs,
     _ext_test_sequential_fast_path_latency,
     _ext_test_concept_graph_save_under_load,
+    _ext_test_time_date_no_llm,
 ]
 
 
