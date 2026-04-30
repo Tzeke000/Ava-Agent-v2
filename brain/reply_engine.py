@@ -304,7 +304,18 @@ def run_ava(
                 # Cap fast-path replies at ~80 tokens — concise replies are also
                 # dramatically faster (less generation time, no waiting for the
                 # model to wind down a long reply).
-                _llm_fast = ChatOllama(model=_fast_model, temperature=0.7, num_predict=80)
+                # Cache the ChatOllama instance per-model on _g — its
+                # constructor takes ~1s (httpx client + tokenizer warmup),
+                # which kills the fast-path budget when paid every turn.
+                _llm_fast_cache = _g.get("_fast_llm_cache")
+                if not isinstance(_llm_fast_cache, dict):
+                    _llm_fast_cache = {}
+                    _g["_fast_llm_cache"] = _llm_fast_cache
+                _cache_key = (str(_fast_model), 80)
+                _llm_fast = _llm_fast_cache.get(_cache_key)
+                if _llm_fast is None:
+                    _llm_fast = ChatOllama(model=_fast_model, temperature=0.7, num_predict=80)
+                    _llm_fast_cache[_cache_key] = _llm_fast
                 print(f"[perf] fast post-llm-init {_elapsed()}")
                 from brain.ollama_lock import with_ollama
                 print(f"[perf] fast pre-invoke {_elapsed()} model={_fast_model}")
