@@ -2016,15 +2016,8 @@ def create_app():
         # the schema. Used by tools/dev/dump_debug.py and the regression test.
         return build_debug_full(_g())
 
-    class InjectTranscriptIn(BaseModel):
-        text: str = ""
-        wake_source: str = "test_wake"
-        wait_for_audio: bool = False
-        speak: bool = True
-        timeout_seconds: float = 30.0
-
     @app.post("/api/v1/debug/inject_transcript")
-    def debug_inject_transcript(payload: InjectTranscriptIn) -> dict[str, Any]:
+    def debug_inject_transcript(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
         # Synthetic-turn driver — bypasses the microphone and runs a transcript
         # straight through run_ava, then optionally through TTS. Returns full
         # timing + reply + the trace-line diff captured during the turn.
@@ -2032,15 +2025,18 @@ def create_app():
         if os.environ.get("AVA_DEBUG", "").strip() != "1":
             return {"ok": False, "error": "disabled (set AVA_DEBUG=1 to enable)"}
 
-        text = (payload.text or "").strip()
+        text = (str(body.get("text") or "")).strip()
         if not text:
             return {"ok": False, "error": "empty text"}
 
         host = _g()
-        wake_source = (payload.wake_source or "test_wake").strip() or "test_wake"
-        wait_for_audio = bool(payload.wait_for_audio)
-        do_speak = bool(payload.speak)
-        timeout_s = max(1.0, min(120.0, float(payload.timeout_seconds or 30.0)))
+        wake_source = (str(body.get("wake_source") or "test_wake")).strip() or "test_wake"
+        wait_for_audio = bool(body.get("wait_for_audio") or False)
+        do_speak = bool(body.get("speak") if body.get("speak") is not None else True)
+        try:
+            timeout_s = max(1.0, min(120.0, float(body.get("timeout_seconds") or 30.0)))
+        except (TypeError, ValueError):
+            timeout_s = 30.0
 
         from brain.debug_state import get_traces, get_errors, record_turn
 

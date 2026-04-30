@@ -1,5 +1,15 @@
 import json
 import os
+# When avaagent.py is executed as a script (`py avaagent.py`), Python
+# registers it in sys.modules under "__main__", not "avaagent". Subsequent
+# `import avaagent` calls from worker threads (e.g. inside run_ava) would
+# trigger a SECOND, fresh import of this file from the top — re-running
+# _run_startup, re-initializing camera/mem0/Kokoro/InsightFace, and
+# deadlocking on resources the original process holds. Aliasing __main__
+# to "avaagent" makes future imports return the running module.
+import sys as _sys
+if _sys.modules.get("__main__") is not None and "avaagent" not in _sys.modules:
+    _sys.modules["avaagent"] = _sys.modules["__main__"]
 # Install debug stdout/stderr capture rings as early as possible so the
 # /api/v1/debug/full endpoint can serve last 200 stdout lines + last 100
 # [trace] lines + last 50 errors. Before the heavy imports below so we

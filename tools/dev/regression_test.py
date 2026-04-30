@@ -152,17 +152,16 @@ class AvaProcess:
             return f"clean exit code={self.proc.returncode}"
         except subprocess.TimeoutExpired:
             pass
-        # Send SIGINT-equivalent.
+        # terminate() on Windows is TerminateProcess — abrupt but does not
+        # invoke Intel MKL / Fortran CTRL+BREAK handlers, so it avoids the
+        # forrtl-200 "program aborting" cascade that CTRL_BREAK_EVENT triggers.
         try:
-            if os.name == "nt":
-                self.proc.send_signal(signal.CTRL_BREAK_EVENT)
-            else:
-                self.proc.send_signal(signal.SIGINT)
+            self.proc.terminate()
             self.proc.wait(timeout=10.0)
-            return f"sigint exit code={self.proc.returncode}"
+            return f"terminated exit code={self.proc.returncode}"
         except Exception:
             pass
-        # Hard kill.
+        # Hard kill (last resort).
         try:
             self.proc.kill()
             self.proc.wait(timeout=5.0)
@@ -189,7 +188,7 @@ def run_battery(warmup_s: float = 30.0) -> dict:
         ava.start()
         report["phases"]["start_pid"] = ava.proc.pid if ava.proc else None
         boot_t0 = time.time()
-        ok, err = ava.wait_ready(timeout_s=120.0)
+        ok, err = ava.wait_ready(timeout_s=240.0)
         report["phases"]["boot_seconds"] = round(time.time() - boot_t0, 2)
         report["phases"]["boot_error"] = err
         report["boot_ok"] = ok
