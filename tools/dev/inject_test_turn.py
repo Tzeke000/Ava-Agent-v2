@@ -5,6 +5,12 @@ Usage:
   py -3.11 tools/dev/inject_test_turn.py --text "what time is it"
   py -3.11 tools/dev/inject_test_turn.py --text "..." --wait-audio
   py -3.11 tools/dev/inject_test_turn.py --text "..." --no-speak
+  py -3.11 tools/dev/inject_test_turn.py --text "..." --as-user zeke
+
+By default the turn is routed through the claude_code developer
+profile so test runs don't pollute Zeke's relationship state, mood
+history, or memory. Use --as-user zeke to simulate a real user turn
+(or any other registered profile in profiles/).
 
 Exits 0 if Ava produced a non-empty reply, 1 otherwise.
 """
@@ -28,6 +34,11 @@ def main() -> int:
     ap.add_argument("--source", default="test_wake", help="Wake source label (default test_wake)")
     ap.add_argument("--wait-audio", action="store_true", help="Block until TTS playback completes")
     ap.add_argument("--no-speak", action="store_true", help="Skip TTS — return reply text only")
+    ap.add_argument(
+        "--as-user",
+        default="claude_code",
+        help="Profile id to attribute the turn to (default claude_code). Use 'zeke' to simulate the real user.",
+    )
     ap.add_argument("--timeout", type=float, default=60.0, help="HTTP timeout seconds")
     args = ap.parse_args()
 
@@ -36,6 +47,7 @@ def main() -> int:
         "wake_source": args.source,
         "wait_for_audio": bool(args.wait_audio),
         "speak": not bool(args.no_speak),
+        "as_user": args.as_user,
         "timeout_seconds": float(args.timeout),
     }
     url = f"{_base_url()}/api/v1/debug/inject_transcript"

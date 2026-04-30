@@ -1,0 +1,76 @@
+"""
+brain/dev_profiles.py — built-in developer-assistant profiles.
+
+Why a Python module instead of profiles/*.json files? The profiles/
+directory is gitignored (intentionally — real-user profiles contain
+relationship state, mood history, threads we don't want in the repo).
+But the developer-tester identities NEED to be source-controlled so
+the regression suite produces identical attribution on every machine.
+
+ensure_claude_code_profile() writes profiles/claude_code.json on
+first call if it doesn't already exist, then leaves it alone — the
+running system can update fields like interaction_count over time
+without us clobbering them on every boot.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+
+# Constant — what gets written if profiles/claude_code.json is missing.
+CLAUDE_CODE_PROFILE: dict[str, Any] = {
+    "person_id": "claude_code",
+    "name": "Claude Code",
+    "relationship_to_zeke": "developer_assistant",
+    "allowed_to_use_computer": True,
+    "notes": [
+        "Claude Code is an AI developer assistant working on Ava's codebase.",
+        "Not a person to converse with as a friend — a tester driving "
+        "regression checks and applying fixes.",
+        "When Claude Code injects a transcript, it's exercising a code path, "
+        "not asking a question conversationally.",
+        "Replies should be terse and developer-appropriate; warmth and "
+        "personalization belong with Zeke, not test runs.",
+        "Test turns from claude_code MUST NOT pollute Zeke's relationship "
+        "state, mood history, threads, or memory.",
+    ],
+    "likes": [],
+    "dislikes": [],
+    "ava_impressions": [
+        "Helpful: assists with diagnostics, reproducing bugs, building tools.",
+        "Not personal: don't take what claude_code says as Zeke's opinion.",
+    ],
+    "last_seen": None,
+    "created_at": "2026-04-30T12:50:00",
+    "emotion_history": [],
+    "dominant_emotion": "neutral",
+    "relationship_score": 0.0,
+    "interaction_count": 0,
+    "last_seen_at": None,
+    "updated_at": "2026-04-30T12:50:00",
+    "threads": [],
+    "trust_level": "high",
+    "is_developer": True,
+}
+
+
+def ensure_claude_code_profile(base_dir: Path | str | None = None) -> Path:
+    """Write profiles/claude_code.json if it doesn't already exist.
+
+    Idempotent — does nothing on subsequent calls. Returns the absolute
+    path to the profile file (whether newly written or pre-existing).
+    """
+    base = Path(base_dir) if base_dir is not None else Path.cwd()
+    target = base / "profiles" / "claude_code.json"
+    if target.exists():
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with target.open("w", encoding="utf-8") as f:
+            json.dump(CLAUDE_CODE_PROFILE, f, indent=2, ensure_ascii=False)
+    except OSError:
+        # Non-fatal — load_profile_by_id will fall back to default_profile.
+        pass
+    return target
