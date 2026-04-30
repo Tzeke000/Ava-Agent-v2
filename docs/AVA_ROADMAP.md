@@ -1,14 +1,57 @@
 # Ava Agent v2 — Complete Development Roadmap
-**Last updated:** April 28, 2026
+**Last updated:** 2026-04-29 (post wake-word + signal-bus pass)
 **Repo:** `Tzeke000/Ava-Agent-v2` (public)
 
 ---
 
-## Executive Status — April 28, 2026
+## Current Status — 2026-04-29
+
+| Block | Status |
+|---|---|
+| Phase 1–100 (full milestone) | **COMPLETE** |
+| Post-100 stabilization (Gradio removal, dual-brain, eye tracking, voice loop) | **COMPLETE** |
+| InsightFace GPU face recognition | **COMPLETE** (CUDAExecutionProvider) |
+| Kokoro neural TTS + per-emotion voice mapping | **COMPLETE** |
+| Signal bus / event-driven architecture | **COMPLETE** |
+| Voice command router (40 built-ins + custom) | **COMPLETE** |
+| App + game discoverer (Desktop / Start Menu / Steam / Epic) | **COMPLETE** |
+| Reminder system | **COMPLETE** |
+| Custom tab + custom command builder | **COMPLETE** |
+| Correction handler ("no, I meant X") | **COMPLETE** |
+| Pointing via LLaVA | **COMPLETE** |
+| 3D brain graph (3d-force-graph) | **COMPLETE** |
+| Per-person expression calibration | **COMPLETE** |
+| Win32 zero-poll watchers (clipboard / window / app installs) | **COMPLETE** |
+| openWakeWord + Silero VAD | **COMPLETE** (using `hey_jarvis` proxy) |
+| Custom `hey_ava.onnx` model | **IN PROGRESS** — see `docs/TRAIN_WAKE_WORD.md` |
+
+**What Ava is now:** a local, camera-aware desktop companion with:
+- Always-on voice loop (clap + openWakeWord wake; Silero VAD silence detection; Whisper base STT with Eva→Ava normalization; Kokoro neural TTS with protected OutputStream playback; 60s attentive window after every utterance)
+- GPU face recognition + 106-pt landmarks + per-person expression baseline + head pose + age/gender, all overlaid on the live camera feed
+- Dual-brain inference (foreground `ava-personal:latest` + background `qwen2.5:14b` / cloud) with global Ollama lock
+- Event bus replacing all polling loops; Win32 hooks for clipboard / window / app install changes
+- 40 built-in voice commands + Ava-built custom commands + Ava-built custom tabs
+- Real per-frame TTS amplitude streaming to the orb + 27-emotion shape morphs + always-on breathing/drift
+
+**Identity anchors (continuity policy):** `ava_core/IDENTITY.md` is Ava's core self anchor; `ava_core/SOUL.md` is values, boundaries, and self-guidance; `ava_core/USER.md` is the durable relationship anchor. These are never edited by the system.
+
+---
+
+## Next Priorities (in order)
+
+1. **Run onboarding** to populate `faces/zeke/` with the 5 photo angles. Until this happens, InsightFace tags every face as `unknown` (it's working — just nothing to match against).
+2. **Test full conversation end-to-end** through clap → STT → run_ava → Kokoro → attentive. Verify TTS plays uninterrupted while user clicks other windows; verify amplitude drives orb.
+3. **Train custom `hey_ava.onnx`** in WSL2 per `docs/TRAIN_WAKE_WORD.md`. Drop the resulting `.onnx` in `models/wake_words/` and `wake_word.py` will auto-load it on next start.
+4. **Verify all 40 voice commands fire** and route correctly. Spot-check the 4 wiring categories: tab switches, app launches (via discoverer), reminders, builder ("make a command", "make a tab called X").
+5. **Let Ava run and learn organically** — watch what she chooses to add to `state/custom_commands.json`, `state/custom_tabs.json`, `state/curiosity_topics.json`, `state/journal.jsonl`.
+
+---
+
+## Executive Status — historical (pre-100)
 
 **43 phases complete.** Ava is operational as a local, camera-aware desktop agent with staged perception, vector memory, multi-user profiles, voice I/O, concept graph, and supervised autonomy. Phase 44 begins the era of Ava running on her own fine-tuned model as her primary brain.
 
-**What Ava is:** a local, camera-aware agent with staged perception pipeline, vector memory, profiles, goals, initiative, reflection/contemplation, social and multi-session continuity, bounded tone guidance, and a supervised (human-approved) path from diagnostics → workbench proposals → execution/rollback.
+**What Ava was at the time of phase 43:** a local, camera-aware agent with staged perception pipeline, vector memory, profiles, goals, initiative, reflection/contemplation, social and multi-session continuity, bounded tone guidance, and a supervised (human-approved) path from diagnostics → workbench proposals → execution/rollback.
 
 **Identity anchors (continuity policy):** `ava_core/IDENTITY.md` is Ava's core self anchor; `ava_core/SOUL.md` is values, boundaries, and self-guidance; `ava_core/USER.md` is the durable relationship anchor. These are never edited by the system.
 

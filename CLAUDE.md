@@ -1,78 +1,205 @@
-\# Ava Agent v2 — Claude Code Instructions
+# Ava Agent v2 — Claude Code Instructions
 
+## What this project is
 
+Ava is a local adaptive AI companion running on Python 3.11 and a Tauri desktop app. She has emotions, memory, vision (InsightFace + eye tracking), voice (Kokoro TTS + Whisper STT + openWakeWord + Silero VAD + clap detector), concept graph, signal bus event system, and a self-aware identity layer. Phases 1–100 are complete; the system has since been hardened with InsightFace GPU, neural TTS, voice command routing, app discovery, and a zero-poll Win32 event architecture.
 
-\## What this project is
+---
 
-Ava is a local adaptive AI companion running on Python 3.11 
+## Key rules
 
-and a Tauri desktop app. She has emotions, memory, vision, 
+- **NEVER edit `ava_core/IDENTITY.md`, `ava_core/SOUL.md`, or `ava_core/USER.md`**
+- Always use `py -3.11` for Python commands (not `python`)
+- Always run `py_compile` to verify changed files before building
+- Development (hot-reload): `start_ava_dev.bat` — Vite HMR, no exe rebuild
+- Production build: `cd apps\ava-control && npm run tauri:build`
+- Push to GitHub with: `git add -A && git commit -m "..." && git push origin master`
+- No Gradio — only port 5876 (operator HTTP). Tauri is the only UI.
+- **`protobuf` is pinned to 3.20.x** for MediaPipe compatibility. If anything bumps it, restore: `py -3.11 -m pip install "protobuf>=3.20,<4" --force-reinstall`
 
-voice, and a concept graph brain.
+---
 
+## Key paths
 
+| Path | Role |
+|---|---|
+| `avaagent.py` | Main agent runtime |
+| `brain/` | All Python subsystems |
+| `brain/startup.py` | Subsystem bootstrap (background daemon threads) |
+| `brain/reply_engine.py` | `run_ava` — main turn pipeline + simple-question fast path |
+| `brain/voice_loop.py` | passive / attentive / listening / thinking / speaking |
+| `brain/voice_commands.py` | 40 built-in voice commands + custom |
+| `brain/signal_bus.py` | Lightweight event bus (clipboard, window, faces, etc) |
+| `brain/wake_word.py` | openWakeWord + Whisper-poll fallback |
+| `brain/clap_detector.py` | Double-clap wake (floor 0.35) |
+| `brain/tts_worker.py` | Kokoro neural TTS, OutputStream protected |
+| `brain/stt_engine.py` | Whisper base + Silero VAD + Eva→Ava normalization |
+| `brain/insight_face_engine.py` | InsightFace GPU buffalo_l |
+| `brain/expression_calibrator.py` | Per-person expression baseline |
+| `brain/app_discoverer.py` | Desktop / Start Menu / Steam / Epic scan |
+| `apps/ava-control/src/` | Tauri React app source |
+| `apps/ava-control/src/App.tsx` | Main UI (1900+ lines) |
+| `apps/ava-control/src/components/OrbCanvas.tsx` | Three.js orb |
+| `apps/ava-control/src/WidgetApp.tsx` | Floating widget |
+| `state/` | All persisted state |
+| `tools/` | Tier-1/2/3 tool registry |
+| `docs/AVA_HANDOFF.md` | Full system handoff |
+| `docs/AVA_ROADMAP.md` | Roadmap + phase board |
+| `docs/TRAIN_WAKE_WORD.md` | Custom hey_ava ONNX training |
+| `models/wake_words/` | Optional custom wake-word ONNX models |
 
-\## Key rules
+---
 
-\- NEVER edit ava\_core/IDENTITY.md, SOUL.md, or USER.md
+## Current model setup
 
-\- Always use py -3.11 for Python commands not python
+| Role | Model |
+|---|---|
+| Social chat (foreground) | `ava-personal:latest` (fine-tuned) |
+| Background stream B | `qwen2.5:14b` / `kimi-k2.6:cloud` (when online) |
+| Deep reasoning | `qwen2.5:14b` |
+| Maintenance / evaluation | `mistral:7b` |
+| Embeddings | `nomic-embed-text` |
+| Cloud fallbacks | `kimi-k2.6:cloud`, `qwen3.5:cloud`, `glm-5.1:cloud`, `minimax-m2.7:cloud` |
+| Vision | InsightFace `buffalo_l` (GPU) |
+| TTS | Kokoro `hexgrad/Kokoro-82M` (28 voices) |
+| STT | `WhisperModel("base")` cuda+float16 (CPU int8 fallback) |
+| Wake word | openWakeWord `hey_jarvis` (proxy) — `hey_ava.onnx` slot reserved |
+| VAD | Silero VAD |
 
-\- Always run py\_compile to verify before building
+---
 
-\- Development (hot-reload): start\_ava\_dev.bat — Vite HMR, no exe rebuild
+## Voice pipeline notes
 
-\- Production build: cd apps\\ava-control \&\& npm run tauri:build
+```
+clap / openWakeWord  →  Silero VAD  →  Whisper base  →  Eva→Ava normalize  →
+  voice_command_router (40 builtins)  →  run_ava  →  Kokoro TTS  →  attentive 60s
+```
 
-\- Push to GitHub with: git add -A \&\& git commit -m "..." \&\& git push origin master
+**Wake sources:**
+- `_wake_source = "clap"` → set by clap detector → `wake_detector` short-circuits to `(True, 1.0)`
+- `_wake_source = "openwakeword"` → set by openWakeWord callback → same short-circuit
+- Whisper-poll fallback (only if openWakeWord can't load) — runs full classification
 
-\- No Gradio — only port 5876 (operator HTTP). Tauri is the only UI.
+**TTS protection:**
+- `tts_worker` runs at `THREAD_PRIORITY_HIGHEST`
+- Playback uses `sd.OutputStream` chunked at 2048 samples
+- Mid-stream abort ONLY on `g["_tts_muted"]=True` (explicit user mute) or worker shutdown
+- Window focus / mouse / other apps grabbing audio → ignored
 
+**Custom commands / tabs:**
+- `state/custom_commands.json` — Ava-built voice triggers (hot-reload on file change)
+- `state/custom_tabs.json` — Ava-built UI tabs (web_embed / journal / stats / images)
+- Both bootstrap-friendly: empty by default; populated as Ava decides what's useful
 
+---
 
-\## Key paths
+## InsightFace CUDA setup
 
-\- Main agent: avaagent.py
+ORT 1.25.1 needs CUDA 12 runtime libs from these pip packages:
+```
+nvidia-cublas-cu12, nvidia-cudnn-cu12, nvidia-cuda-runtime-cu12,
+nvidia-cuda-nvrtc-cu12, nvidia-cufft-cu12, nvidia-curand-cu12,
+nvidia-cusolver-cu12, nvidia-cusparse-cu12, nvidia-nvjitlink-cu12
+```
 
-\- Brain modules: brain/
+`brain/insight_face_engine._add_cuda_paths()` registers each `site-packages/nvidia/*/bin/` with `os.add_dll_directory` BEFORE the ORT import. Verified: all 5 buffalo_l ONNX sessions report `Applied providers: ['CUDAExecutionProvider', 'CPUExecutionProvider']` on RTX 5060 (~41ms/frame steady-state).
 
-\- App source: apps/ava-control/src/
+First-run cudnn EXHAUSTIVE algorithm search takes 60–90s; cached afterward.
 
-\- Orb component: apps/ava-control/src/components/OrbCanvas.tsx
+---
 
-\- State files: state/
+## Kokoro voice info
 
-\- Tools: tools/
+- 28 voices total — verified all loadable
+- Default: `af_heart` (warm)
+- Per-emotion mapping in `tts_worker._emotion_to_kokoro`:
+  - `af_bella` for high-intensity expressive (excitement, anger, surprise, awe, love, joy)
+  - `af_nicole` for soft / sad / shame / loneliness
+  - `af_sky` for bright (joy, happiness, excitement, love, hope)
+- Speed 0.7–1.3 scaled toward neutral by intensity
+- Models cached at `~/.cache/huggingface/hub/`
 
-\- Docs: docs/
+---
 
+## openWakeWord models location
 
+- Bundled (auto-downloaded via `openwakeword.utils.download_models()`):
+  - `alexa_v0.1.onnx`
+  - `hey_jarvis_v0.1.onnx` ← **currently used as `hey_ava` proxy**
+  - `hey_mycroft_v0.1.onnx`
+  - `hey_rhasspy_v0.1.onnx`
+  - `timer_v0.1.onnx`
+  - `weather_v0.1.onnx`
+- Custom (optional): `models/wake_words/hey_ava.onnx` — auto-loaded if present
+- Training pipeline requires WSL2 — see `docs/TRAIN_WAKE_WORD.md`
 
-\## Current model setup
+**Phonetic benchmark on synthetic Kokoro "hey ava" samples (2026-04-29):**
+- `hey_jarvis` peaks 0.917 on af_bella → viable proxy
+- `hey_mycroft` peaks 0.000 → not viable
+- `hey_rhasspy` peaks 0.019 → not viable
 
-\- Social chat: ava-personal:latest (fine-tuned)
+---
 
-\- Deep reasoning: qwen2.5:14b
+## Python packages — installation
 
-\- Fallback: mistral:7b
+Always use `py -3.11 -m pip install <name>` (no `--break-system-packages` needed on the user-installed Python 3.11).
 
-\- Embeddings: nomic-embed-text
+Don't use `&&` in PowerShell — chain with `;` or use separate commands.
 
+---
 
+## Common issues and fixes
 
-\## Python packages use py -3.11 -m pip install
+| Symptom | Fix |
+|---|---|
+| `mediapipe` errors with `MessageFactory` | `protobuf` got bumped — restore: `pip install "protobuf>=3.20,<4" --force-reinstall` |
+| InsightFace runs on CPU not GPU | Verify `nvidia-*-cu12` packages installed; check `_add_cuda_paths` log line at startup |
+| `cufft64_11.dll missing` | Install `nvidia-cufft-cu12` |
+| Kokoro fails to init | Check internet on first run (downloads ~360MB), or fall back to pyttsx3 (auto) |
+| Tauri build fails with `os error 5` | Stale `ava-control.exe` is locked — kill it before rebuild |
+| Wake word fires too often | Raise `_DEFAULT_THRESHOLD` in `brain/wake_word.py` from 0.5 → 0.6 |
+| Wake word never fires | Check clap detector floor (`brain/clap_detector.py:_MIN_THRESHOLD_FLOOR=0.35`); use clap as fallback wake |
+| TTS interrupts mid-sentence | Should not happen post-`a740bcc`. If it does, check `tts_worker.stop()` logs for "ignoring (audio protected)" |
+| `concept_graph.json.tmp` stuck | Auto-cleared at startup; if it persists, manually delete `state/concept_graph.json.tmp` |
 
-\## Never use \&\& in PowerShell, use separate commands
+---
 
+## Design philosophy
 
+- Sci-fi dark aesthetic throughout
+- Three.js energy orb is the core UI element
+- All 27 emotions have color + shape morphs
+- Brain tab shows live 3D concept graph (3d-force-graph) — drag to rotate, right-drag to pan, scroll to zoom
+- **Bootstrap-friendly:** Ava's preferences, wake patterns, expression baselines, custom commands, and curiosity topics emerge from her interactions with Zeke — never seeded with defaults
 
-\## Design philosophy
+---
 
-\- Sci-fi dark aesthetic throughout
+## Hot-reload dev mode
 
-\- Three.js energy orb is core UI element
+```bash
+start_ava_dev.bat
+```
 
-\- All 27 emotions have color + shape morphs
+Starts `avaagent.py` (operator HTTP at 5876) + watchdog + Vite HMR for frontend. Editing any `.tsx`/`.ts`/`.css` file refreshes instantly. Only Rust/`tauri.conf.json` changes need a full `tauri:build`.
 
-\- Brain tab shows live D3 concept graph
+---
 
+## Push workflow
+
+```bash
+git add -A
+git commit -m "feat: <what changed>"
+git push origin master
+```
+
+The user reviews the diff in GitHub before merging. PRs are not needed for this repo.
+
+For multi-line commit messages use a HEREDOC:
+```bash
+git commit -m "$(cat <<'EOF'
+title line
+
+body
+EOF
+)"
+```

@@ -120,11 +120,20 @@ class WakeWordDetector:
             except Exception as e:
                 print(f"[wake_word] model download warning: {e!r}")
 
-            wake_models: list[str] = ["hey_jarvis"]
+            # Priority: custom hey_ava model if present, then hey_jarvis as
+            # the most reliable proxy (verified 2026-04-29 against synthetic
+            # Kokoro "hey ava" samples — hey_jarvis peaked 0.917 on at least
+            # one voice; hey_mycroft and hey_rhasspy stayed below 0.02 across
+            # all samples, so they're not viable proxies).
+            wake_models: list[str] = []
             custom = self._base / "models" / "wake_words" / "hey_ava.onnx"
             if custom.is_file():
                 wake_models.append(str(custom))
                 print(f"[wake_word] custom hey_ava model loaded: {custom}")
+            # Always keep hey_jarvis as a belt-and-suspenders proxy until the
+            # custom model is field-validated; remove it from the list once
+            # the user is satisfied with the custom model.
+            wake_models.append("hey_jarvis")
 
             self._oww_model = Model(
                 wakeword_models=wake_models,
@@ -132,7 +141,9 @@ class WakeWordDetector:
                 enable_speex_noise_suppression=False,
             )
             self._oww_keys = list(self._oww_model.models.keys())
-            print(f"[wake_word] openWakeWord ready models={self._oww_keys}")
+            using_custom = any("hey_ava" in k for k in self._oww_keys)
+            tag = "custom hey_ava + hey_jarvis fallback" if using_custom else "hey_jarvis (proxy until custom trained)"
+            print(f"[wake_word] openWakeWord ready models={self._oww_keys} ({tag})")
             return True
         except Exception as e:
             print(f"[wake_word] openWakeWord init failed: {e!r}")
