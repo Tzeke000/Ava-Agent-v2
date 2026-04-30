@@ -7808,6 +7808,48 @@ try:
 except Exception as _op_http_e:
     print(f"[operator_http] optional API not started: {_op_http_e}")
 
+# Fast-path pre-warm — load the chosen ava-personal:latest model into
+# Ollama's VRAM and instantiate ChatOllama once so the first real turn
+# doesn't pay cold-load (~10s) + ChatOllama init (~1s) on top of the
+# fast path's 2s budget. Runs in a daemon thread so startup stays
+# responsive; gated by AVA_PREWARM_FAST!=0 for opt-out.
+def _ava_prewarm_fast_path() -> None:
+    import time as _t
+    try:
+        _t.sleep(5.0)  # let subsystems settle, Ollama come up cleanly
+        _model = _pick_fast_model_fallback()
+        if not _model:
+            print("[prewarm] no fast model resolved — skipping")
+            return
+        print(f"[prewarm] warming fast path: {_model}")
+        from langchain_ollama import ChatOllama as _CO
+        from langchain_core.messages import HumanMessage as _HM
+        from brain.ollama_lock import with_ollama as _wo
+        _llm = _CO(model=_model, temperature=0.7, num_predict=80)
+        _t0 = _t.time()
+        _wo(lambda: _llm.invoke([_HM(content="Say 'ready' in one word.")]),
+            label=f"prewarm:{_model}")
+        # Stash the instance so reply_engine's fast-path cache hit on first
+        # real turn — match the cache key used there: (model, num_predict).
+        try:
+            _g_self = globals()
+            _cache = _g_self.setdefault("_fast_llm_cache", {})
+            if isinstance(_cache, dict):
+                _cache[(str(_model), 80)] = _llm
+        except Exception:
+            pass
+        print(f"[prewarm] fast path warmed in {int((_t.time()-_t0)*1000)}ms")
+    except Exception as _pe:
+        print(f"[prewarm] failed (non-fatal): {_pe!r}")
+
+if os.environ.get("AVA_PREWARM_FAST", "1").strip() != "0":
+    import threading as _prewarm_threading
+    _prewarm_threading.Thread(
+        target=_ava_prewarm_fast_path,
+        name="ava-prewarm-fast",
+        daemon=True,
+    ).start()
+
 import signal as _signal
 
 _ava_shutdown = False
