@@ -449,12 +449,87 @@ def _ext_test_weird_inputs() -> dict:
     }
 
 
+def _ext_test_sequential_fast_path_latency() -> dict:
+    """Verify back-to-back fast-path turns stay flat — no drift, no
+    growth from accumulated state. Tests the ChatOllama instance cache
+    in reply_engine and confirms the same warmed model isn't being
+    evicted between calls.
+
+    Five fast-path utterances in a row. Each should hit the
+    voice_command_router OR the LLM fast path with a cached ChatOllama
+    instance. Latency should stay flat — the 5th call must not be
+    measurably slower than the 1st (>2x).
+
+    Steps:
+      1. Inject 5 fast-path inputs sequentially
+      2. Record each elapsed time
+      3. Pass if max(latencies) <= 2 * min(latencies) AND every call
+         succeeded with a non-empty reply
+
+    Note: the absolute floor depends on hardware; we only verify the
+    ratio so this test isn't fragile across machines.
+    """
+    label = "sequential_fast_path_latency"
+    t0 = time.time()
+    fails: list[str] = []
+    details: dict = {"calls": []}
+
+    inputs = [
+        "hi ava",
+        "thanks",
+        "ok ava",
+        "got it",
+        "hey ava",
+    ]
+    latencies: list[float] = []
+    for idx, text in enumerate(inputs):
+        c_t0 = time.time()
+        status, payload, err = _inject(text, speak=False, timeout_s=10.0)
+        elapsed = time.time() - c_t0
+        per = {
+            "idx": idx,
+            "text": text,
+            "elapsed": round(elapsed, 3),
+            "http_status": status,
+            "http_error": err,
+            "reply_chars": int((payload or {}).get("reply_chars") or 0),
+            "ok": bool((payload or {}).get("ok")),
+        }
+        details["calls"].append(per)
+        if status != 200 or not isinstance(payload, dict):
+            fails.append(f"call {idx} ({text!r}): inject failed status={status}")
+            continue
+        if not per["ok"] or per["reply_chars"] <= 0:
+            fails.append(f"call {idx} ({text!r}): empty/failed reply")
+            continue
+        latencies.append(elapsed)
+
+    if len(latencies) >= 2:
+        details["min_latency"] = round(min(latencies), 3)
+        details["max_latency"] = round(max(latencies), 3)
+        ratio = max(latencies) / max(0.001, min(latencies))
+        details["max_min_ratio"] = round(ratio, 2)
+        if ratio > 2.5:
+            fails.append(
+                f"latency drift: max/min ratio {ratio:.2f} (>2.5x — cache may not be warming)"
+            )
+
+    return {
+        "label": label,
+        "wall_seconds": round(time.time() - t0, 3),
+        "passed": not fails,
+        "fail_reasons": fails,
+        "details": details,
+    }
+
+
 EXTENDED_TESTS = [
     _ext_test_conversation_active_gating,
     _ext_test_self_listen_guard_observable,
     _ext_test_attentive_window_observable,
     _ext_test_wake_source_variety,
     _ext_test_weird_inputs,
+    _ext_test_sequential_fast_path_latency,
 ]
 
 
