@@ -263,6 +263,19 @@ class WakeWordDetector:
                 if self._g.get("input_muted"):
                     time.sleep(1.0)
                     continue
+                # Self-listen guard — same rationale as the one in
+                # voice_loop._should_drop_self_listen(). When Ava is
+                # speaking through the speakers, the mic picks up her
+                # voice; Whisper transcribes "hey ava is" as "hey ava"
+                # and we wake Ava on her own utterance. Skip recording
+                # while TTS is mid-stream and for 200ms after.
+                if bool(self._g.get("_tts_speaking")):
+                    time.sleep(0.5)
+                    continue
+                last_speak = float(self._g.get("_last_speak_end_ts") or 0.0)
+                if last_speak > 0 and (time.time() - last_speak) < 0.2:
+                    time.sleep(0.2)
+                    continue
                 import numpy as np
                 import sounddevice as sd  # type: ignore
                 audio = sd.rec(int(1.5 * 16000), samplerate=16000, channels=1, dtype="float32")
