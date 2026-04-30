@@ -1037,10 +1037,15 @@ def build_debug_full(host: dict[str, Any]) -> dict[str, Any]:
         out.setdefault("recent_log_lines", [])
         out.setdefault("errors_recent", [])
 
-    # dual_brain state.
+    # dual_brain state — read existing singleton without calling any
+    # getter that could create one (constructor blocks on model resolve).
     try:
-        from brain.dual_brain import get_dual_brain
-        db = get_dual_brain(g)
+        db = None
+        try:
+            import brain.dual_brain as _dbmod
+            db = getattr(_dbmod, "_SINGLETON", None)
+        except Exception:
+            db = None
         if db is not None:
             try:
                 queue_depth = int(db.background_queue.qsize())
@@ -1061,49 +1066,38 @@ def build_debug_full(host: dict[str, Any]) -> dict[str, Any]:
     except Exception as e:
         out["dual_brain_state"] = {"error": str(e)}
 
-    # Subsystem health — best-effort, non-blocking. Returns status flags
-    # that already exist on host globals; never tries to instantiate things.
+    # Subsystem health — strictly non-blocking. We DO NOT call into
+    # singleton getters that can lock or instantiate; we read whatever is
+    # already cached on host globals. mem0/insightface bootstrap on
+    # startup can hold their own locks for 60s+, which would otherwise
+    # serialize the debug endpoint behind them.
     try:
         health: dict[str, Any] = {}
-        # Camera
         cam = g.get("camera_manager")
         health["camera"] = {
-            "status": "ok" if cam is not None and getattr(cam, "is_running", lambda: False)() else "down",
             "available": cam is not None,
+            "running": bool(getattr(cam, "running", False)) if cam is not None else False,
         }
-        # mem0
-        try:
-            from brain.ava_memory import get_ava_memory  # type: ignore
-            mem = get_ava_memory() if callable(get_ava_memory) else None
-            health["mem0"] = {
-                "available": bool(getattr(mem, "available", False)) if mem is not None else False,
-                "init_error": getattr(mem, "_init_error", None) if mem is not None else None,
-            }
-        except Exception as _me:
-            health["mem0"] = {"available": False, "error": str(_me)}
-        # InsightFace
-        try:
-            from brain.insight_face_engine import get_insight_face_engine
-            ife = get_insight_face_engine()
-            health["insightface"] = {
-                "available": ife is not None and bool(getattr(ife, "ready", False)),
-                "providers": list(getattr(ife, "providers", []) or []),
-            }
-        except Exception as _ie:
-            health["insightface"] = {"available": False, "error": str(_ie)}
-        # tts_worker
+        # mem0 — read singleton if it's ALREADY set on globals; never call
+        # the constructor.
+        mem = g.get("_ava_memory")
+        health["mem0"] = {
+            "available": bool(getattr(mem, "available", False)) if mem is not None else False,
+            "init_error": str(getattr(mem, "_init_error", None) or "") if mem is not None else "",
+        }
+        # InsightFace — same pattern.
+        ife = g.get("_insight_face_engine") or g.get("insight_face_engine")
+        health["insightface"] = {
+            "available": ife is not None and bool(getattr(ife, "ready", False)),
+            "providers": list(getattr(ife, "providers", []) or []) if ife is not None else [],
+        }
         health["tts_worker"] = {
             "speaking": bool(g.get("_tts_speaking")),
             "muted": bool(g.get("_tts_muted")),
             "queue_depth": int(g.get("_tts_queue_depth") or 0),
         }
-        # stt_engine
-        health["stt_engine"] = {
-            "available": bool(g.get("_stt_ready")),
-        }
-        # kokoro
+        health["stt_engine"] = {"available": bool(g.get("_stt_ready"))}
         health["kokoro_loaded"] = bool(g.get("_kokoro_ready"))
-        # ollama reachability — last known result
         health["ollama_reachable"] = {
             "last_ok": bool(g.get("_ollama_last_ok", True)),
             "last_check_ts": float(g.get("_ollama_last_check_ts") or 0.0),
@@ -1113,15 +1107,29 @@ def build_debug_full(host: dict[str, Any]) -> dict[str, Any]:
     except Exception as e:
         out["subsystem_health"] = {"error": str(e)}
 
-    # Ribbon and heartbeat — fresh snapshot read.
+    # Ribbon and heartbeat — read from cached globals directly. Earlier
+    # versions called build_snapshot here, but it acquires perception locks
+    # that contend with concept-graph bootstrap and other startup work,
+    # which made the debug endpoint regularly time out at 10s+. Reading
+    # straight from host globals is O(1) and never blocks.
     try:
-        snap = build_snapshot(g)
+        ws = g.get("workspace")
+        perception = None
+        try:
+            if ws is not None and getattr(ws, "state", None) is not None:
+                perception = ws.state.perception
+        except Exception:
+            perception = None
+        snap_runtime = g.get("_runtime_self_snapshot") if isinstance(g.get("_runtime_self_snapshot"), dict) else {}
         out["ribbon_and_heartbeat"] = {
-            "ribbon": snap.get("ribbon") or {},
-            "heartbeat": snap.get("heartbeat_runtime") or {},
-            "models": snap.get("models") or {},
-            "speech": snap.get("speech") or {},
-            "inner_state_line": snap.get("inner_state_line") or "",
+            "heartbeat_mode": (getattr(perception, "heartbeat_mode", "") if perception else "") or str(g.get("_heartbeat_last_mode") or ""),
+            "heartbeat_summary": (getattr(perception, "heartbeat_summary", "") if perception else "") or str(g.get("_heartbeat_last_summary") or ""),
+            "heartbeat_tick_id": int((getattr(perception, "heartbeat_tick_id", 0) if perception else 0) or g.get("_heartbeat_last_tick_id") or 0),
+            "heartbeat_last_ts": float(g.get("_heartbeat_last_ts") or 0),
+            "voice_turn_state": str(getattr(perception, "voice_turn_state", "") or "idle") if perception else "idle",
+            "presence_mode": (getattr(perception, "runtime_presence_mode", "") if perception else "") or str(snap_runtime.get("presence_mode") or ""),
+            "selected_model": str(getattr(perception, "routing_selected_model", "") or "") if perception else "",
+            "inner_state_line": str(g.get("_inner_state_line") or ""),
         }
     except Exception as e:
         out["ribbon_and_heartbeat"] = {"error": str(e)}
@@ -1141,10 +1149,16 @@ def build_debug_full(host: dict[str, Any]) -> dict[str, Any]:
     except Exception as e:
         out["concept_graph_state"] = {"error": str(e)}
 
-    # App discovery state.
+    # App discovery state — read singleton without invoking the getter
+    # path that could spawn a scan. Module-level _SINGLETON is set during
+    # bootstrap_app_discoverer; absent if discovery hasn't started yet.
     try:
-        from brain.app_discoverer import get_app_discoverer
-        ad = get_app_discoverer()
+        ad = None
+        try:
+            import brain.app_discoverer as _admod
+            ad = getattr(_admod, "_SINGLETON", None)
+        except Exception:
+            ad = None
         if ad is not None:
             try:
                 count = int(getattr(ad, "count", 0))
