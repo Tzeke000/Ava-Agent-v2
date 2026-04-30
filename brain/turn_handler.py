@@ -245,4 +245,19 @@ def finalize_ava_turn(
     except Exception:
         pass
 
+    # ── Memory reflection scoring (Phase 2 step 4) ─────────────────────
+    # Fire post-turn LLM scorer in a daemon thread. Examines retrieved
+    # memories vs the final reply, logs scores to
+    # state/memory_reflection_log.jsonl. Does NOT modify node levels —
+    # that's step 5. This commit is data-gathering only.
+    # Gated by AVA_REFLECTION_DISABLED to allow opt-out.
+    try:
+        from brain.memory_reflection import run_in_background as _reflect_bg
+        _reflect_bg(
+            _g, str(user_input or ""), str(ai_reply or ""),
+            person_id=person_id, turn_id=f"turn_{int(time.time() * 1000)}",
+        )
+    except Exception as _re:
+        print(f"[memory_reflection] hook failed (non-fatal): {_re!r}")
+
     return ai_reply, visual_out, active_profile, actions, reflection

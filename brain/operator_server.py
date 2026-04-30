@@ -1198,6 +1198,42 @@ def build_debug_full(host: dict[str, Any]) -> dict[str, Any]:
     except Exception as e:
         out["ui_state"] = {"error": str(e)}
 
+    # Memory reflection log tail (Phase 2 step 4). Cheap probe — reads
+    # last 5 lines of state/memory_reflection_log.jsonl if present.
+    try:
+        from pathlib import Path as _Path
+        rlog = _Path(g.get("BASE_DIR") or ".") / "state" / "memory_reflection_log.jsonl"
+        if rlog.is_file():
+            try:
+                # Tail last 5 entries — bounded read.
+                with rlog.open("rb") as f:
+                    f.seek(0, 2)
+                    size = f.tell()
+                    f.seek(max(0, size - 8192), 0)
+                    tail = f.read().decode("utf-8", errors="replace")
+                lines = [l for l in tail.splitlines() if l.strip()][-5:]
+                last5 = []
+                for l in lines:
+                    try:
+                        last5.append(json.loads(l))
+                    except Exception:
+                        continue
+                out["memory_reflection_recent"] = {
+                    "log_path": str(rlog),
+                    "recent_entries": last5,
+                    "recent_count": len(last5),
+                }
+            except Exception as _re:
+                out["memory_reflection_recent"] = {"error": str(_re)}
+        else:
+            out["memory_reflection_recent"] = {
+                "log_path": str(rlog),
+                "recent_entries": [],
+                "recent_count": 0,
+            }
+    except Exception as e:
+        out["memory_reflection_recent"] = {"error": str(e)}
+
     return out
 
 
