@@ -1733,8 +1733,11 @@ body,
   animation: speakingFadeIn 0.6s ease both;
 }
 @keyframes speakingFadeIn {
-  from { opacity: 0; transform: translateY(2px); }
-  to   { opacity: 0.96; transform: translateY(0); }
+  /* Opacity-only entry — no transform, so the keyframe cannot contribute to
+     orb-drift even if React re-fires it. translateY was removed after a
+     remount-per-content-change pattern was identified as a drift culprit. */
+  from { opacity: 0; }
+  to   { opacity: 0.96; }
 }
 
 /* Inner-state line — below the orb. Crossfades on every change. */
