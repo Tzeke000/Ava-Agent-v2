@@ -227,6 +227,27 @@ class VoiceLoop:
                 self._set_state("passive")
                 time.sleep(2.0)
 
+    def _should_drop_self_listen(self) -> bool:
+        """Return True if the current audio capture would just hear Ava's
+        own TTS through the speakers. Used to gate listen_session calls so
+        Whisper never transcribes Ava's voice as user input ("self-listen").
+
+        Wake sources (clap detector, openWakeWord) bypass this gate via the
+        explicit `_voice_loop_wake_requested` / `_wake_word_detected` checks
+        that fire BEFORE listen_session in each loop body, so the user can
+        still interrupt Ava mid-sentence.
+
+        200ms trailing window after last_speak_end_ts catches the audio
+        buffer's trailing edge — Kokoro's last samples can still be on the
+        OutputStream when _tts_speaking drops to False.
+        """
+        if bool(self._g.get("_tts_speaking")):
+            return True
+        last_end = float(self._g.get("_last_speak_end_ts") or 0.0)
+        if last_end > 0 and (time.time() - last_end) < 0.2:
+            return True
+        return False
+
     def _passive_wait(self) -> bool:
         """Block until wake word / clap fires. Returns True when triggered."""
         while self._active:
@@ -262,6 +283,10 @@ class VoiceLoop:
             # Quick mic snapshot for ~0.8s — if we hear something significant, trigger.
             heard_audio_this_tick = False
             stt = self._g.get("stt_engine")
+            # Self-listen guard — don't capture Ava's own TTS as user input.
+            if self._should_drop_self_listen():
+                time.sleep(0.1)
+                continue
             if stt is not None and callable(getattr(stt, "is_available", None)) and stt.is_available():
                 try:
                     snap = stt.listen_session(max_seconds=0.8, silence_seconds=0.4)
