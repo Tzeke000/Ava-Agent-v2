@@ -16,6 +16,7 @@ so she can later notice when she's typically being talked to.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import threading
 import time
@@ -120,20 +121,42 @@ class WakeWordDetector:
             except Exception as e:
                 print(f"[wake_word] model download warning: {e!r}")
 
-            # Priority: custom hey_ava model if present, then hey_jarvis as
-            # the most reliable proxy (verified 2026-04-29 against synthetic
-            # Kokoro "hey ava" samples — hey_jarvis peaked 0.917 on at least
-            # one voice; hey_mycroft and hey_rhasspy stayed below 0.02 across
-            # all samples, so they're not viable proxies).
+            # Priority: custom hey_ava model if present. hey_jarvis was
+            # previously loaded as a phonetic proxy for "Hey Ava" but it
+            # produced too many false positives in the lunch voice test
+            # (2026-04-30) — the user said "hey ava" and openWakeWord
+            # consistently caught it as hey_jarvis, which is technically
+            # correct (the proxy fired) but the user wants the wake source
+            # logged as hey_ava, not jarvis.
+            #
+            # Disable jarvis entirely. Wake now comes from:
+            #   1. Clap detector (always on, separate audio path)
+            #   2. Custom hey_ava.onnx — if user has trained one
+            #   3. Transcript-wake via Whisper — voice_loop classifies the
+            #      transcript text and matches "hey ava", "hi ava",
+            #      "hello ava", "yo ava", "ok/okay ava", or bare "ava" at
+            #      start of short utterance. See voice_loop._classify_
+            #      transcript_wake (~line 94).
+            #
+            # Override with AVA_USE_HEY_JARVIS_PROXY=1 to re-enable jarvis
+            # as a proxy. Default behavior is to disable.
             wake_models: list[str] = []
             custom = self._base / "models" / "wake_words" / "hey_ava.onnx"
             if custom.is_file():
                 wake_models.append(str(custom))
                 print(f"[wake_word] custom hey_ava model loaded: {custom}")
-            # Always keep hey_jarvis as a belt-and-suspenders proxy until the
-            # custom model is field-validated; remove it from the list once
-            # the user is satisfied with the custom model.
-            wake_models.append("hey_jarvis")
+            allow_jarvis = os.environ.get("AVA_USE_HEY_JARVIS_PROXY", "0").strip() == "1"
+            if allow_jarvis and not wake_models:
+                wake_models.append("hey_jarvis")
+                print("[wake_word] hey_jarvis proxy enabled (AVA_USE_HEY_JARVIS_PROXY=1)")
+            elif not wake_models:
+                # No custom model + jarvis disabled. Skip openWakeWord
+                # entirely so the wake source falls through to clap +
+                # transcript_wake (Whisper). The whisper-poll fallback
+                # in _whisper_poll_loop() also activates without OWW.
+                print("[wake_word] openWakeWord disabled — relying on clap + transcript_wake")
+                self._oww_model = None
+                return False
 
             self._oww_model = Model(
                 wakeword_models=wake_models,
@@ -142,7 +165,15 @@ class WakeWordDetector:
             )
             self._oww_keys = list(self._oww_model.models.keys())
             using_custom = any("hey_ava" in k for k in self._oww_keys)
-            tag = "custom hey_ava + hey_jarvis fallback" if using_custom else "hey_jarvis (proxy until custom trained)"
+            using_jarvis = any("jarvis" in k for k in self._oww_keys)
+            if using_custom and using_jarvis:
+                tag = "custom hey_ava + hey_jarvis proxy"
+            elif using_custom:
+                tag = "custom hey_ava only"
+            elif using_jarvis:
+                tag = "hey_jarvis proxy (legacy)"
+            else:
+                tag = "no wake models loaded"
             print(f"[wake_word] openWakeWord ready models={self._oww_keys} ({tag})")
             return True
         except Exception as e:
