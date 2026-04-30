@@ -1648,11 +1648,7 @@ body,
   width: min(760px, 92vw);
   height: 340px;
   flex: 0 0 340px;
-  margin: 0 auto;
-  /* Reset any baseline alignment that could leak in from inline elements
-     and shove the orb off-center in tall-row layouts. */
-  line-height: normal;
-  padding: 0;
+  margin-top: 0;
 }
 .orb-canvas-shell {
   width: 320px;
@@ -1664,11 +1660,8 @@ body,
   overflow: visible;
   border-radius: 0;
   background: transparent;
-  /* Belt-and-suspenders centering — works in any parent context whether the
-     parent uses flex, grid, or block layout. */
-  align-self: center;
-  margin: auto;
-  flex: 0 0 320px;
+  /* Transform-only transition for the middle-click recenter pulse — no
+     layout properties so this can never trigger reflow on snapshot ticks. */
   transition: transform 0.32s cubic-bezier(0.22, 1.0, 0.36, 1.0);
 }
 .orb-canvas-shell.recenter-pulse {
