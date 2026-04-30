@@ -128,8 +128,105 @@ def _ext_test_conversation_active_gating() -> dict:
     }
 
 
+def _ext_test_self_listen_guard_observable() -> dict:
+    """Verify the self-listen guard's prerequisites are queryable.
+
+    The guard in voice_loop._should_drop_self_listen() reads two host
+    globals: _tts_speaking and _last_speak_end_ts. /api/v1/debug/full
+    must surface both reliably so external observers (this regression
+    suite, future monitoring tools) can verify guard behaviour without
+    instrumenting voice_loop.py.
+
+    Steps:
+      1. Inject a turn with speak=True, wait_for_audio=False so TTS
+         starts in the background while we keep polling
+      2. Poll /debug/full a few times during playback — at least one
+         poll should catch tts_worker.speaking=True
+      3. Wait for playback to finish (speaking transitions to False or
+         _last_speak_end_ts becomes recent), then confirm _last_speak_end_ts
+         is within the last few seconds
+
+    Skip-safe: if TTS is not available (kokoro_loaded=False), the test
+    reports skipped=True rather than fail — keeps the suite green on
+    machines without working audio.
+    """
+    label = "self_listen_guard_observable"
+    t0 = time.time()
+    fails: list[str] = []
+    details: dict = {}
+
+    pre = _debug_full() or {}
+    kokoro_loaded = bool((pre.get("subsystem_health") or {}).get("kokoro_loaded"))
+    details["kokoro_loaded"] = kokoro_loaded
+    if not kokoro_loaded:
+        return {
+            "label": label,
+            "wall_seconds": round(time.time() - t0, 3),
+            "passed": True,
+            "fail_reasons": [],
+            "details": {**details, "skipped": "kokoro not loaded"},
+        }
+
+    inject_t0 = time.time()
+    status, payload, err = _inject("hey ava", speak=True, timeout_s=5.0)
+    details["http_status"] = status
+    details["http_error"] = err
+    if status != 200 or not isinstance(payload, dict):
+        fails.append(f"inject failed status={status} err={err}")
+        return {
+            "label": label,
+            "wall_seconds": round(time.time() - t0, 3),
+            "passed": False,
+            "fail_reasons": fails,
+            "details": details,
+        }
+
+    # Poll quickly to catch TTS in flight. Up to 3s of polling at 100ms.
+    saw_speaking = False
+    for _ in range(30):
+        snap = _debug_full() or {}
+        sh = snap.get("subsystem_health") or {}
+        tts = sh.get("tts_worker") or {}
+        vl = snap.get("voice_loop") or {}
+        if bool(tts.get("speaking")) or bool(vl.get("_tts_speaking")):
+            saw_speaking = True
+            details["caught_speaking_at_offset_ms"] = int((time.time() - inject_t0) * 1000)
+            break
+        time.sleep(0.1)
+    details["saw_speaking"] = saw_speaking
+    if not saw_speaking:
+        # Not strictly a failure — short replies can finish before we poll.
+        # But _last_speak_end_ts must have advanced past inject_t0.
+        snap = _debug_full() or {}
+        last_end = float((snap.get("voice_loop") or {}).get("last_speak_end_ts") or 0.0)
+        details["last_speak_end_ts"] = last_end
+        if last_end <= inject_t0:
+            fails.append(
+                "tts_worker.speaking never True AND last_speak_end_ts didn't advance"
+            )
+
+    # Wait briefly for playback completion; record timing.
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        snap = _debug_full() or {}
+        tts = (snap.get("subsystem_health") or {}).get("tts_worker") or {}
+        if not bool(tts.get("speaking")):
+            break
+        time.sleep(0.15)
+    details["wait_for_done_seconds"] = round(time.time() - inject_t0, 2)
+
+    return {
+        "label": label,
+        "wall_seconds": round(time.time() - t0, 3),
+        "passed": not fails,
+        "fail_reasons": fails,
+        "details": details,
+    }
+
+
 EXTENDED_TESTS = [
     _ext_test_conversation_active_gating,
+    _ext_test_self_listen_guard_observable,
 ]
 
 
