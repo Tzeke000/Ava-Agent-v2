@@ -1,6 +1,8 @@
 # AVA HANDOFF
-**Last updated:** 2026-04-29 (post wake-word + signal-bus pass)
-**Latest commit:** see `git log --oneline -1`
+**Last updated:** 2026-04-29 (post mem0 + ava-gemma4 + repo hygiene pass)
+**Latest commit:** `117428f` — `chore: gitignore biometric + per-machine state; untrack runtime files`
+**Total commits on master:** 184
+**Roadmap with full phase history:** `docs/AVA_ROADMAP.md`
 
 ---
 
@@ -13,9 +15,22 @@ Ava Agent v2 is a local-first desktop AI companion running on:
 - **Tauri v2** + **React 18** + **Three.js** desktop app (`apps/ava-control`)
 - **No Gradio** — Tauri is the only UI; port 5876 is the only HTTP control plane.
 
-She has emotions, memory, vision (live camera + InsightFace + eye tracking + per-person expression calibration), voice (Kokoro neural TTS + Whisper base STT + Silero VAD + openWakeWord + always-on voice loop with attentive state), concept graph, episodic memory, dual-brain parallel inference, self-modification proposals, trust system, signal bus, and a self-aware identity system.
+She has emotions, memory (concept graph + episodic + mem0), vision (InsightFace GPU + per-person expression calibration + eye tracking), voice (clap detector + openWakeWord + Silero VAD + Whisper base + Eva→Ava normalization + Kokoro neural TTS + 60s attentive state), dual-brain parallel inference (Stream A `ava-gemma4` foreground + Stream B `gemma4`/cloud background, serialised by Ollama lock), an event-driven signal bus replacing all polling loops, a 40-builtin voice command router with custom-command builder, app/game discovery, reminders, correction handling, pointing, and a self-aware identity system.
 
-All 100 phases complete. Recent passes layered: InsightFace + Kokoro + 3D brain graph + smart wake word + attentive voice state + per-person expression calibration + voice command router + app discoverer + signal bus + openWakeWord + Silero VAD on top.
+**All 100 phases complete.** Post-100 work has layered:
+- Cloud models + connectivity monitor (`4274ac7`)
+- Dual-brain parallel inference (`57d178b`)
+- Eye tracking + expression detection (`5b466b6`)
+- Gradio removal (`ac550e7`)
+- TTS COM-thread isolation + Ollama lock + fast path (`fa583ea`)
+- Kokoro neural TTS (`346d30c`)
+- InsightFace GPU + 3D brain graph (`357dd69`, `9d07838`)
+- Voice-first UI + 40 voice commands (`8affd49`)
+- Signal bus + Win32 zero-poll watchers (`755f539`)
+- Voice critical fixes (clap=direct, OutputStream playback) (`a740bcc`)
+- openWakeWord + Silero VAD (`4477aa2`)
+- ava-gemma4 identity-baked model + mem0 memory (`5c2322c`)
+- Repository hygiene — gitignore + 149-file untrack (`117428f`)
 
 ---
 
@@ -203,6 +218,11 @@ Each captured frame is pushed into `engine.add_face(person_id, frame)` immediate
 | Win32 clipboard hook | wired | AddClipboardFormatListener → SIGNAL_CLIPBOARD_CHANGED |
 | Win32 window hook | wired | SetWinEventHook(EVENT_SYSTEM_FOREGROUND) → SIGNAL_ACTIVE_WINDOW_CHANGED |
 | Win32 app install hook | wired | ReadDirectoryChangesW → SIGNAL_NEW_APP_INSTALLED |
+| ava-gemma4 (Stream A primary) | wired | `dual_brain._resolve_foreground_model()` picks `ava-gemma4` if installed; `_pick_fast_model_fallback` prefers it for fast path |
+| Stream B `gemma4:latest` | wired | `dual_brain.get_thinking_model()` — kimi cloud when online, gemma4 local, qwen2.5:14b fallback |
+| mem0 memory (ChromaDB + Ollama) | wired | `bootstrap_ava_memory` in startup; `turn_handler` adds turns; `prompt_builder` injects MEMORIES |
+| Memory voice commands (5) | wired | "what do you remember about me", "do you remember when X", "forget that", "forget about X", "remember this: X" |
+| Memory tab UI | wired | `/api/v1/memory/mem0` GET/DELETE/search; live list + per-entry Forget |
 
 ---
 
@@ -289,6 +309,7 @@ Each captured frame is pushed into `engine.add_face(person_id, frame)` immediate
 | `brain/insight_face_engine.py` | InsightFace buffalo_l GPU engine |
 | `brain/camera_annotator.py` | Per-frame face overlays |
 | `brain/expression_calibrator.py` | Per-person expression baseline |
+| `brain/ava_memory.py` | mem0 wrapper — ChromaDB + Ollama; long-term semantic memory |
 | `brain/face_recognizer.py` | Legacy face_recognition lib (fallback) |
 | `brain/expression_detector.py` | Legacy MediaPipe expression (fallback) |
 | `brain/eye_tracker.py` | MediaPipe iris tracking |
@@ -335,46 +356,88 @@ py -3.11 -m pip install "protobuf>=3.20,<4" --force-reinstall
 
 ## Hot Fix History (chronological — newest first)
 
-| Commit | Fix |
+For the complete commit-level history with what each fix did, see
+**`docs/AVA_ROADMAP.md` → Section 3 Hot Fixes Log**.
+
+| Commit | What changed |
 |---|---|
+| `117428f` | gitignore biometric (`faces/`) + per-machine state (`.claude/`); untracked 149 already-committed runtime files |
+| `5c2322c` | ava-gemma4 identity-baked model, mem0 memory (ChromaDB + Ollama), gemma4 vision, memory UI + 5 voice commands |
+| `c54bbcb` | docs: full handoff + roadmap; wake_word prefers custom hey_ava → hey_jarvis fallback (with phonetic benchmark) |
 | `4477aa2` | openWakeWord + Silero VAD — production wake word + speech detection |
 | `a740bcc` | Voice — clap=direct wake, Whisper Ava bias, clarification waits, OutputStream protected playback, clap floor 0.35 |
 | `755f539` | Event-driven signal bus, Win32 clipboard / window / app-install watchers, zero-poll architecture |
-| `8affd49` | Voice-first UI, app discovery, voice commands, custom tabs, correction handler, pointing, reminders |
+| `8affd49` | Voice-first UI, app discovery (367 apps + 32 games), 40 voice commands, custom tabs, correction handler, pointing, reminders |
 | `94bca07` | Audit pass — dead code cleanup, wiring verification, onboarding InsightFace, perf, health |
 | `9d07838` | Register pip-installed CUDA DLL dirs so InsightFace runs on GPU |
-| `3a5a333` | InsightFace overlays, smart wake word, attentive state, expression calibration, voice mood, 3D brain |
+| `3a5a333` | InsightFace overlays, smart wake word, attentive state, expression calibration, voice mood, 3D brain, orb breathing |
 | `357dd69` | InsightFace GPU face overlay, 3D brain graph, Whisper base, orb breathing, chat fixes |
 | `346d30c` | Kokoro neural TTS, orb voice reactions, real amplitude, companion orb sync |
-| `fa583ea` | TTS COM thread, Ollama lock, fast path timing, chat history, face greeting, clipboard, proactive |
-| `e80e1d3` | Phase 100 — Ava is alive |
+| `fa583ea` | TTS COM thread (TTSWorker), Ollama lock, fast path timing, chat history, face greeting, clipboard, proactive |
+| `7534621` | run_ava timeout protection, orb thinking pulse, always-on voice, clap sensitivity |
+| `dc645d1` | clap detector — 5× ambient mult, 0.15 floor (later 0.35), 3s cooldown |
+| `1975dff` | Live camera on all tabs, gate D3 brain reinit, memo OrbCanvas |
+| `02c9f1f` | Widget transparent background — CSS override + backgroundColor in tauri.conf.json |
+| `59eaca9` | Buffered-only live frame, 90s run_ava timeout, 5s tick timeout |
+| `4ea87e8` | Widget move tool, app launcher, browser navigation tools |
+| `44bb51f` | Widget capabilities, minimize detection polling, removed wrong blur fallback |
+| `97409de` | STT engine bootstrap for voice loop, live camera feed from background thread |
+| `5183e78` | Online flicker — 3-failure threshold, silent connecting window, 5s poll |
+| `aa01b5b` | face_recognizer thread-safe singleton, diagnostic prints on all exit paths |
+| `242ecb9` | Keepalive stability, app connection retry, self_model timestamp crash |
+| `ae1b1fd` | Cleanup — removed DeepFace, dead imports, Gradio remnants, fix selftest |
+| `ac550e7` | Removed Gradio, fix WS flicker, fix double startup, dev hot-reload mode |
+| `34da8ea` | Live camera feed in Vision tab, concept_graph save mkdir, live_frame endpoint |
+| `5d1a180` | Camera capture persistent connection, suppress noisy logs, global crash handler |
+| `f951489` | Comprehensive bug audit + repair pass |
+| `d187c80` | run_ava hang timeout protection, widget orb visibility, cloud model priority |
+| `bb6b4f7` | concept_graph.json.tmp WinError 5 — process lock, skip-if-locked, stale .tmp cleanup |
+| `5b22890` | MediaPipe iris landmark indices fix (left 468–472, right 473–477) |
+| `5b466b6` | Eye tracking, gaze estimation, expression detection, video memory |
+| `42f95cd` | Startup hang — concept_graph + self_model + vectorstore + milestone_100 to background threads |
+| `2382d8f` | concept_graph tmp file lock on Windows, brain_graph 0 nodes in snapshot |
+| `57d178b` | Dual-brain parallel inference — foreground + background streams, live thinking, seamless handoff |
+| `4274ac7` | Cloud models, connectivity monitor, image generation, routing expansion |
+| `e80e1d3` | Phase 100 — Ava is alive (20/20 integration tests, full compile sweep, Tauri build clean) |
 
 ---
 
 ## Known Issues / What Needs Testing
 
-1. **Wake word**: `hey_jarvis` is a proxy — fires reliably on some "hey ava" voices (af_bella scored 0.917) but not all (af_heart 0.307, af_nicole 0.001). Mitigated by clap detector and attentive state. Custom `hey_ava.onnx` training requires WSL2 — see `docs/TRAIN_WAKE_WORD.md`.
-2. **First-run InsightFace warmup ~80s** — startup logs warn about this; subsequent runs hit the cudnn cache.
-3. **face_recognition lib** still used as fallback when InsightFace is unavailable. Keep dlib-built install around.
-4. **expression_detector.py (MediaPipe)** still wired in 5 helper paths. Coexists with `expression_calibrator` (which uses InsightFace landmarks). Either is acceptable.
-5. **App discoverer scan ~47s** — one-time startup cost in a background thread; 24h refresh is incremental.
-6. **Clap detector** — floor 0.35 + 4s cooldown should prevent keyboard false-positives. Verify in real-world use.
-7. **Game category** in app discoverer over-includes Steam helper binaries (`gameoverlayui64.exe`, `steamservice.exe`). Fuzzy match prioritises user-friendly names; cosmetic only.
+1. **`faces/zeke/` is empty** — must run onboarding ("hey Ava, profile me") to populate. Until then InsightFace tags every face as `unknown` (engine works, just nothing to match against).
+2. **Wake word**: `hey_jarvis` is a proxy — fires reliably on some "hey ava" voices (af_bella scored 0.917) but not all (af_heart 0.307, af_nicole 0.001). Mitigated by clap detector + 60s attentive window. Custom `hey_ava.onnx` training requires WSL2 — see `docs/TRAIN_WAKE_WORD.md`.
+3. **First-run InsightFace warmup ~80s** — cudnn EXHAUSTIVE algorithm search; cached afterward.
+4. **First-run mem0 latency** — each `add_conversation_turn()` calls the LLM for fact extraction (~2-5s on `ava-gemma4`). Dispatched from a daemon thread in `turn_handler` so it never blocks `finalize_ava_turn`. Search path is fast.
+5. **`protobuf` is pinned to 3.20.x** for MediaPipe + mem0 + InsightFace coexistence. If any future install bumps it, MediaPipe breaks with `'MessageFactory' object has no attribute 'GetPrototype'`. Restore via `pip install "protobuf>=3.20,<4" --force-reinstall`.
+6. **face_recognition lib** still used as fallback when InsightFace is unavailable. Keep dlib-built install around.
+7. **expression_detector.py (MediaPipe)** still wired in 5 helper paths. Coexists with `expression_calibrator` (which uses InsightFace landmarks). Either is acceptable.
+8. **App discoverer scan ~47s** — one-time startup cost in a background thread; 24h refresh is incremental.
+9. **Game category** in app discoverer over-includes Steam helper binaries (`gameoverlayui64.exe`, `steamservice.exe`). Fuzzy match prioritises user-friendly names; cosmetic only.
+10. **Repo history** still contains earlier-committed face photos and runtime state snapshots. `117428f` stopped future leakage but historical commits remain. Optional cleanup via `git filter-repo` + force-push.
 
 ---
 
-## Smoke Tests Done This Pass
+## Smoke Tests Done (most recent → oldest)
 
 | Test | Result |
 |---|---|
-| openWakeWord install + hey_jarvis load | PASS |
-| Silero VAD install + load_silero_vad() | PASS |
-| Wake detector: clap → (True, 1.0, "clap_triggered") | PASS |
-| Wake detector: openwakeword → (True, 1.0, "openwakeword_triggered") | PASS |
-| STTEngine._normalize_transcript: 5/5 mishearings normalized | PASS |
-| Phonetic benchmark: hey_jarvis vs mycroft vs rhasspy on Kokoro samples | DONE — hey_jarvis is the only viable proxy |
+| `ollama create ava-gemma4 -f Modelfile.ava_gemma4` | PASS (model created, 3 test prompts return Ava-voiced replies) |
+| mem0 + ChromaDB + Ollama add+search | PASS (extracts "Zeke enjoys building AI systems and his favorite color is red", search returns it ranked) |
+| `protobuf 3.20.3` after mem0 install | RESTORED — both MediaPipe and mem0 import cleanly |
+| gemma4 vision via `/api/chat` images | PASS (correctly read text from synthetic image) |
 | `tsc --noEmit` | PASS |
-| `npm run tauri:build` | (last verified `8affd49`) |
+| `npm run tauri:build` | PASS (53s, 8.6MB exe) |
+| openWakeWord install + hey_jarvis load | PASS |
+| Silero VAD install + `load_silero_vad()` | PASS |
+| Wake detector: clap source → `(True, 1.0, "clap_triggered")` | PASS |
+| Wake detector: openwakeword source → `(True, 1.0, "openwakeword_triggered")` | PASS |
+| `STTEngine._normalize_transcript`: 5/5 Whisper mishearings normalized (Eva→Ava, Aye va→Ava, A va→Ava, Hey Ada→Hey Ava) | PASS |
+| Phonetic benchmark: hey_jarvis vs mycroft vs rhasspy on Kokoro samples | hey_jarvis only viable (peaks 0.917 on af_bella; others ≤0.019) |
+| InsightFace GPU: all 5 buffalo_l ONNX sessions on `CUDAExecutionProvider` | PASS |
+| TTSWorker: `_tts_speaking` flips True during playback, amplitude > 0, both reset to 0 at end | PASS |
+| TTSWorker.stop() refuses without mute, runs with mute=True | PASS |
+| Win32 clipboard watcher: clipboard change fires `SIGNAL_CLIPBOARD_CHANGED` instantly | PASS |
+| Win32 window hook: SetWinEventHook installs cleanly | PASS |
 
 ---
 
