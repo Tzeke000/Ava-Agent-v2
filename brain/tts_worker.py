@@ -473,6 +473,20 @@ class TTSWorker:
         n_words = len(words) if words else 0
         last_word_idx = -1
 
+        # Stamp playback-dropped flag — cleared at start of each play, set
+        # if we abort early. Read by /api/v1/debug/full and the snapshot so
+        # external observers (tests, the UI) can detect dropped TTS without
+        # parsing trace lines. The lunch voice test (2026-04-30) had a
+        # second-turn TTS go silent and the only evidence was the absence
+        # of a tts.playback_done trace line — this gives us a positive
+        # signal instead.
+        if self._g is not None:
+            try:
+                self._g["_tts_last_playback_dropped"] = False
+            except Exception:
+                pass
+        played_full = False
+        idx = 0  # initialized here so the finally's drop-stamp can read it
         try:
             with sd.OutputStream(
                 samplerate=sample_rate,
@@ -516,17 +530,36 @@ class TTSWorker:
 
                     stream.write(chunk.reshape(-1, 1))
                     idx += chunk_size
+                # Set played_full only when the full sample buffer was fed
+                # to the stream. Mid-stream mute/shutdown breaks the loop
+                # before this point.
+                if idx >= n_samples:
+                    played_full = True
         except Exception as e:
             print(f"[tts_worker] OutputStream failed ({e!r}) — using sd.play fallback")
             try:
                 if not self._muted():
                     sd.play(audio_np, samplerate=sample_rate)
                     sd.wait()
+                    played_full = True
             except Exception as e2:
                 print(f"[tts_worker] sd.play fallback failed: {e2!r}")
         finally:
             _set_live_amplitude(0.0)
             self._set_speaking_amplitude(0.0)
+            # Stamp the dropped-playback flag for external observers.
+            if self._g is not None and not played_full:
+                try:
+                    self._g["_tts_last_playback_dropped"] = True
+                    self._g["_tts_last_playback_dropped_ts"] = time.time()
+                    self._g["_tts_last_playback_dropped_chars"] = int(n_samples)
+                    print(
+                        f"[tts_worker] WARNING: playback dropped "
+                        f"(played {idx}/{n_samples} samples; "
+                        f"muted={self._muted()} shutdown={self._stop_evt.is_set()})"
+                    )
+                except Exception:
+                    pass
 
     def _speak_pyttsx3(self, text: str, emotion: str, intensity: float) -> None:
         rate, volume = _emotion_to_rate_volume(emotion, intensity)

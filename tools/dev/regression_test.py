@@ -712,6 +712,75 @@ def _ext_test_time_date_no_llm() -> dict:
     }
 
 
+def _ext_test_back_to_back_tts_no_drop() -> dict:
+    """Verify two back-to-back TTS turns both complete playback.
+
+    Lunch voice test (2026-04-30) caught a second-turn TTS being silently
+    dropped — the user's "it's actually 12:21 PM" follow-up generated a
+    224-char reply but no audio. Trace ended at finalize_ava_turn with
+    no tts.playback_done. Possible causes: stale _tts_muted, window-focus
+    gating, or worker queue stall.
+
+    This test exercises:
+      1. Inject turn 1 with speak=True wait_for_audio=True
+      2. Verify tts.last_playback_dropped is False post-playback
+      3. Within 5s (still in attentive window), inject turn 2 with same
+         speak=True wait_for_audio=True
+      4. Verify tts.last_playback_dropped is False again
+
+    Skip-safe: skipped if kokoro_loaded=False.
+    """
+    label = "back_to_back_tts_no_drop"
+    t0 = time.time()
+    fails: list[str] = []
+    details: dict = {}
+
+    pre = _debug_full() or {}
+    if not bool((pre.get("subsystem_health") or {}).get("kokoro_loaded")):
+        return {
+            "label": label,
+            "wall_seconds": round(time.time() - t0, 3),
+            "passed": True,
+            "fail_reasons": [],
+            "details": {"skipped": "kokoro not loaded"},
+        }
+
+    for turn_idx, text in enumerate(["hello there", "how are you doing"], start=1):
+        c_t0 = time.time()
+        status, payload, err = _inject(
+            text, speak=True, timeout_s=20.0
+        )
+        details[f"turn_{turn_idx}_http_status"] = status
+        details[f"turn_{turn_idx}_elapsed"] = round(time.time() - c_t0, 3)
+        if status != 200 or not isinstance(payload, dict) or not payload.get("ok"):
+            fails.append(f"turn {turn_idx}: inject failed status={status} err={err}")
+            continue
+        details[f"turn_{turn_idx}_reply_chars"] = int(payload.get("reply_chars") or 0)
+        # Wait for the worker to finish playing — poll tts_speaking until False.
+        deadline = time.time() + 15.0
+        while time.time() < deadline:
+            snap = _debug_full() or {}
+            tts = (snap.get("subsystem_health") or {}).get("tts_worker") or {}
+            if not bool(tts.get("speaking")):
+                break
+            time.sleep(0.1)
+        # Final state: must NOT have last_playback_dropped True.
+        snap = _debug_full() or {}
+        tts = (snap.get("subsystem_health") or {}).get("tts_worker") or {}
+        dropped = bool(tts.get("last_playback_dropped"))
+        details[f"turn_{turn_idx}_dropped"] = dropped
+        if dropped:
+            fails.append(f"turn {turn_idx}: tts.last_playback_dropped=True (silent failure)")
+
+    return {
+        "label": label,
+        "wall_seconds": round(time.time() - t0, 3),
+        "passed": not fails,
+        "fail_reasons": fails,
+        "details": details,
+    }
+
+
 EXTENDED_TESTS = [
     _ext_test_conversation_active_gating,
     _ext_test_self_listen_guard_observable,
@@ -721,6 +790,7 @@ EXTENDED_TESTS = [
     _ext_test_sequential_fast_path_latency,
     _ext_test_concept_graph_save_under_load,
     _ext_test_time_date_no_llm,
+    _ext_test_back_to_back_tts_no_drop,
 ]
 
 
