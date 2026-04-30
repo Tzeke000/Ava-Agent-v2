@@ -224,9 +224,101 @@ def _ext_test_self_listen_guard_observable() -> dict:
     }
 
 
+def _ext_test_attentive_window_observable() -> dict:
+    """Verify the attentive window's observable state — last_speak_end_ts
+    advances on TTS, attentive_remaining_seconds is non-zero right after,
+    and decays over the next few seconds.
+
+    Note: inject_transcript bypasses voice_loop.listen_session, so this
+    cannot test the real "user speaks during attentive without wake" flow
+    — that requires actual mic audio. What it CAN verify is that the
+    timestamps voice_loop's _attentive_wait() loop reads
+    (_last_speak_end_ts, attentive_remaining_seconds) are correctly
+    surfaced and behave as expected, which is what voice_loop's
+    transition logic depends on.
+
+    Steps:
+      1. Inject with speak=True so the TTS worker stamps
+         _last_speak_end_ts when playback completes
+      2. Read /debug/full — last_speak_end_ts must be recent (within 30s
+         of test start) and attentive_remaining_seconds > 0
+      3. Sleep 3s; read again — attentive_remaining_seconds must have
+         decreased by approximately 3s (allow ±1s slack)
+
+    Skip-safe: skipped if kokoro not loaded.
+    """
+    label = "attentive_window_observable"
+    t0 = time.time()
+    fails: list[str] = []
+    details: dict = {}
+
+    pre = _debug_full() or {}
+    if not bool((pre.get("subsystem_health") or {}).get("kokoro_loaded")):
+        return {
+            "label": label,
+            "wall_seconds": round(time.time() - t0, 3),
+            "passed": True,
+            "fail_reasons": [],
+            "details": {"skipped": "kokoro not loaded"},
+        }
+
+    inject_t0 = time.time()
+    status, payload, _err = _inject("hello", speak=True, timeout_s=5.0)
+    if status != 200 or not isinstance(payload, dict):
+        fails.append(f"inject failed status={status}")
+        return {
+            "label": label,
+            "wall_seconds": round(time.time() - t0, 3),
+            "passed": False,
+            "fail_reasons": fails,
+            "details": details,
+        }
+
+    # Wait for TTS to finish so _last_speak_end_ts gets stamped.
+    deadline = time.time() + 6.0
+    while time.time() < deadline:
+        snap = _debug_full() or {}
+        tts = (snap.get("subsystem_health") or {}).get("tts_worker") or {}
+        if not bool(tts.get("speaking")):
+            break
+        time.sleep(0.1)
+
+    s1 = _debug_full() or {}
+    vl1 = s1.get("voice_loop") or {}
+    last_end_1 = float(vl1.get("last_speak_end_ts") or 0.0)
+    rem_1 = float(vl1.get("attentive_remaining_seconds") or 0.0)
+    details["last_speak_end_ts_after_inject"] = last_end_1
+    details["attentive_remaining_seconds_first"] = rem_1
+    if last_end_1 <= inject_t0:
+        fails.append(f"last_speak_end_ts ({last_end_1}) didn't advance past inject_t0 ({inject_t0})")
+    if rem_1 <= 0:
+        fails.append(f"attentive_remaining_seconds={rem_1} (expected >0 right after speak)")
+
+    # Sleep 3s, verify decay.
+    time.sleep(3.0)
+    s2 = _debug_full() or {}
+    vl2 = s2.get("voice_loop") or {}
+    rem_2 = float(vl2.get("attentive_remaining_seconds") or 0.0)
+    details["attentive_remaining_seconds_after_3s"] = rem_2
+    if rem_1 > 0:
+        decay = rem_1 - rem_2
+        details["decay"] = round(decay, 2)
+        if not (2.0 <= decay <= 4.0):
+            fails.append(f"unexpected decay rate: {decay:.2f}s in 3s wall clock")
+
+    return {
+        "label": label,
+        "wall_seconds": round(time.time() - t0, 3),
+        "passed": not fails,
+        "fail_reasons": fails,
+        "details": details,
+    }
+
+
 EXTENDED_TESTS = [
     _ext_test_conversation_active_gating,
     _ext_test_self_listen_guard_observable,
+    _ext_test_attentive_window_observable,
 ]
 
 
