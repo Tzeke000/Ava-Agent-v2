@@ -468,6 +468,9 @@ def _generate_greeting_async(g: dict[str, Any], person_id: str, prev_person: str
 def maybe_greet_on_face_detection(g: dict[str, Any], person_id: str, prev_person: str) -> None:
     """Called by runtime_presence on face change. Greets Zeke at most every 30 min."""
     try:
+        # Don't greet during an active conversation — Ava is already engaged.
+        if bool(g.get("_conversation_active")) or bool(g.get("_turn_in_progress")):
+            return
         owner = str(g.get("OWNER_PERSON_ID") or "zeke")
         if person_id != owner:
             # Only greet the owner for now. Other people get the transition note only.
@@ -490,9 +493,15 @@ def proactive_check(g: dict[str, Any]) -> Optional[str]:
       - last user message > 3 minutes ago
       - last proactive utterance > 10 minutes ago
       - dual_brain has parked an insight worth sharing
+      - no active conversation in progress
     """
     try:
         if not bool(g.get("tts_enabled", False)):
+            return None
+        # Block all proactive speech while Ava is mid-conversation. The
+        # _PROACTIVE_QUIET_SEC check below is a separate "long silence" gate;
+        # this is the immediate "she's currently engaged" gate.
+        if bool(g.get("_conversation_active")) or bool(g.get("_turn_in_progress")):
             return None
         owner = str(g.get("OWNER_PERSON_ID") or "zeke")
         current = str(g.get("_current_person_at_machine") or "")

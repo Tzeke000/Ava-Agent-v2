@@ -168,6 +168,15 @@ class VoiceLoop:
         prev = self._state
         self._state = state
         self._g["_voice_loop_state"] = state
+        # _conversation_active spans the entire conversation window — wake →
+        # speaking → attentive → wake → ... — so background subsystems
+        # (curiosity, dual_brain Stream B, proactive triggers, question_engine)
+        # know to defer until Zeke and Ava are done. Cleared only when we drop
+        # back to passive (timeout or user_disengaged from _attentive_wait).
+        if state in ("listening", "attentive", "thinking", "speaking"):
+            self._g["_conversation_active"] = True
+        elif state == "passive":
+            self._g["_conversation_active"] = False
         # Drive the orb's inner-state line. reply_engine overrides this with
         # "thinking — fast path" / "thinking — full path" while it runs.
         if state in ("listening", "attentive"):
@@ -190,6 +199,13 @@ class VoiceLoop:
         while self._active:
             try:
                 # ── Choose passive vs attentive ────────────────────────────
+                # Take the max of our own _last_speak_end_ts and the global —
+                # so question_engine / proactive_triggers / face_greeting
+                # speech (which goes through tts_worker directly, not via
+                # voice_loop._speak) also drops us into attentive afterwards.
+                _global_speak_end = float(self._g.get("_last_speak_end_ts") or 0.0)
+                if _global_speak_end > self._last_speak_end_ts:
+                    self._last_speak_end_ts = _global_speak_end
                 in_attentive = (
                     self._last_speak_end_ts > 0
                     and (time.time() - self._last_speak_end_ts) < _ATTENTIVE_BASE_SECONDS
@@ -476,6 +492,10 @@ class VoiceLoop:
         _trace(f"vl.tts_enqueued chars={len(clean)}")  # TRACE-PHASE1
         spoke_ok = self._speak(clean)
         self._last_speak_end_ts = time.time() if spoke_ok else 0.0
+        # Mirror to globals so other paths (heartbeat checks, snapshot) and
+        # any future code that reads the public marker stay in sync.
+        if spoke_ok:
+            self._g["_last_speak_end_ts"] = self._last_speak_end_ts
         _trace(f"vl.tts_done ok={spoke_ok}")  # TRACE-PHASE1
         # Clear turn-in-progress flag — app discovery and other background
         # work can resume.
