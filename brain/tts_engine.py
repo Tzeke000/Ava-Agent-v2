@@ -59,8 +59,37 @@ def _stub_japanese_deps():
     sys.modules.setdefault("MeCab", types.SimpleNamespace(Tagger=_DummyMeCab))
 
 
+def _ensure_nltk_perceptron_tagger():
+    # MeloTTS pulls in NLTK and needs averaged_perceptron_tagger_eng for
+    # English POS tagging. On a fresh machine the resource isn't bundled
+    # and MeloTTS errors with "Resource averaged_perceptron_tagger_eng
+    # not found." Download once if missing; idempotent on later calls.
+    # Silent on success; logs failure but doesn't raise so the rest of
+    # the bridge can still try (possibly producing the original
+    # LookupError for the caller to handle).
+    try:
+        import nltk
+        try:
+            nltk.data.find('taggers/averaged_perceptron_tagger_eng')
+        except LookupError:
+            try:
+                nltk.download('averaged_perceptron_tagger_eng', quiet=True)
+            except Exception as e:
+                print(f"[melo_bridge] NLTK download failed: {e!r}")
+            try:
+                nltk.data.find('taggers/averaged_perceptron_tagger')
+            except LookupError:
+                try:
+                    nltk.download('averaged_perceptron_tagger', quiet=True)
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"[melo_bridge] nltk unavailable: {e!r}")
+
+
 def _load_melo_tts(language: str = "EN"):
     _stub_japanese_deps()
+    _ensure_nltk_perceptron_tagger()
     last_err = None
     for mod_name in ("melo.api", "MeloTTS.melo.api"):
         try:
