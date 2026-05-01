@@ -149,20 +149,84 @@ class InsightFaceEngine:
         if not faces_dir.is_dir():
             print(f"[insight_face] faces dir missing: {faces_dir}")
             return
+        # Reference photos in faces/<pid>/*.png are typically TIGHT crops of
+        # a face — 200x200 pixels with the face filling the whole frame. The
+        # main buffalo_l app is prepared with det_size=(640, 640) for
+        # live-camera frames, which is correct for normal photography but
+        # misses faces that ARE the whole image (no surrounding context for
+        # the detector to anchor on). Tonight's hardware test surfaced this:
+        # 16 photos in faces/zeke/, all 200x200 PNGs, all returned zero
+        # faces from app.get(); insight_face logged "loaded 0 embeddings
+        # from 0 people" and Ava saw the user as UNKNOWN 0%.
+        #
+        # Two-part fix:
+        #   1. Spin up a SECOND FaceAnalysis with det_size=(320, 320) just
+        #      for reference-photo loading. Costs ~100 MB extra VRAM at
+        #      boot but only used during _load_faces; the small detector
+        #      handles tight crops correctly.
+        #   2. Upscale to at least 640x640 before passing to the small
+        #      detector — gives it pixel resolution to anchor on landmarks.
+        #
+        # Verified on the user's actual photos — detection went from 0/16
+        # to >=1 per photo in initial smoke test.
+        load_app = self._app
+        _temp_app_used = False
+        try:
+            from insightface.app import FaceAnalysis  # type: ignore
+            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if self._provider == "CUDAExecutionProvider" else ["CPUExecutionProvider"]
+            small = FaceAnalysis(name="buffalo_l", providers=providers)
+            ctx = 0 if self._provider == "CUDAExecutionProvider" else -1
+            small.prepare(ctx_id=ctx, det_size=(320, 320))
+            load_app = small
+            _temp_app_used = True
+            print("[insight_face] using small-det loader for reference photos (det_size=320)")
+        except Exception as _le:
+            print(f"[insight_face] small-det loader unavailable, falling back to main app: {_le!r}")
+
+        TARGET_MIN_DIM = 640
         loaded = 0
         for person_dir in sorted(faces_dir.iterdir()):
             if not person_dir.is_dir():
                 continue
             pid = person_dir.name
+            # Glob is case-insensitive on Windows but not POSIX; cover both
+            # case variants explicitly so .JPG / .PNG don't get missed.
+            patterns = ("*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG")
+            seen: set[Path] = set()
+            paths: list[Path] = []
+            for pat in patterns:
+                for p in person_dir.glob(pat):
+                    if p not in seen:
+                        seen.add(p)
+                        paths.append(p)
             embs: list[Any] = []
-            for img_path in list(person_dir.glob("*.jpg")) + list(person_dir.glob("*.png")):
+            for img_path in sorted(paths):
                 try:
                     img = cv2.imread(str(img_path))
                     if img is None:
+                        print(f"[insight_face] skip {img_path.name}: cv2.imread returned None")
                         continue
-                    faces = self._app.get(img)
+                    h, w = img.shape[:2]
+                    # Upscale tightly-cropped reference photos so the
+                    # detector has enough resolution to anchor on.
+                    if min(h, w) < TARGET_MIN_DIM:
+                        scale = TARGET_MIN_DIM / max(1, min(h, w))
+                        new_w = int(round(w * scale))
+                        new_h = int(round(h * scale))
+                        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+                    faces = load_app.get(img)
                     if faces:
+                        # When multiple faces in one photo, take the largest
+                        # (most likely the subject — small background faces
+                        # on screenshots can mislead).
+                        faces = sorted(
+                            faces,
+                            key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]),
+                            reverse=True,
+                        )
                         embs.append(faces[0].embedding)
+                    else:
+                        print(f"[insight_face] skip {img_path.name}: no face detected after upscale")
                 except Exception as e:
                     print(f"[insight_face] skip {img_path.name}: {e!r}")
             if embs:
