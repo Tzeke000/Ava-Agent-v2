@@ -287,13 +287,38 @@ def run_ava(
                 except Exception:
                     _profile_for_fp = None
                 _addressee = f" Talking to {_person_name}." if _person_name else ""
+                # Conversational naturalness clauses — components 4/5/6/8 of
+                # the work order. See docs/CONVERSATIONAL_DESIGN.md.
+                # Component 4: honest uncertainty over fabrication.
+                # Component 5: context continuity over restating context.
+                # Component 6: clarifying questions over wrong-direction guesses.
+                # Component 8: boundary awareness — direct on personal/voice,
+                #              say "I'm not sure, let me check" on technical
+                #              topics outside training.
+                _naturalness_clause = (
+                    "How to talk:\n"
+                    "- Match depth to the question. Simple question → short reply, one sentence is fine. "
+                    "'Why' or 'how' question → bounded explanation, then stop and let the user follow up.\n"
+                    "- Build on what came before. If the user just said something related to the recent "
+                    "conversation, reference it naturally ('like you mentioned earlier...'). Don't ask them "
+                    "to repeat info they already gave.\n"
+                    "- If a question is genuinely ambiguous, ask a short clarifying question instead of "
+                    "guessing. 'Did you mean X or Y?' is one sentence and saves both of us time.\n"
+                    "- If you don't know something verifiable, say so and offer to check rather than "
+                    "fabricating. 'I'm not sure, let me look that up' is honest. Pretending to know is not.\n"
+                    "- Direct response is fine for: voice conversation, your relationship with Zeke, "
+                    "anything in your memory. For detailed technical things outside that, signal honestly.\n"
+                    "- No 'um'/'uh' filler for performance. If you actually need a moment to think, say so "
+                    "plainly; if you don't, just speak."
+                )
                 _simple_prompt = (
                     f"You are Ava — a local adaptive AI companion to Zeke.{_addressee}\n"
                     f"Identity: {_identity}\n"
                     f"Current mood: {_mood_label}.\n"
                     f"Recent conversation:\n{_last_msgs_str}\n\n"
+                    f"{_naturalness_clause}\n\n"
                     f"User just said: {user_input}\n"
-                    f"Respond naturally and warmly in 1-3 sentences. Don't add any tool blocks or formatting."
+                    f"Respond naturally and warmly. Don't add any tool blocks or formatting."
                 )
                 # Prefer the identity-baked ava-gemma4 model for the simple
                 # fast path; fall back to whatever _pick_fast_model_fallback

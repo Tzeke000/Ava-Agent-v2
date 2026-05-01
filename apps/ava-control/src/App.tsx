@@ -1549,10 +1549,18 @@ export default function App() {
     : false);
   // Backend run_ava thinking flag — overrides everything except offline
   const avaThinking = Boolean((snap as Record<string, unknown> | null)?.thinking);
+  // Component 10 of conversational naturalness: thinking_tier from snapshot
+  // drives a stronger thinking-state signal when Ava's coordinator decides
+  // the turn is taking long enough to need a metacognitive cue (Tier 3+).
+  // See brain/thinking_tier.py and docs/CONVERSATIONAL_DESIGN.md.
+  const thinkingTier = Number((snap as Record<string, unknown> | null)?.thinking_tier ?? 0);
+  const tierForcesThinking = thinkingTier >= 3;
   const orbPulseMode = backendShutdownDetected || !online
     ? "offline"
     : avaThinking
       ? "thinking"  // Ava is processing a chat turn — fast blue pulse
+    : tierForcesThinking
+      ? "thinking"  // Tier 3+ from the metacognitive coordinator — sustained thinking visual
     : voiceLoopActive && voiceLoopState === "speaking"
       ? "speaking"
     : voiceLoopActive && voiceLoopState === "thinking"
