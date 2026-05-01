@@ -8115,9 +8115,46 @@ import signal as _signal
 _ava_shutdown = False
 
 def _ava_signal_handler(sig, frame):
-    global _ava_shutdown
-    print(f"\n[ava] shutdown signal received ({sig})")
+    global _ava_shutdown, _ava_signal_received_ts
+    print(f"\n[ava] shutdown signal received ({sig})", flush=True)
     _ava_shutdown = True
+    _ava_signal_received_ts = time.time()
+
+_ava_signal_received_ts: float = 0.0
+
+
+def _ava_force_exit_watchdog() -> None:
+    """If a signal hasn't produced a clean exit in 5 seconds, hard-exit.
+
+    Tonight's hardware test had Ctrl+C printed [ava] shutdown signal
+    received (2) and then the process kept running. Background daemon
+    threads (heartbeat, video capture, app discovery, wake_word, TTS
+    worker) all check globals().get("_ava_shutdown") every loop, but a
+    sleep mid-iteration or a blocking call in the wrong spot lets a
+    thread linger past the main thread's exit window.
+
+    This watchdog gives them 5 seconds, then calls os._exit(0) which
+    skips the rest of cleanup but guarantees the process actually dies.
+    Better to over-exit than hang forever.
+    """
+    import time as _t
+    while True:
+        try:
+            _t.sleep(0.5)
+            ts = float(globals().get("_ava_signal_received_ts") or 0.0)
+            if ts <= 0:
+                continue
+            if (_t.time() - ts) >= 5.0:
+                print("[ava] FORCE EXIT: shutdown took >5s, killing process now", flush=True)
+                # Best-effort: release pid lock first.
+                try:
+                    _release_ava_pid_lock()
+                except Exception:
+                    pass
+                os._exit(0)
+        except Exception:
+            pass
+
 
 _signal.signal(_signal.SIGINT, _ava_signal_handler)
 try:
@@ -8125,14 +8162,30 @@ try:
 except (OSError, ValueError):
     pass  # SIGTERM may not be available on all platforms
 
+# Force-exit watchdog runs as a daemon thread so it dies with the
+# process if the clean shutdown does succeed.
+_ava_force_exit_thread = threading.Thread(
+    target=_ava_force_exit_watchdog,
+    name="ava-force-exit-watchdog",
+    daemon=True,
+)
+_ava_force_exit_thread.start()
+
 print("[ava] operator HTTP on :5876 — Ctrl+C to exit.")
 
 _keepalive_errors = 0
 _http_restart_attempts = 0
 _HTTP_MAX_RESTART_ATTEMPTS = 3
+_keepalive_tick = 0
 while not _ava_shutdown:
     try:
-        time.sleep(2)
+        # Poll faster than the old 2s so SIGINT exits within 0.5s of arriving.
+        # The HTTP-thread check still effectively runs every ~2s thanks to
+        # _keepalive_tick gating.
+        time.sleep(0.5)
+        _keepalive_tick = (_keepalive_tick + 1) % 4
+        if _keepalive_tick != 0:
+            continue
         _keepalive_errors = 0
 
         # Restart operator HTTP thread if it died unexpectedly. Capped at
