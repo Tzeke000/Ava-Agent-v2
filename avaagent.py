@@ -7800,6 +7800,117 @@ from brain.startup import run_startup as _run_startup
 _run_startup(globals())
 
 # =========================================================
+# Single-instance enforcement
+# =========================================================
+# Two Ava instances on the same machine collide on port 5876 (Errno 10048).
+# Tonight's hardware test had the operator HTTP server in an infinite
+# bind-fail/restart loop because a manual restart fired while a regression
+# subprocess still owned the port. Two checks before binding:
+#
+#   1. Port probe — connect to 127.0.0.1:5876. If reachable, another Ava
+#      is already running. Exit immediately (sys.exit(1)). Don't retry.
+#   2. PID lockfile at state/ava.pid. Write current PID on startup. If
+#      the file exists and the named process is still alive, exit. Stale
+#      lockfiles (process already gone) are overwritten silently.
+#
+# Bypass with AVA_SKIP_INSTANCE_CHECK=1 (e.g. for diagnostics where you
+# really want a second instance bound to a different port via
+# AVA_OPERATOR_HTTP_PORT).
+_AVA_PID_FILE = Path(BASE_DIR) / "state" / "ava.pid"
+
+def _check_existing_ava_instance() -> None:
+    """Hard-exit if another Ava instance is already running.
+
+    Called once during startup, immediately before binding the operator
+    HTTP server. No retries — single instance is a hard rule.
+    """
+    if os.environ.get("AVA_SKIP_INSTANCE_CHECK", "0").strip() == "1":
+        print("[ava] WARNING: AVA_SKIP_INSTANCE_CHECK=1 — single-instance check bypassed")
+        return
+    import socket as _sock
+    import sys as _sys
+    _port = int(os.environ.get("AVA_OPERATOR_HTTP_PORT", "5876") or "5876")
+    _host = os.environ.get("AVA_OPERATOR_HTTP_HOST", "127.0.0.1") or "127.0.0.1"
+    # Port probe.
+    s = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+    s.settimeout(0.5)
+    try:
+        rc = s.connect_ex((_host, _port))
+    except Exception:
+        rc = -1
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+    if rc == 0:
+        print(
+            f"[ava] ERROR: Another Ava instance is already running on port "
+            f"{_host}:{_port}. Shut down the existing instance first.",
+            flush=True,
+        )
+        _sys.exit(1)
+    # PID lockfile — check stale processes too.
+    try:
+        if _AVA_PID_FILE.is_file():
+            try:
+                _existing_pid = int(_AVA_PID_FILE.read_text(encoding="utf-8").strip())
+            except Exception:
+                _existing_pid = 0
+            if _existing_pid > 0 and _existing_pid != os.getpid():
+                # Is it still alive?
+                _alive = False
+                if os.name == "nt":
+                    # Windows: probe via os.kill with signal 0 raises if not alive.
+                    try:
+                        os.kill(_existing_pid, 0)
+                        _alive = True
+                    except (OSError, PermissionError):
+                        _alive = False
+                else:
+                    try:
+                        os.kill(_existing_pid, 0)
+                        _alive = True
+                    except (ProcessLookupError, PermissionError):
+                        _alive = False
+                if _alive:
+                    print(
+                        f"[ava] ERROR: stale lockfile {_AVA_PID_FILE} points at PID "
+                        f"{_existing_pid}, which is still alive. Shut it down first.",
+                        flush=True,
+                    )
+                    _sys.exit(1)
+                # Stale (process gone) — overwrite silently.
+                print(
+                    f"[ava] note: cleaning stale lockfile (PID {_existing_pid} no longer running)"
+                )
+        # Write our PID.
+        _AVA_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _AVA_PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
+    except OSError as _e:
+        # Non-fatal — port probe is the primary guard.
+        print(f"[ava] WARNING: pid-lockfile write failed: {_e!r}")
+
+_check_existing_ava_instance()
+
+
+def _release_ava_pid_lock() -> None:
+    """Remove the PID lockfile on graceful shutdown — only if it points at us."""
+    try:
+        if _AVA_PID_FILE.is_file():
+            try:
+                pid_in_file = int(_AVA_PID_FILE.read_text(encoding="utf-8").strip())
+            except Exception:
+                pid_in_file = 0
+            if pid_in_file == os.getpid():
+                _AVA_PID_FILE.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+atexit.register(_release_ava_pid_lock)
+
+
+# =========================================================
 # Operator HTTP API (only UI — Tauri app connects to :5876)
 # =========================================================
 try:
@@ -7987,15 +8098,34 @@ except (OSError, ValueError):
 print("[ava] operator HTTP on :5876 — Ctrl+C to exit.")
 
 _keepalive_errors = 0
+_http_restart_attempts = 0
+_HTTP_MAX_RESTART_ATTEMPTS = 3
 while not _ava_shutdown:
     try:
         time.sleep(2)
         _keepalive_errors = 0
 
-        # Restart operator HTTP thread if it died unexpectedly
+        # Restart operator HTTP thread if it died unexpectedly. Capped at
+        # _HTTP_MAX_RESTART_ATTEMPTS so a persistent failure (e.g. another
+        # process took the port mid-run) doesn't loop infinitely. Tonight's
+        # bug was [Errno 10048] hammering forever — single-instance check
+        # at startup catches the boot case; this cap catches the runtime
+        # case if something else binds the port post-startup.
         _http_thread = globals().get("_operator_http_thread")
         if _http_thread is not None and not _http_thread.is_alive():
-            print("[ava] WARNING: operator HTTP thread died — restarting")
+            if _http_restart_attempts >= _HTTP_MAX_RESTART_ATTEMPTS:
+                print(
+                    f"[ava] FATAL: operator HTTP thread died and exceeded "
+                    f"{_HTTP_MAX_RESTART_ATTEMPTS} restart attempts. Giving up. "
+                    f"Check whether something else is bound to port 5876."
+                )
+                _ava_shutdown = True
+                break
+            _http_restart_attempts += 1
+            print(
+                f"[ava] WARNING: operator HTTP thread died — restart attempt "
+                f"{_http_restart_attempts}/{_HTTP_MAX_RESTART_ATTEMPTS}"
+            )
             try:
                 from brain.operator_server import start_operator_http_background
                 _restart_fn = globals().get("operator_console_chat")
