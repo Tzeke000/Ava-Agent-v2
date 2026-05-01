@@ -319,6 +319,46 @@ class AppDiscoverer:
                 best = e
         return best if best_score >= 0.5 else None
 
+    def top_matches(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+        """Return up to `limit` best fuzzy matches for `query`, ranked.
+
+        Used to give Ava a useful error response when an app isn't found
+        ("I don't know an app called X. Did you mean A, B, or C?"). Looser
+        than fuzzy_match — returns ALL substring/token candidates ordered
+        by score, not just the single best.
+        """
+        q = (query or "").lower().strip()
+        if not q:
+            return []
+        with self._lock:
+            entries = list(self._registry.values())
+        scored: list[tuple[float, int, dict[str, Any]]] = []
+        q_tokens = set(t for t in re.split(r"\W+", q) if t)
+        for e in entries:
+            name = str(e.get("name") or "").lower()
+            aliases = [str(a or "").lower() for a in (e.get("aliases") or [])]
+            score = 0.0
+            if q == name or q in aliases:
+                score = 100.0
+            elif q in name:
+                # Earlier substring position = better score.
+                pos = name.find(q)
+                score = 50.0 - (pos * 0.1)
+            elif any(q in a for a in aliases):
+                score = 35.0
+            else:
+                # Token overlap.
+                name_tokens = set(t for t in re.split(r"\W+", name) if t)
+                overlap = q_tokens & name_tokens
+                if overlap:
+                    score = (len(overlap) / max(1, len(q_tokens))) * 25.0
+            if score > 0:
+                # Tiebreak by launch_count so frequently-used apps rank first.
+                lc = int(e.get("launch_count") or 0)
+                scored.append((score, lc, e))
+        scored.sort(key=lambda t: (t[0], t[1]), reverse=True)
+        return [dict(e) for (_s, _lc, e) in scored[:max(1, int(limit))]]
+
     def get_by_category(self, category: str) -> list[dict[str, Any]]:
         with self._lock:
             return [dict(e) for e in self._registry.values() if e.get("category") == category]
