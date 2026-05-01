@@ -20,6 +20,60 @@ type ChatMessage = { role?: string; content?: string };
 const BRAIN_GRAPH_MAX_NODES = 200;
 const BRAIN_GRAPH_MAX_EDGES = 500;
 
+
+// ── Ava-centric brain layout ────────────────────────────────────────────
+// Per docs/BRAIN_ARCHITECTURE.md: Ava's identity sits at (0,0,0) as the
+// gravitational center. Concentric rings around it carry identity anchors
+// closest, then people by trust score, then active concerns, then
+// memories by recency, with regional clusters at the outer edge.
+//
+// Tier 0:  AVA SELF (the center node, pinned)
+// Tier 1:  Identity anchors — IDENTITY, SOUL, USER nodes from ava_core/
+// Tier 2:  People (trust-weighted; high trust = closer)
+// Tier 3:  Active concerns / threads / current curiosity
+// Tier 4:  Memory nodes (decay-weighted; recent = closer)
+// Tier 5:  Outer / unclassified
+const AVA_BRAIN_TIER_RADII = [0, 80, 180, 300, 450, 600] as const;
+const AVA_BRAIN_TIER_COLORS = {
+  0: "#a78bfa",  // ava self — warm violet
+  1: "#f5c518",  // identity anchors — gold
+  2: "#4299e1",  // people — blue (intensity scaled by trust below)
+  3: "#ed64a6",  // active threads / curiosity — pink
+  4: "#68d391",  // memories — green
+  5: "#888888",  // outer/misc — grey
+} as const;
+
+function classifyAvaBrainTier(node: any): number {
+  // Identity anchors have explicit `_tier` we set when injecting.
+  if (typeof node?._tier === "number") return Number(node._tier);
+  const t = String(node?.type || "").toLowerCase();
+  const id = String(node?.id || "");
+  if (id === "ava-self" || id === "ava_self" || t === "ava-self") return 0;
+  if (id.startsWith("identity-") || id.startsWith("soul-") || id.startsWith("user-anchor")) return 1;
+  if (t === "person") return 2;
+  if (t === "curiosity" || t === "concern" || t === "thread") return 3;
+  if (t === "memory" || t === "topic" || t === "event" || t === "opinion" || t === "emotion") return 4;
+  return 5;
+}
+
+function trustScoreOf(node: any): number {
+  // trust is sometimes nested in notes or carried as a top-level number.
+  // Default 0.4 — middle of the trust band.
+  const direct = Number(node?.trust_score ?? node?.trust ?? NaN);
+  if (Number.isFinite(direct)) return Math.max(0, Math.min(1, direct));
+  return 0.4;
+}
+
+function ageDecayOf(node: any): number {
+  // 0..1 where 1 = freshly activated, 0 = ancient. Used to pull recent
+  // memories closer to center within the memory ring.
+  const last = Number(node?.last_activated || 0);
+  if (!last) return 0.0;
+  const ageDays = Math.max(0, (Date.now() / 1000 - last) / 86400);
+  // 0d=1, 7d=0.5, 30d=0.1
+  return Math.max(0, Math.exp(-ageDays / 10));
+}
+
 // ── Presence-v2 feature flags ───────────────────────────────────────────
 // When PRESENCE_V2_ENABLED is true, the streaming speaking-text and
 // inner-state-line regions render. The earlier drift symptom (orb falling
@@ -1628,14 +1682,36 @@ export default function App() {
           const t = String(node.type || "node");
           const lbl = String(node.label || node.id || "");
           const w = Number(node.weight || 0).toFixed(2);
+          if (node._tier === 0) return `Ava — center of mind`;
+          if (node._tier === 1) return `Identity anchor: ${lbl}`;
           return `${t}: ${lbl} (w=${w})`;
         })
         .nodeColor((node: any) => {
-          const t = String(node.type || "");
-          if (node.color) return String(node.color);
-          return colors[t] || "#888888";
+          // Ava-centric color scheme — see AVA_BRAIN_TIER_COLORS.
+          const tier = classifyAvaBrainTier(node);
+          if (tier === 0) return AVA_BRAIN_TIER_COLORS[0];   // ava self — violet
+          if (tier === 1) return AVA_BRAIN_TIER_COLORS[1];   // anchors — gold
+          if (tier === 2) {
+            // people — blue intensity scaled by trust
+            const trust = trustScoreOf(node);
+            // map trust 0..1 to lightness range — high trust = bright blue
+            const v = Math.round(80 + 175 * trust);
+            return `rgb(${Math.round(v * 0.4)}, ${Math.round(v * 0.7)}, ${v})`;
+          }
+          if (tier === 3) return AVA_BRAIN_TIER_COLORS[3];   // active — pink
+          if (tier === 4) {
+            // memories fade with age
+            const recency = ageDecayOf(node);
+            const v = Math.round(80 + 120 * recency);
+            return `rgb(${Math.round(v * 0.5)}, ${v}, ${Math.round(v * 0.6)})`;
+          }
+          return AVA_BRAIN_TIER_COLORS[5];
         })
-        .nodeVal((node: any) => 1 + Number(node.weight || 0) * 4)
+        .nodeVal((node: any) => {
+          if (node._tier === 0) return 24;            // ava self — biggest
+          if (node._tier === 1) return 9;             // anchors — large
+          return 1 + Number(node.weight || 0) * 4;
+        })
         .linkColor(() => "rgba(255,255,255,0.18)")
         .linkWidth(0.5)
         .linkDirectionalParticles(1)
@@ -1645,6 +1721,42 @@ export default function App() {
           setSelectedBrainNode(node as BrainNode);
         });
       brainGraph3DInstanceRef.current = fg;
+      // Apply Ava-centric radial force layout. 3d-force-graph exposes a
+      // d3Force(name, force) hook; we add a custom radial pull that
+      // targets each node's tier-specific ring radius. Strength scales
+      // with how well-classified the node is — anchors (tier 1) get a
+      // strong pull, generic memories (tier 4) get a softer pull so
+      // they have room to cluster naturally.
+      try {
+        const tierStrength = [0, 0.6, 0.35, 0.25, 0.15, 0.1];
+        // d3-force-3d's forceRadial; 3d-force-graph re-exports under d3.
+        // Custom force lambda that nudges each node toward its target ring.
+        fg.d3Force("avaRadial", (alpha: number) => {
+          // The graph exposes the live nodes via fg.graphData().nodes.
+          const data = fg.graphData();
+          const nodes = data?.nodes || [];
+          for (const n of nodes) {
+            const tier = classifyAvaBrainTier(n);
+            if (tier === 0) continue; // pinned at origin via fx/fy/fz
+            const target = AVA_BRAIN_TIER_RADII[tier] ?? AVA_BRAIN_TIER_RADII[5];
+            // For people (tier 2), pull closer if trust is high.
+            let r = target;
+            if (tier === 2) r = AVA_BRAIN_TIER_RADII[1] + (1 - trustScoreOf(n)) *
+                                (AVA_BRAIN_TIER_RADII[2] - AVA_BRAIN_TIER_RADII[1] + 80);
+            else if (tier === 4) r = AVA_BRAIN_TIER_RADII[3] + (1 - ageDecayOf(n)) *
+                                (AVA_BRAIN_TIER_RADII[4] - AVA_BRAIN_TIER_RADII[3] + 80);
+            const x = Number(n.x || 0), y = Number(n.y || 0), z = Number(n.z || 0);
+            const cur = Math.sqrt(x * x + y * y + z * z) || 1;
+            const k = (tierStrength[tier] || 0.1) * alpha;
+            const factor = (r - cur) * k / cur;
+            n.vx = (n.vx || 0) + x * factor;
+            n.vy = (n.vy || 0) + y * factor;
+            n.vz = (n.vz || 0) + z * factor;
+          }
+        });
+      } catch (fErr) {
+        console.warn("[brain-3d] radial force setup failed", fErr);
+      }
       // After mount, wait a frame and re-apply size — the container may have
       // been zero-sized when init ran (flex/grid layout settling), in which
       // case the WebGL canvas is invisible until we resize it.
@@ -1727,8 +1839,37 @@ export default function App() {
           edges: `${rawEdges.length}->${topEdges.length}`,
         });
       }
+      // Inject AVA SELF + identity anchors at the center. Per
+      // docs/BRAIN_ARCHITECTURE.md the self anchors are the gravitational
+      // center; concept-graph nodes orbit around them. Tag each node with
+      // `_tier` for the radial force layout below.
+      const enrichedNodes = topNodes.map((n) => {
+        const out: any = { ...n };
+        out._tier = classifyAvaBrainTier(out);
+        return out;
+      });
+      const avaSelfNode: any = {
+        id: "ava-self",
+        label: "AVA",
+        type: "ava-self",
+        weight: 1.0,
+        _tier: 0,
+        // Pin to origin so the force layout treats it as the absolute center.
+        fx: 0, fy: 0, fz: 0,
+      };
+      // Identity anchors — pinned in a small ring around ava-self.
+      const anchorRadius = AVA_BRAIN_TIER_RADII[1];
+      const identityAnchors: any[] = [
+        { id: "identity-anchor", label: "IDENTITY", type: "identity_anchor", weight: 0.95, _tier: 1,
+          fx: anchorRadius, fy: 0, fz: 0 },
+        { id: "soul-anchor", label: "SOUL", type: "identity_anchor", weight: 0.95, _tier: 1,
+          fx: -anchorRadius / 2, fy: anchorRadius * Math.sqrt(3) / 2, fz: 0 },
+        { id: "user-anchor", label: "USER", type: "identity_anchor", weight: 0.95, _tier: 1,
+          fx: -anchorRadius / 2, fy: -anchorRadius * Math.sqrt(3) / 2, fz: 0 },
+      ];
+      const finalNodes = [avaSelfNode, ...identityAnchors, ...enrichedNodes];
       fg.graphData({
-        nodes: topNodes.map((n) => ({ ...n })),
+        nodes: finalNodes,
         links: topEdges.map((e) => ({ ...e })),
       });
     } catch (e) {
@@ -2454,11 +2595,31 @@ export default function App() {
                       Graph fetch failed: {brainGraphError}
                     </div>
                   )}
-                  {/* 3D WebGL graph mount. Drag = rotate, right-drag = pan, scroll = zoom. */}
+                  {/* 3D WebGL graph mount. Drag = rotate, right-drag = pan,
+                       scroll = zoom, middle-click = recenter on AVA SELF. */}
                   <div
                     ref={brainGraph3DContainerRef}
                     className="brain-canvas"
                     style={{ width: "100%", height: 620, background: "transparent", borderRadius: 6 }}
+                    onMouseDown={(ev) => {
+                      // Middle button — recenter the camera on the AVA SELF
+                      // node and reset zoom. Reachable from anywhere on the
+                      // canvas because it bubbles from inside the ForceGraph
+                      // child elements.
+                      if (ev.button !== 1) return;
+                      ev.preventDefault();
+                      const fg = brainGraph3DInstanceRef.current;
+                      if (!fg) return;
+                      try {
+                        // 800 distance is the d3-force-3d default camera
+                        // distance after init; use it as our "reset zoom".
+                        if (typeof fg.cameraPosition === "function") {
+                          fg.cameraPosition({ x: 0, y: 0, z: 800 }, { x: 0, y: 0, z: 0 }, 600);
+                        }
+                      } catch (re) {
+                        console.warn("[brain-3d] middle-click recenter failed", re);
+                      }
+                    }}
                   />
                   <div className="brain-legend">
                     <h4>NODE TYPES</h4>
