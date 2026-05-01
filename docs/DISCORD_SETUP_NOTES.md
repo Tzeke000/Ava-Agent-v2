@@ -21,24 +21,51 @@ launching the bot manually with `bun run --silent start` keeps working
 
 ## The fix
 
-Patch the cached plugin's `.mcp.json` so it invokes bun by **absolute path**.
-That bypasses PATH lookup entirely and works regardless of which shell
-context launched Claude Code.
+Patch the cached plugin's `.mcp.json` so the MCP spawn **inherits an `env.PATH`
+that prepends bun's install directory** ahead of the parent PATH. Claude Code
+expands `${PATH}` at MCP-config parse time, so the spawned child gets bun's
+dir + everything the parent already had.
 
 File:
 `%USERPROFILE%\.claude\plugins\cache\claude-plugins-official\discord\0.0.4\.mcp.json`
 
-Replace:
+Result shape:
 ```json
-"command": "bun",
-```
-with the absolute path to `bun.exe` (winget install location is stable
-across bun version updates):
-```json
-"command": "C:\\Users\\<you>\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Oven-sh.Bun_Microsoft.Winget.Source_8wekyb3d8bbwe\\bun-windows-x64\\bun.exe",
+{
+  "mcpServers": {
+    "discord": {
+      "command": "bun",
+      "args": ["run", "--cwd", "${CLAUDE_PLUGIN_ROOT}", "--shell=bun", "--silent", "start"],
+      "env": {
+        "PATH": "C:\\Users\\<you>\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Oven-sh.Bun_Microsoft.Winget.Source_8wekyb3d8bbwe\\bun-windows-x64;${PATH}"
+      }
+    }
+  }
+}
 ```
 
-The `args` array stays the same.
+`command` stays as the unqualified `"bun"` (portable across machines and bun
+upgrades). The hardcoded path lives only in the `env.PATH` value, which is
+itself in the per-user plugin cache — so no shared/repo file embeds a path
+specific to this machine.
+
+### Why this beats hardcoding `command` to an absolute bun.exe
+
+An earlier revision of this fix wrote `command` directly as
+`...\bun-windows-x64\bun.exe`. Two problems with that:
+
+1. The winget-managed PATH entry literally contains a `\.\` segment
+   (`...Oven-sh.Bun_..._8wekyb3d8bbwe\.\bun-windows-x64`). `Get-Command bun`
+   faithfully reproduces it, so a naïve `Source`-based patch wrote that
+   non-canonical path into the JSON. Some downstream consumers (including
+   Claude Code's plugin loader, in practice) silently dropped the entry
+   instead of registering it as failed.
+2. Hardcoding `command` baked the absolute path into the field most likely
+   to need cross-machine portability if the file is ever copied around.
+
+The env-PATH approach keeps `command` portable and quarantines the
+machine-specific bit to a single env entry, which the repair script
+canonicalizes via `[IO.Path]::GetFullPath()` before writing.
 
 ## Repair script
 
@@ -49,9 +76,11 @@ and the patch is wiped. Re-apply it with:
 powershell -ExecutionPolicy Bypass -File scripts\repair_discord_plugin.ps1
 ```
 
-The script is idempotent — safe to run any time. It locates `bun.exe`
-via `Get-Command`, finds the cached plugin's `.mcp.json`, and rewrites the
-`command` field to the resolved absolute path.
+The script is idempotent — safe to run any time. It locates `bun.exe` via
+`Get-Command`, canonicalizes the parent directory with
+`[IO.Path]::GetFullPath()`, finds the cached plugin's `.mcp.json`, resets
+`command` back to `"bun"`, and writes/updates `env.PATH` to prepend the
+canonical bun directory ahead of `${PATH}`.
 
 ## Acceptance test
 
@@ -62,10 +91,12 @@ claude --channels plugin:discord@claude-plugins-official --dangerously-skip-perm
 ```
 
 Confirm:
-1. `/mcp` shows `Plugin:discord:discord` as connected (not failed).
+1. `/mcp` shows `Plugin:discord:discord` as connected (not failed, not
+   "no MCP servers configured").
 2. Bot status goes online in Discord within ~30 seconds.
 3. DM the bot from your phone — message should arrive in the Claude Code
-   session as a `<channel source="discord" ...>` notification.
+   session as a `<channel source="discord" ...>` notification, and a reply
+   from Claude should land back in the DM.
 
 ## Why not just add bun to System PATH?
 
