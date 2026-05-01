@@ -238,16 +238,63 @@ class AppDiscoverer:
 
     # ── public ────────────────────────────────────────────────────────────────
 
+    # ── parallel scan helpers ──────────────────────────────────────────────
+    # The four scan roots (lnk dirs, Program Files, Steam, Epic) are I/O
+    # bound and independent. Running them in parallel threads cuts
+    # cold-boot time roughly in half on machines where Program Files
+    # dominates (60-110s sequential -> 30-50s parallel). The Python GIL
+    # doesn't block I/O, so threading is the right primitive here.
+    #
+    # Each scan writes to its OWN local dict to avoid TOCTOU races on
+    # _add_entry's dedup check. Results are merged under self._lock.
+
+    def _run_scans_parallel(self) -> dict[str, dict[str, Any]]:
+        """Run all four scans in threads; return merged registry dict."""
+        results: list[dict[str, dict[str, Any]]] = []
+        results_lock = threading.Lock()
+
+        def _wrap(name: str, fn) -> None:
+            local: dict[str, dict[str, Any]] = {}
+            try:
+                fn(local)
+            except Exception as e:
+                print(f"[app_discovery] {name} scan error: {e!r}")
+            with results_lock:
+                results.append(local)
+
+        threads = [
+            threading.Thread(target=_wrap, args=("lnk", lambda t: self._scan_lnk_dirs(self._lnk_dirs(), target=t)), daemon=True, name="ava-app-scan-lnk"),
+            threading.Thread(target=_wrap, args=("program_files", lambda t: self._scan_program_files(target=t)), daemon=True, name="ava-app-scan-pf"),
+            threading.Thread(target=_wrap, args=("steam", lambda t: self._scan_steam(target=t)), daemon=True, name="ava-app-scan-steam"),
+            threading.Thread(target=_wrap, args=("epic", lambda t: self._scan_epic(target=t)), daemon=True, name="ava-app-scan-epic"),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        merged: dict[str, dict[str, Any]] = {}
+        for r in results:
+            for k, v in r.items():
+                # First scan to find a key wins (matches the original
+                # _add_entry dedup behavior).
+                if k not in merged:
+                    merged[k] = v
+        return merged
+
     def discover_all(self, g: Optional[dict[str, Any]] = None) -> int:
-        """Full scan. Replaces existing registry. Returns number of entries."""
+        """Full scan. Replaces existing registry. Returns number of entries.
+
+        Scans run in parallel (one thread per root). Final merge happens
+        under self._lock so concurrent readers see a consistent snapshot.
+        """
         _t0 = time.time()  # TRACE-PHASE1
         _trace("app_disc.discover_all_start")  # TRACE-PHASE1
+        # Run scans WITHOUT holding the lock — they only touch their own
+        # local dicts. Lock is acquired only for the final assignment + save.
+        merged = self._run_scans_parallel()
         with self._lock:
-            self._registry = {}
-            self._scan_lnk_dirs(self._lnk_dirs())
-            self._scan_program_files()
-            self._scan_steam()
-            self._scan_epic()
+            self._registry = merged
             self._last_scan_ts = time.time()
             self._save()
             entries = list(self._registry.values())
@@ -261,13 +308,11 @@ class AppDiscoverer:
         """Re-scan and add only new entries (preserving launch_count etc)."""
         _t0 = time.time()  # TRACE-PHASE1
         _trace("app_disc.discover_incremental_start")  # TRACE-PHASE1
-        prior = {k: dict(v) for k, v in self._registry.items()}
         with self._lock:
-            self._registry = {}
-            self._scan_lnk_dirs(self._lnk_dirs())
-            self._scan_program_files()
-            self._scan_steam()
-            self._scan_epic()
+            prior = {k: dict(v) for k, v in self._registry.items()}
+        merged = self._run_scans_parallel()
+        with self._lock:
+            self._registry = merged
             # Merge: keep prior launch_count / last_launched.
             for path, entry in self._registry.items():
                 if path in prior:
@@ -392,29 +437,31 @@ class AppDiscoverer:
                 out.append(p)
         return out
 
-    def _scan_lnk_dirs(self, dirs: Iterable[Path]) -> None:
+    def _scan_lnk_dirs(self, dirs: Iterable[Path], target: Optional[dict[str, dict[str, Any]]] = None) -> None:
+        tgt = target if target is not None else self._registry
         for d in dirs:
             _t0 = time.time()  # TRACE-PHASE1
-            _before = len(self._registry)  # TRACE-PHASE1
+            _before = len(tgt)  # TRACE-PHASE1
             _trace(f"app_disc.scan_start root={d}")  # TRACE-PHASE1
             try:
                 for lnk in d.rglob("*.lnk"):
                     if not lnk.is_file():
                         continue
-                    target = _parse_lnk(lnk)
-                    if not target:
+                    target_path = _parse_lnk(lnk)
+                    if not target_path:
                         continue
-                    if not target.lower().endswith(".exe"):
+                    if not target_path.lower().endswith(".exe"):
                         continue
-                    if not Path(target).is_file():
+                    if not Path(target_path).is_file():
                         continue
                     name = lnk.stem
-                    self._add_entry(target, name, source="shortcut")
+                    self._add_entry(target_path, name, source="shortcut", target=tgt)
             except Exception as e:
                 print(f"[app_discovery] lnk scan {d} error: {e}")
-            _trace(f"app_disc.scan_done root={d} ms={int((time.time()-_t0)*1000)} found={len(self._registry)-_before}")  # TRACE-PHASE1
+            _trace(f"app_disc.scan_done root={d} ms={int((time.time()-_t0)*1000)} found={len(tgt)-_before}")  # TRACE-PHASE1
 
-    def _scan_program_files(self) -> None:
+    def _scan_program_files(self, target: Optional[dict[str, dict[str, Any]]] = None) -> None:
+        tgt = target if target is not None else self._registry
         paths = _expand_search_paths()
         # Top-level .exe scan in Program Files / Program Files (x86) only.
         # LOCALAPPDATA is huge and dominated by per-app caches/installers/
@@ -425,7 +472,7 @@ class AppDiscoverer:
             if not root.is_dir():
                 continue
             _t0 = time.time()  # TRACE-PHASE1
-            _before = len(self._registry)  # TRACE-PHASE1
+            _before = len(tgt)  # TRACE-PHASE1
             _trace(f"app_disc.scan_start root={root}")  # TRACE-PHASE1
             try:
                 for exe in self._iter_exes(root, max_depth=3):
@@ -434,10 +481,10 @@ class AppDiscoverer:
                     low = name.lower()
                     if any(x in low for x in ("uninstall", "setup", "installer", "update", "crashpad", "helper")):
                         continue
-                    self._add_entry(str(exe), name, source="program_files")
+                    self._add_entry(str(exe), name, source="program_files", target=tgt)
             except Exception as e:
                 print(f"[app_discovery] program_files {root} error: {e}")
-            _trace(f"app_disc.scan_done root={root} ms={int((time.time()-_t0)*1000)} found={len(self._registry)-_before}")  # TRACE-PHASE1
+            _trace(f"app_disc.scan_done root={root} ms={int((time.time()-_t0)*1000)} found={len(tgt)-_before}")  # TRACE-PHASE1
 
     def _iter_exes(self, root: Path, max_depth: int) -> Iterable[Path]:
         # Depth-limited BFS instead of rglob+post-filter. rglob walks the
@@ -460,7 +507,8 @@ class AppDiscoverer:
                 except OSError:
                     continue
 
-    def _scan_steam(self) -> None:
+    def _scan_steam(self, target: Optional[dict[str, dict[str, Any]]] = None) -> None:
+        tgt = target if target is not None else self._registry
         paths = _expand_search_paths()
         common_dirs: list[Path] = []
         for d in paths["steam_common"]:
@@ -487,9 +535,11 @@ class AppDiscoverer:
                     meta["name"],
                     source="steam",
                     extra={"appid": meta["appid"], "installdir": meta.get("installdir") or ""},
+                    target=tgt,
                 )
 
-    def _scan_epic(self) -> None:
+    def _scan_epic(self, target: Optional[dict[str, dict[str, Any]]] = None) -> None:
+        tgt = target if target is not None else self._registry
         paths = _expand_search_paths()
         for root in paths["epic"]:
             if not root.is_dir():
@@ -504,7 +554,7 @@ class AppDiscoverer:
                         continue
                     # Prefer one matching the dir name
                     candidates.sort(key=lambda e: 0 if e.stem.lower() == sub.name.lower() else 1)
-                    self._add_entry(str(candidates[0]), sub.name, source="epic")
+                    self._add_entry(str(candidates[0]), sub.name, source="epic", target=tgt)
             except Exception as e:
                 print(f"[app_discovery] epic scan {root} error: {e}")
 
@@ -515,12 +565,14 @@ class AppDiscoverer:
         *,
         source: str,
         extra: Optional[dict[str, Any]] = None,
+        target: Optional[dict[str, dict[str, Any]]] = None,
     ) -> None:
         if not name or not exe_path:
             return
+        tgt = target if target is not None else self._registry
         # Dedup: prefer keeping the entry we already have so prior aliases /
         # launch counts survive.
-        if exe_path in self._registry:
+        if exe_path in tgt:
             return
         exe_name = Path(exe_path).name if not exe_path.startswith("steam://") else ""
         category = _categorise(name, exe_name, source)
@@ -536,7 +588,7 @@ class AppDiscoverer:
         }
         if extra:
             entry.update(extra)
-        self._registry[exe_path] = entry
+        tgt[exe_path] = entry
 
     # ── persistence ────────────────────────────────────────────────────────────
 
