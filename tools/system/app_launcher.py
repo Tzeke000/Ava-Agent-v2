@@ -245,7 +245,33 @@ def _tool_open_app(params: dict[str, Any], g: dict[str, Any]) -> dict[str, Any]:
         except Exception:
             pass
 
-    # Step 5: shell start as the very last resort.
+    # Step 5: helpful error with suggestions BEFORE the shell-start
+    # wildcard. The shell start tries to launch whatever string the user
+    # gave (which may be malformed and pop up a Windows search dialog),
+    # so prefer giving the user a clear "I don't know that app" with
+    # suggestions when we have a usable app catalog.
+    if disc is not None:
+        try:
+            suggestions = disc.top_matches(app_name, limit=5) or []
+        except Exception:
+            suggestions = []
+        if suggestions:
+            names = [str(s.get("name") or s.get("exe_path") or "") for s in suggestions]
+            names = [n for n in names if n][:5]
+            if names:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"I don't know an app called {app_name!r}. "
+                        f"Apps I know that might match: {', '.join(names)}."
+                    ),
+                    "suggestions": names,
+                    "source": "no_match_with_suggestions",
+                }
+
+    # Step 6: shell start as the very last resort. Reached only when the
+    # discoverer either isn't loaded or has zero candidates — shell start
+    # might still find a Windows-registered app via PATH.
     try:
         subprocess.Popen(f'start "" "{app_name}"', shell=True)
         return {"ok": True, "launched": app_name, "method": "shell_start", "source": "shell"}
