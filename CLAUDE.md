@@ -21,9 +21,13 @@ Ava is a local adaptive AI companion running on Python 3.11 and a Tauri desktop 
 
 ## Standing Operating Rules
 
-These apply to every work order in this repo without needing to be restated.
+These apply to every work order in this repo without needing to be restated. Grouped into three concerns: **communication** (talking to the user), **real work** (doing the thing, not theatre), **hygiene** (avoiding silent foot-guns).
 
-### 1. Progress pings via Discord
+---
+
+### Group A — Communication & visibility
+
+#### 1. Progress pings via Discord
 
 For any work order with **multiple discrete tasks or steps**, send a Discord DM before starting and after finishing each task:
 
@@ -43,7 +47,24 @@ This applies to every multi-step work order, **not just** ones that explicitly r
 
 Single-task work orders (one quick fix, one diagnostic check) only need the final `🏁` status.
 
-### 2. Don't reinvent the wheel
+#### 2. Progress visibility on failure
+
+When something fails or hits a problem mid-task, **ping immediately**. Don't silently struggle with a problem and only surface it at the end.
+
+Format:
+
+- `⚠️ Hit issue: <brief description>. Trying <approach>` — when problem starts.
+- `✅ Resolved` or `🔧 Workaround: <description>` — when problem ends.
+
+**Why:** the user is often AFK; silent struggle costs hours when a quick "stuck on X, trying Y" would let them help. A 2-line ping mid-task is far cheaper than 90 minutes of going down a wrong path.
+
+**How to apply:** any time you change strategy because something didn't work the way you expected, that's a ping moment. Tool didn't behave as expected → ping. Build broke → ping. Test didn't reproduce the bug → ping.
+
+---
+
+### Group B — Real work, not theatre
+
+#### 3. Don't reinvent the wheel
 
 Before implementing any new feature, capability, or significant subsystem for Ava, do this research pass **first**:
 
@@ -59,6 +80,93 @@ Before implementing any new feature, capability, or significant subsystem for Av
 **Does NOT apply to:** bug fixes on existing code, doc edits, config changes, one-line patches.
 
 **Failure standard:** if the user can show a well-known open-source implementation existed that would have worked for Ava with reasonable adaptation, and Claude Code wrote new code without considering it, that's a violation of this rule.
+
+#### 4. Verify fixes before claiming them as done
+
+Don't claim a fix works without testing it. Multiple Discord setup attempts declared "should work now" without verifying the bot came online — that's a defect.
+
+**Practice:**
+
+- After every fix, run the smallest possible test that exercises the fixed path.
+- For services: confirm the service actually starts and reaches its expected state.
+- For configs: confirm the config loads in the **real** loader, not just a syntax check.
+- For code: run the relevant unit/integration test or trigger the code path via an injection endpoint.
+- Only claim "fixed" when the test passes **and** the original failure mode is reproducibly absent.
+- If a fix is theoretical, **say so explicitly**: "I believe this fixes the issue but couldn't verify in this session — needs hardware test by user."
+
+**Why:** "should work now" without verification is a wish, not a fix. The user has to discover the regression on their own time, often AFK, with no diagnostics ready.
+
+#### 5. Workarounds are not fixes
+
+If the requirement was "single command launches X" and the workaround is "manually run two windows," that's **not a completed task**. Don't declare it done. Either:
+
+- Make the single-command requirement actually work, **OR**
+- Explicitly acknowledge the workaround as a workaround and propose what's needed to convert it to a real fix.
+
+The user's **original requirement** is the bar, not what was easiest to achieve.
+
+**How to apply:** before declaring a task done, re-read the original requirement. If your delivered solution requires the user to do something the spec said the system should do automatically, you have a workaround, not a fix.
+
+---
+
+### Group C — Hygiene (avoid silent foot-guns)
+
+#### 6. Reference doc freshness
+
+Whenever any consolidation, deletion, or significant restructuring of `docs/` happens (merging files, moving content, renaming docs), the **next action MUST be**:
+
+1. **Audit all remaining reference docs** for paths to the moved/merged/deleted files.
+2. **Update those references** to point to the new locations (with section anchors where helpful).
+3. **Verify code paths and tool names** are still accurate — refactors invalidate doc paths just as readily.
+4. **Commit the doc fixes in the same PR/session** as the consolidation, or immediately after.
+
+**Why:** broken doc references are a defect equivalent to broken code. Stale docs cause Claude Code to follow phantom paths, miss current context, and waste session time recovering. **Stale docs are worse than no docs because they actively mislead.**
+
+**How to apply:** when you finish any task that deletes or moves a `.md` file under `docs/`, immediately grep the rest of `docs/` and `CLAUDE.md` for the old basename. If hits exist, fix them before declaring the consolidation done.
+
+This rule is not optional. It applies to every future consolidation, deletion, or doc restructure.
+
+#### 7. Validate config patches actually load
+
+When patching any config file (JSON, YAML, TOML, `.env`, `.mcp.json`, etc.), don't just write the file — **verify it actually parses and loads**. The Discord plugin BOM trap (commit `c25443f`) was caused by writing a patched `.mcp.json` that looked correct but had a UTF-8 BOM that the loader silently rejected. The plugin disappeared from `/mcp` with no visible error.
+
+**Practice:**
+
+- After writing a patched config, immediately parse it with the relevant parser (`json.loads`, `yaml.safe_load`, etc.) and verify success.
+- For configs loaded by external tools, verify the tool actually picks up the patched version.
+- **PowerShell trap:** `Set-Content -Encoding utf8` on Windows PowerShell 5.1 writes a UTF-8 BOM. **Never use it for files that other tools will parse.** Use `Out-File -Encoding utf8NoBOM`, write via Python, or use `[System.IO.File]::WriteAllText` (which is BOM-free by default).
+- If silent rejection is suspected, write a smoketest that mimics the real loader and prints diagnostics.
+
+#### 8. Check for existing instances before starting services
+
+When starting a service that binds to a port, opens a singleton resource, or otherwise needs exclusive access:
+
+- **Check if an existing instance is already running first** (port probe, PID lockfile, named mutex).
+- Don't loop forever trying to start a second instance.
+- Either: cleanly join the existing instance, **OR** exit with a clear error message.
+- The port 5876 conflict (Ava's operator HTTP) was an example — fixed in commit `6446707` with port probe + PID lockfile + HTTP restart cap.
+
+**How to apply:** any new service-launching code should follow the pattern in `avaagent.py`'s startup probe: socket connect-ex on the target port, PID file at `state/<service>.pid`, hard exit if either says "another instance is alive."
+
+#### 9. Token and credential hygiene
+
+Sensitive credentials (bot tokens, API keys, passwords, SSH keys, OAuth secrets) **must never:**
+
+- Be echoed in chat output.
+- Be written into commit messages.
+- Appear in debug logs that get shared.
+- Be pasted into transcript files visible to other sessions.
+
+**Practice:**
+
+- When handling tokens, mask them in any output (show first 6 chars + `…`).
+- If asked to read a credential file, don't print its contents — print a masked confirmation.
+- When writing tokens to `.env` files, write them silently and confirm with a masked summary.
+- Treat all tokens like SSH keys.
+
+---
+
+**Rule application scope:** these rules apply to every Claude Code session in this repo, automatically, without needing to be quoted in individual prompts. They are part of the operating context.
 
 ---
 
@@ -86,8 +194,9 @@ Before implementing any new feature, capability, or significant subsystem for Av
 | `apps/ava-control/src/WidgetApp.tsx` | Floating widget |
 | `state/` | All persisted state |
 | `tools/` | Tier-1/2/3 tool registry |
-| `docs/AVA_HANDOFF.md` | Full system handoff |
-| `docs/AVA_ROADMAP.md` | Roadmap + phase board |
+| `docs/HISTORY.md` | Project history — phases 1-100 + post-100 + stabilization arcs + cross-phase bug fixes |
+| `docs/ROADMAP.md` | Forward-looking roadmap (5 sections: Ready to ship → Long-term) |
+| `docs/CONVERSATIONAL_DESIGN.md` | Voice naturalness architecture — streaming chunks, tier system, interrupt model |
 | `docs/TRAIN_WAKE_WORD.md` | Custom hey_ava ONNX training |
 | `models/wake_words/` | Optional custom wake-word ONNX models |
 
