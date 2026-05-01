@@ -125,41 +125,36 @@ class DualBrain:
 
     def handoff_insight_to_foreground(self, reply: str, user_input: str) -> str:
         """
-        Weave pending background insight into reply if topic-relevant.
-        Returns (possibly modified) reply. Invisible seam — feels like one mind.
+        Previously: wove pending background insight + live thought content
+        into the conversational reply ("invisible seam — feels like one mind").
+        Tonight's hardware test caught the consequence: 💭-prefixed inner
+        monologue lines like "Wondering if repetition in conversation often
+        stems..." were appearing in the chat reply text AND being spoken
+        through TTS, where the user wanted them as a separate UI surface
+        under the orb instead.
+
+        New rule: this method NEVER modifies the reply. Inner monologue
+        and live thought content stay in their own surfaces:
+          - state/inner_monologue.json (read by snapshot.inner_life.
+            current_thought, rendered by the UI as text under the orb)
+          - dual_brain.live_thought (read via get_live_thought() if any
+            specific path needs it)
+          - background_insight stays parked in self._background_insight
+            for callers that explicitly want it (none currently do)
+
+        The reply text returns from run_ava clean — only the actual
+        spoken response. TTS, chat history, clipboard all see the
+        same uncluttered text.
         """
-        with self._lock:
-            insight = self._background_insight
-            live = self.live_thought if (time.time() - self.live_thought_ts) < 90.0 else None
-
-        if not insight and not live:
-            return reply
-
-        reply_low = reply.lower()
-        inp_low = user_input.lower()
-        combined = reply_low + " " + inp_low
-
-        # Try background insight first (more elaborated)
-        if insight:
-            keywords = [k.lower() for k in (insight.get("relevance_keywords") or [])]
-            overlap = sum(1 for k in keywords if k in combined)
-            content = str(insight.get("content") or "").strip()
-            if overlap >= 1 and content and len(content) > 10:
-                reply = _weave_in(reply, content, insight.get("task_type", ""))
-                with self._lock:
-                    self._background_insight = None
-                return reply
-
-        # Fall back to live thought
-        if live and len(live) > 10:
-            live_keywords = live.lower().split()[:6]
-            overlap = sum(1 for w in live_keywords if w in combined)
-            if overlap >= 2:
-                reply = _weave_in(reply, live, "live_thought")
-                with self._lock:
-                    self.live_thought = None
-                    self.live_thought_ts = 0.0
-
+        # Scrub any 💭-prefixed lines that may have leaked in from prompt
+        # context — defensive: even if the LLM echoed an inner-monologue
+        # snippet from the prompt, we strip it before returning.
+        if reply and "💭" in reply:
+            try:
+                lines = [ln for ln in reply.splitlines() if "💭" not in ln]
+                reply = "\n".join(lines).strip()
+            except Exception:
+                pass
         return reply
 
     def get_thinking_model(self) -> str:
