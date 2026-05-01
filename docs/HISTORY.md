@@ -526,6 +526,45 @@ Also added `f348503` gitignore patterns for diagnostic / regression scratch logs
 
 ---
 
+### Section 5b — 2026-05-01 Conversational Naturalness, Phase 1
+
+**Goal:** make Ava feel like talking to a thoughtful, present human. Sub-500ms response start, real thinking signals only when actual computation requires them.
+
+**Components 1-2 of 7 shipped this session.** Components 3-7 deferred to hardware-testing sessions per work-order spec. Full architecture in [`CONVERSATIONAL_DESIGN.md`](CONVERSATIONAL_DESIGN.md). Research basis in [`research/voice_naturalness/findings.md`](research/voice_naturalness/findings.md).
+
+**Component 1 — Streaming chunked responses.**
+The fast path in `reply_engine.py` now uses `langchain_ollama.ChatOllama.stream()` instead of `.invoke()`. A new `brain/sentence_chunker.py` (Pipecat-style `SentenceBuffer` with abbreviation guard, min-chars merge, tail flush) emits complete sentences from the streaming token deltas. Each sentence is pushed into `tts_worker`'s existing queue immediately — first sentence reaches Kokoro before the full reply is generated. `voice_loop._speak()` checks the new `_g["_streamed_reply"]` flag and waits for `worker.is_busy()` to drop instead of re-enqueueing.
+
+Behind feature flag `AVA_STREAMING_ENABLED` (default 1). `set AVA_STREAMING_ENABLED=0` returns to the synchronous path for rollback.
+
+Smoke-tested locally: chunker handles `Dr. Smith` (abbreviation), `Hi! Hello there.` (min-chars merge), trailing fragment without boundary (tail flush). All four touched files (`sentence_chunker.py`, `reply_engine.py`, `voice_loop.py`, `tts_worker.py`) `py_compile` clean.
+
+**Component 2 — Real thinking signals (Tier 1 + Tier 3).**
+New `brain/thinking_tier.py` module — `TierCoordinator` runs as a watchdog thread alongside the streaming loop. Tracks `t_start`, `first_chunk_ts`, `last_chunk_ts`. When the first chunk hasn't arrived 2s into the turn, emits a Tier 3 filler ("Give me a second.") into the TTS queue and publishes `_thinking_tier=3` to globals. Otherwise stays at Tier 1 (the default — no signal). Tier coordinator added to operator snapshot as `thinking_tier`.
+
+Tier 2 (mid-stream filler on inter-chunk gaps) and Tier 4 (5s+ progress updates) intentionally deferred — emission timing for those needs live audio validation to avoid sounding robotic.
+
+Verified: with a fake worker, coordinator publishes Tier 1 on init, fires Tier 3 filler at 2s+ delay, resets to Tier 0 on stop.
+
+**What needs hardware verification:**
+- Sub-500ms time-to-first-audio target (Component 1's latency claim).
+- Kokoro sequential-chunk playback seamless on real audio output (no clicks between sentences).
+- Tier 3 emission feels natural in voice (not just "fires correctly in code").
+- No regression in voice path stability.
+
+**Trace lines added** for live verification: `re.stream.first_chunk ms=...` (TTFA), `re.ollama_invoke_done fast_stream ms=... sentences=N`.
+
+**Components 3-7 deferred:**
+3. Honest uncertainty + tool use — needs live tool firing.
+4. Context continuity — prompt-engineering, easy to add but easy to verify wrong.
+5. Clarifying questions — same.
+6. Matched depth — same.
+7. Interrupt handling + presence — needs VAD-during-TTS hardware test; biggest risk to the hardened audio path.
+
+**Lessons:** the research pass confirmed the universal architecture (Pipecat / LiveKit / Vocode all use the same parallel-task + queue pattern) — saved hours of design spelunking. Kokoro's `KPipeline` already being a generator made the critical insight: the existing concatenate-before-play loop in `tts_worker.py:418` was the only blocker; sentence chunks naturally route through the existing queue, no playback-path changes needed.
+
+---
+
 ### Section 5 — 2026-05-01 Discord Auto-Spawn Fixes
 
 Three commits hardened the Discord channel plugin's auto-spawn path on Windows.

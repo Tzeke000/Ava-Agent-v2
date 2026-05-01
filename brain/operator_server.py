@@ -847,6 +847,7 @@ def build_snapshot(host: dict[str, Any]) -> dict[str, Any]:
         "tts": tts_block,
         "speech": speech_block,
         "inner_state_line": inner_state_line,
+        "thinking_tier": int(host.get("_thinking_tier", 0)),
         "widget": widget_block,
         "voice_loop": voice_loop_block,
         "thinking": bool(host.get("_ava_thinking", False)),
