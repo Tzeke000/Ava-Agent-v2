@@ -811,7 +811,19 @@ class VoiceCommandRouter:
         *,
         allow_correction: bool = True,
     ) -> tuple[bool, str]:
-        """Dispatch. Returns (handled, response_text)."""
+        """Dispatch. Returns (handled, response_text).
+
+        IMPORTANT: route() does NOT enqueue TTS for the response. TTS is
+        the responsibility of voice_loop._speak(), which fires once after
+        run_ava returns. Tonight's hardware test caught a double-playback
+        bug where both this router AND voice_loop enqueued the same reply
+        — the same audio played twice through speakers. Single dispatcher
+        eliminates the duplication.
+
+        If you need to speak from a non-run_ava code path (e.g. a tool
+        result), call worker.speak_with_emotion() directly. Do NOT call
+        _say() from inside route().
+        """
         if not text or not text.strip():
             return False, ""
         # Stash for correction handler.
@@ -827,7 +839,6 @@ class VoiceCommandRouter:
                 resumed = cb.resume_pending(text, g)
                 if resumed is not None:
                     response = str(resumed.get("response") or "")
-                    _say(g, response)
                     return True, response
         except Exception:
             pass
@@ -841,7 +852,6 @@ class VoiceCommandRouter:
                     handled = ch.handle(text, g)
                     if handled is not None:
                         response = str(handled.get("response") or "")
-                        _say(g, response)
                         # Track action attempt.
                         g["_last_action"] = {"trigger": text, "kind": "correction"}
                         return True, response
@@ -861,7 +871,8 @@ class VoiceCommandRouter:
             if not response:
                 # Handler explicitly declined to act (e.g. open journal → tab handler).
                 continue
-            _say(g, response, emotion=emotion or "neutral")
+            # Stash emotion for voice_loop to pick up on the speak.
+            g["_voice_command_emotion"] = emotion or "neutral"
             g["_last_action"] = {"trigger": text, "kind": "builtin", "pattern": pattern.pattern}
             return True, response
 
@@ -876,7 +887,7 @@ class VoiceCommandRouter:
                     print(f"[voice_commands] custom error: {e}")
                     continue
                 if response:
-                    _say(g, response, emotion=emotion or "neutral")
+                    g["_voice_command_emotion"] = emotion or "neutral"
                 g["_last_action"] = {"trigger": text, "kind": "custom", "trigger_phrase": cc.trigger}
                 return True, response
 
