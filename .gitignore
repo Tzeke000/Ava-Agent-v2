@@ -37,3 +37,4 @@ trace_verify_*.log
 regression_test.log
 *_verify.log
 ava_*.log
+discord_debug.log

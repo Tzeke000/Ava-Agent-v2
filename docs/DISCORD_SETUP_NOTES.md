@@ -2,39 +2,67 @@
 
 The `claude-plugins-official/discord` plugin works on Windows, but its default
 MCP spawn config (`"command": "bun"`) relies on `bun` being on the PATH that
-Claude Code's child-process spawn inherits. On Windows that is unreliable:
+Claude Code's MCP loader inherits. On Windows that is unreliable:
 
 - `winget install Oven-sh.Bun` puts bun on the **User** `PATH` only, not the
   Machine `PATH`.
 - A Claude Code instance launched from a shell opened **before** bun was
-  installed will not see the new PATH entry.
-- Claude Code spawns MCP servers through `cmd.exe`. If the parent's PATH
-  lacks bun's directory, the spawn dies with:
+  installed (or from a non-shell context like a scheduled task) will not see
+  the new PATH entry.
+- Claude Code spawns MCP servers via `cmd.exe`. If the parent's PATH lacks
+  bun's directory, the spawn dies with:
 
   ```
   'bun' is not recognized as an internal or external command
   ```
 
-That manifests in `/mcp` as `Plugin:discord:discord — Status: failed` while
-launching the bot manually with `bun run --silent start` keeps working
-(because the user's interactive shell does have bun on PATH).
+  manifesting in `/mcp` as `plugin:discord:discord — Status: failed`.
 
 ## The fix
 
-Patch the cached plugin's `.mcp.json` so the MCP spawn **inherits an `env.PATH`
-that prepends bun's install directory** ahead of the parent PATH. Claude Code
-expands `${PATH}` at MCP-config parse time, so the spawned child gets bun's
-dir + everything the parent already had.
+Patch the plugin's `.mcp.json` so the MCP spawn doesn't depend on PATH at
+all for the initial process, AND prepends bun's install directory ahead of
+the inherited PATH so inner `bun install && bun server.ts` invocations
+(from the package start script) also resolve `bun`.
 
-File:
-`%USERPROFILE%\.claude\plugins\cache\claude-plugins-official\discord\0.0.4\.mcp.json`
+### What goes wrong with PowerShell-written patches
 
-Result shape:
+PowerShell 5.1's `Set-Content -Encoding utf8` writes a UTF-8 BOM
+(`EF BB BF`). Node's `JSON.parse` rejects BOM-prefixed JSON. When the
+plugin loader reads a BOM-prefixed `.mcp.json` it silently drops the entry
+— `/mcp` reports "no MCP servers configured" and the plugin appears
+to disappear entirely (vs. registering as `failed`).
+
+We use Python (which writes BOM-free UTF-8 by default) to avoid this trap.
+
+### What goes wrong with cache-only patches
+
+The plugin loader copies
+```
+%USERPROFILE%\.claude\plugins\marketplaces\claude-plugins-official\external_plugins\discord\.mcp.json
+```
+over the cached
+```
+%USERPROFILE%\.claude\plugins\cache\claude-plugins-official\discord\<ver>\.mcp.json
+```
+on every startup. The relevant debug-log line:
+
+```
+[DEBUG] Copied plugin discord to versioned cache:
+        C:\Users\...\plugins\cache\claude-plugins-official\discord\0.0.4
+```
+
+A patch applied only to the cache gets clobbered on the next launch. The
+repair script patches BOTH the marketplace source (durable across launches)
+and the cache (defensive in case the marketplace is refreshed).
+
+### Patched `.mcp.json` shape
+
 ```json
 {
   "mcpServers": {
     "discord": {
-      "command": "bun",
+      "command": "C:\\Users\\<you>\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Oven-sh.Bun_Microsoft.Winget.Source_8wekyb3d8bbwe\\bun-windows-x64\\bun.exe",
       "args": ["run", "--cwd", "${CLAUDE_PLUGIN_ROOT}", "--shell=bun", "--silent", "start"],
       "env": {
         "PATH": "C:\\Users\\<you>\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Oven-sh.Bun_Microsoft.Winget.Source_8wekyb3d8bbwe\\bun-windows-x64;${PATH}"
@@ -44,76 +72,79 @@ Result shape:
 }
 ```
 
-`command` stays as the unqualified `"bun"` (portable across machines and bun
-upgrades). The hardcoded path lives only in the `env.PATH` value, which is
-itself in the per-user plugin cache — so no shared/repo file embeds a path
-specific to this machine.
-
-### Why this beats hardcoding `command` to an absolute bun.exe
-
-An earlier revision of this fix wrote `command` directly as
-`...\bun-windows-x64\bun.exe`. Two problems with that:
-
-1. The winget-managed PATH entry literally contains a `\.\` segment
-   (`...Oven-sh.Bun_..._8wekyb3d8bbwe\.\bun-windows-x64`). `Get-Command bun`
-   faithfully reproduces it, so a naïve `Source`-based patch wrote that
-   non-canonical path into the JSON. Some downstream consumers (including
-   Claude Code's plugin loader, in practice) silently dropped the entry
-   instead of registering it as failed.
-2. Hardcoding `command` baked the absolute path into the field most likely
-   to need cross-machine portability if the file is ever copied around.
-
-The env-PATH approach keeps `command` portable and quarantines the
-machine-specific bit to a single env entry, which the repair script
-canonicalizes via `[IO.Path]::GetFullPath()` before writing.
+Two layers of defence:
+1. `command` is the absolute path to `bun.exe` (canonicalised — no `\.\`
+   artefacts from winget's PATH entry). The initial spawn doesn't need
+   `bun` on PATH at all.
+2. `env.PATH` prepends bun's directory ahead of `${PATH}` (Claude Code
+   expands `${PATH}` from the parent process at MCP-config parse time),
+   so inner `bun install` and `bun server.ts` invocations from the
+   package's start script also find bun.
 
 ## Repair script
 
-If you reinstall or upgrade the discord plugin, the cache gets regenerated
-and the patch is wiped. Re-apply it with:
-
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\repair_discord_plugin.ps1
+py -3.11 scripts\repair_discord_plugin.py
 ```
 
-The script is idempotent — safe to run any time. It locates `bun.exe` via
-`Get-Command`, canonicalizes the parent directory with
-`[IO.Path]::GetFullPath()`, finds the cached plugin's `.mcp.json`, resets
-`command` back to `"bun"`, and writes/updates `env.PATH` to prepend the
-canonical bun directory ahead of `${PATH}`.
+The script is idempotent. It:
+- Locates `bun.exe` via `shutil.which` then resolves to drop `\.\` segments
+- Patches the marketplace source `.mcp.json`
+- Patches every versioned cache `.mcp.json` under the plugin cache
+- Writes UTF-8 without BOM
+
+Re-run any time the plugin is reinstalled or the marketplace is refreshed.
+
+## Smoke test
+
+```powershell
+py -3.11 scripts\smoketest_discord_mcp.py
+```
+
+Spawns the patched MCP command exactly as Claude Code's loader would and
+runs the JSON-RPC `initialize` handshake. Exits 0 with
+`OK: server responded. name='discord' version='1.0.0'` on success. Use
+this to confirm the patch works before launching a real `claude` session.
 
 ## Acceptance test
 
-After patching, launch with:
+```powershell
+claude mcp list
+```
 
+Should print:
+```
+plugin:discord:discord: ...\bun.exe run --cwd ... --shell=bun --silent start - ✓ Connected
+```
+
+Then launch interactively:
 ```powershell
 claude --channels plugin:discord@claude-plugins-official --dangerously-skip-permissions
 ```
 
 Confirm:
-1. `/mcp` shows `Plugin:discord:discord` as connected (not failed, not
-   "no MCP servers configured").
+1. The startup banner shows `Listening for channel messages from:
+   plugin:discord@claude-plugins-official`.
 2. Bot status goes online in Discord within ~30 seconds.
-3. DM the bot from your phone — message should arrive in the Claude Code
-   session as a `<channel source="discord" ...>` notification, and a reply
-   from Claude should land back in the DM.
+3. DM the bot from your phone — message arrives as a
+   `<channel source="discord" ...>` notification and a Claude reply
+   lands back in the DM.
 
-## Why not just add bun to System PATH?
+## What was tried first (and why it failed)
 
-That works too, and is arguably cleaner — but requires admin rights and
-modifies global Windows state. The cache patch is local, no-admin, and
-tied to the specific install of bun winget produced. Either is fine.
-The script in this repo only does the cache patch.
+| Attempt                                                       | Outcome              | Cause                                                                                                       |
+|---------------------------------------------------------------|----------------------|-------------------------------------------------------------------------------------------------------------|
+| `command = "<bun-source-from-Get-Command>"`                   | Plugin disappeared   | `\.\` segment in winget PATH; `Set-Content -Encoding utf8` added a BOM that broke JSON parsing             |
+| `command = "bun"` + `env.PATH = "<bun-dir>;${PATH}"`          | Plugin disappeared   | Same BOM problem; ALSO patch was on cache only and got overwritten by the marketplace source on next start |
+| Python rewrite, BOM-free, marketplace + cache, absolute bun   | ✓ Connected          | —                                                                                                           |
 
-## Why not commit a patched `.mcp.json`?
+## Why not just add bun to system PATH?
 
-The file lives in Claude Code's plugin cache outside this repo
-(`%USERPROFILE%\.claude\plugins\cache\...`). It's regenerated by Claude
-Code's plugin loader and isn't appropriate to vendor here. The repair
-script is the right place for the fix.
+Works too, but requires admin and mutates global Windows state. The
+file-based patch is per-user, no-admin, and survives Claude Code reinstalls.
 
 ## Manual fallback
 
-The original "open a second PowerShell and run `bun run --silent start`
-in the plugin dir" workflow still works as a fallback. It's not the
-intended path but it's useful when debugging the auto-spawn.
+If anything in the auto-spawn path goes sideways, the original
+"open a second shell and run `bun run --silent start` in the plugin
+cache dir" workflow still works.
