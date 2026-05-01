@@ -331,14 +331,119 @@ def run_ava(
                 print(f"[perf] fast pre-invoke {_elapsed()} model={_fast_model}")
                 _trace(f"re.ollama_invoke_start fast model={_fast_model}")  # TRACE-PHASE1
                 _fast_invoke_t0 = time.time()  # TRACE-PHASE1
-                _fp_result = with_ollama(
-                    lambda: _llm_fast.invoke([HumanMessage(content=_simple_prompt)]),
-                    label=f"fast:{_fast_model}",
+
+                # Streaming chunked path (Component 1 of conversational naturalness).
+                # Switch from .invoke() to .stream() so the first sentence reaches
+                # TTS before the full reply is generated. Behind a feature flag
+                # so the old synchronous path stays available for rollback.
+                # See docs/CONVERSATIONAL_DESIGN.md.
+                import os as _os_streamflag
+                _streaming_enabled = _os_streamflag.environ.get("AVA_STREAMING_ENABLED", "1") not in ("0", "", "false", "False")
+                _tts_worker = _g.get("_tts_worker")
+                _streaming_ok = (
+                    _streaming_enabled
+                    and _tts_worker is not None
+                    and getattr(_tts_worker, "available", False)
                 )
-                _trace(f"re.ollama_invoke_done fast ms={int((time.time()-_fast_invoke_t0)*1000)}")  # TRACE-PHASE1
-                _g["_last_invoked_model"] = _fast_model
-                print(f"[perf] fast post-invoke {_elapsed()}")
-                _reply_text = (getattr(_fp_result, "content", str(_fp_result)) or "").strip()
+
+                if _streaming_ok:
+                    # Determine emotion for TTS chunks (read once, used for all
+                    # chunks of this reply).
+                    _stream_emotion = "neutral"
+                    _stream_intensity = 0.5
+                    try:
+                        _mood_state = _g.get("_current_mood") or {}
+                        if isinstance(_mood_state, dict):
+                            _stream_emotion = str(
+                                _mood_state.get("current_mood")
+                                or _mood_state.get("primary_emotion")
+                                or "neutral"
+                            )
+                            _stream_intensity = float(
+                                _mood_state.get("energy")
+                                or _mood_state.get("intensity")
+                                or 0.5
+                            )
+                    except Exception:
+                        pass
+
+                    from brain.sentence_chunker import SentenceBuffer
+                    from brain.thinking_tier import TierCoordinator
+                    _stream_buf = SentenceBuffer()
+                    _stream_sentences: list[str] = []
+                    _stream_first_chunk_ts: float | None = None
+
+                    # Tier coordinator runs alongside the stream loop. If the
+                    # first chunk takes >2s, it emits a Tier 3 "give me a sec"
+                    # filler into the TTS queue. See docs/CONVERSATIONAL_DESIGN.md.
+                    _tier_coord = TierCoordinator(
+                        g=_g,
+                        t_start=_fast_invoke_t0,
+                        llm_label=f"fast:{_fast_model}",
+                        emotion=_stream_emotion,
+                        intensity=_stream_intensity,
+                    )
+                    _tier_coord.start()
+
+                    def _stream_loop():
+                        nonlocal _stream_first_chunk_ts
+                        for _chunk_event in _llm_fast.stream(
+                            [HumanMessage(content=_simple_prompt)]
+                        ):
+                            _delta = getattr(_chunk_event, "content", "") or ""
+                            if not _delta:
+                                continue
+                            for _sentence in _stream_buf.feed(_delta):
+                                _stream_sentences.append(_sentence)
+                                if _stream_first_chunk_ts is None:
+                                    _stream_first_chunk_ts = time.time()
+                                    _trace(
+                                        f"re.stream.first_chunk ms={int((_stream_first_chunk_ts - _fast_invoke_t0) * 1000)} "
+                                        f"chars={len(_sentence)}"
+                                    )
+                                _tier_coord.mark_chunk()
+                                _tts_worker.speak(
+                                    _sentence,
+                                    emotion=_stream_emotion,
+                                    intensity=_stream_intensity,
+                                    blocking=False,
+                                )
+                        # Flush tail.
+                        for _sentence in _stream_buf.flush():
+                            _stream_sentences.append(_sentence)
+                            if _stream_first_chunk_ts is None:
+                                _stream_first_chunk_ts = time.time()
+                            _tier_coord.mark_chunk()
+                            _tts_worker.speak(
+                                _sentence,
+                                emotion=_stream_emotion,
+                                intensity=_stream_intensity,
+                                blocking=False,
+                            )
+
+                    try:
+                        with_ollama(_stream_loop, label=f"fast:stream:{_fast_model}")
+                    finally:
+                        _tier_coord.stop()
+                    _trace(
+                        f"re.ollama_invoke_done fast_stream ms={int((time.time() - _fast_invoke_t0) * 1000)} "
+                        f"sentences={len(_stream_sentences)}"
+                    )
+                    _g["_last_invoked_model"] = _fast_model
+                    _g["_streamed_reply"] = True
+                    print(f"[perf] fast post-stream {_elapsed()} sentences={len(_stream_sentences)}")
+                    _reply_text = " ".join(_stream_sentences).strip()
+                else:
+                    # Non-streaming fallback (legacy path, or no TTS available).
+                    _fp_result = with_ollama(
+                        lambda: _llm_fast.invoke([HumanMessage(content=_simple_prompt)]),
+                        label=f"fast:{_fast_model}",
+                    )
+                    _trace(f"re.ollama_invoke_done fast ms={int((time.time()-_fast_invoke_t0)*1000)}")  # TRACE-PHASE1
+                    _g["_last_invoked_model"] = _fast_model
+                    print(f"[perf] fast post-invoke {_elapsed()}")
+                    _reply_text = (getattr(_fp_result, "content", str(_fp_result)) or "").strip()
+
                 if not _reply_text:
                     _reply_text = "I'm here."
                 _reply_text = scrub_visible_reply(_reply_text)

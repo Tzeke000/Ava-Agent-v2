@@ -638,6 +638,30 @@ class VoiceLoop:
             print(f"[voice_mood] analyze error: {e!r}")
 
     def _speak(self, clean: str) -> bool:
+        # Streaming-chunk coordination: when run_ava streamed the reply directly
+        # into the TTS queue (Component 1 of conversational naturalness), we
+        # don't re-enqueue here. Just wait for the queued chunks to finish
+        # playing. See docs/CONVERSATIONAL_DESIGN.md.
+        if self._g.get("_streamed_reply"):
+            worker_for_drain = self._g.get("_tts_worker")
+            if worker_for_drain is not None:
+                _drain_t0 = time.time()
+                try:
+                    while time.time() - _drain_t0 < 60.0:
+                        _busy = (
+                            getattr(worker_for_drain, "is_busy", lambda: False)()
+                            if hasattr(worker_for_drain, "is_busy")
+                            else worker_for_drain.is_speaking()
+                        )
+                        if not _busy:
+                            break
+                        time.sleep(0.05)
+                except Exception as _drain_e:
+                    print(f"[voice_loop] drain wait error: {_drain_e!r}")
+            self._g["_streamed_reply"] = False
+            print("[voice_loop] streamed reply drained")
+            return True
+
         worker = self._g.get("_tts_worker")
         if worker is not None and getattr(worker, "available", False):
             try:

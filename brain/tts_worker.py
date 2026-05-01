@@ -680,6 +680,20 @@ class TTSWorker:
     def is_speaking(self) -> bool:
         return self._currently_speaking.is_set()
 
+    def is_busy(self) -> bool:
+        """True if currently speaking OR queue has pending items.
+
+        Used by voice_loop's drain-wait when run_ava streamed the reply
+        directly via per-chunk speak() calls — we need to wait for ALL
+        queued chunks to finish, not just the currently-playing one.
+        """
+        if self._currently_speaking.is_set():
+            return True
+        try:
+            return not self._queue.empty()
+        except Exception:
+            return False
+
     def engine_name(self) -> str:
         return self._engine_type
 
