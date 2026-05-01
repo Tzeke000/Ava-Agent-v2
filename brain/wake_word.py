@@ -256,8 +256,29 @@ class WakeWordDetector:
 
     # ── Whisper-poll fallback (only if openWakeWord can't load) ──────────────
 
+    # Whisper-poll thresholds tightened 2026-04-30 night session.
+    # Tonight's hardware test had whisper_poll firing 2-4 times per 13s
+    # cycle even with no human speech — Whisper was happily transcribing
+    # ambient noise into something matching one of the wake keywords.
+    # Three gates added before the transcribe step:
+    #   1. RMS energy floor   (cheap, fast reject)
+    #   2. Silero VAD         (require >0.6 confidence + >300ms speech)
+    #   3. Self-listen guard  (already present from earlier commit)
+    # Only audio passing all three reaches Whisper.
+    _WHISPER_POLL_RMS_FLOOR = 0.02
+    _WHISPER_POLL_VAD_THRESHOLD = 0.6
+    _WHISPER_POLL_VAD_MIN_SPEECH_MS = 300
+
     def _whisper_poll_loop(self) -> None:
         self._backend = "whisper_poll"
+        # Lazy import — load once, reuse forever.
+        _vad_model = None
+        try:
+            from silero_vad import load_silero_vad  # type: ignore
+            _vad_model = load_silero_vad()
+        except Exception as _ve:
+            print(f"[wake_word] silero_vad unavailable for whisper_poll gating: {_ve!r}")
+
         while self._running:
             try:
                 if self._g.get("input_muted"):
@@ -280,7 +301,39 @@ class WakeWordDetector:
                 import sounddevice as sd  # type: ignore
                 audio = sd.rec(int(1.5 * 16000), samplerate=16000, channels=1, dtype="float32")
                 sd.wait()
-                audio = np.squeeze(audio)
+                audio = np.squeeze(audio).astype(np.float32, copy=False)
+
+                # ── Gate 1: RMS energy floor ─────────────────────────────
+                # If the chunk is essentially silent, skip even Silero VAD
+                # — it's a fast reject for ambient quiet.
+                rms = float(np.sqrt(np.mean(audio ** 2))) if audio.size else 0.0
+                if rms < self._WHISPER_POLL_RMS_FLOOR:
+                    continue
+
+                # ── Gate 2: Silero VAD with 0.6 threshold + 300ms gate ───
+                # If we have the model loaded, require both confidence and
+                # duration to be significant before bothering Whisper.
+                if _vad_model is not None:
+                    try:
+                        import torch  # type: ignore
+                        from silero_vad import get_speech_timestamps  # type: ignore
+                        tensor = torch.from_numpy(audio)
+                        ts = get_speech_timestamps(
+                            tensor,
+                            _vad_model,
+                            sampling_rate=16000,
+                            min_speech_duration_ms=self._WHISPER_POLL_VAD_MIN_SPEECH_MS,
+                            min_silence_duration_ms=200,
+                            threshold=self._WHISPER_POLL_VAD_THRESHOLD,
+                        )
+                    except Exception as _ie:
+                        print(f"[wake_word] silero VAD inference failed: {_ie!r}")
+                        ts = None
+                    if not ts:
+                        # No segment passed the VAD bar — skip Whisper.
+                        continue
+
+                # ── Gate 3: Whisper transcription + keyword match ────────
                 stt_engine = self._g.get("stt_engine")
                 if stt_engine is None or not getattr(stt_engine, "is_available", lambda: False)():
                     time.sleep(3.0)
