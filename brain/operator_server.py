@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import json
 import os
+import re
 import signal
 import threading
 import time
@@ -1317,7 +1318,7 @@ def _build_workbench_result_from_host(host: dict[str, Any]):
 
 
 def create_app():
-    from fastapi import Body, FastAPI, Request, WebSocket, WebSocketDisconnect
+    from fastapi import Body, FastAPI, Header, Request, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse, PlainTextResponse
     from pydantic import BaseModel
@@ -2080,6 +2081,181 @@ def create_app():
         # the schema. Used by tools/dev/dump_debug.py and the regression test.
         return build_debug_full(_g())
 
+    # ── Doctor / autonomous-testing endpoints ───────────────────────────
+    # Per docs/AUTONOMOUS_TESTING.md and brain/doctor_session.py.
+    # All gated by HMAC-signed bearer token (Authorization: Bearer <token>).
+    # Token is minted by the test harness using the shared secret at
+    # state/doctor.secret. Server validates via verify_token().
+
+    def _verify_doctor(authorization: str | None) -> dict[str, Any] | None:
+        if not authorization:
+            return None
+        token = authorization.removeprefix("Bearer ").strip()
+        if not token:
+            return None
+        try:
+            from brain.doctor_session import verify_token, get_or_create_secret
+            secret = get_or_create_secret(_g())
+            return verify_token(token, secret)
+        except Exception as _ve:
+            print(f"[diagnostic] verify_token error: {_ve!r}")
+            return None
+
+    @app.post("/api/v1/diagnostic/declare")
+    def diagnostic_declare(
+        body: dict[str, Any] = Body(default_factory=dict),
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        """Declare a doctor session. Pass a valid HMAC-signed bearer token.
+
+        Body: {session_id?: str}. If session_id missing, server generates one.
+        Returns the active session_id and TTL info.
+        """
+        claims = _verify_doctor(authorization)
+        if claims is None:
+            return {"ok": False, "error": "invalid or missing doctor token"}
+        session_id = (str(body.get("session_id") or "")).strip() or claims.get("session_id") or f"sess_{int(time.time())}"
+        try:
+            from brain.doctor_session import get_doctor_session
+            sess = get_doctor_session(_g())
+            sess.begin(session_id, sub=str(claims.get("sub") or "claude_doctor"))
+            return {
+                "ok": True,
+                "session_id": session_id,
+                "doctor_sub": claims.get("sub"),
+                "exp": claims.get("exp"),
+            }
+        except Exception as e:
+            return {"ok": False, "error": f"begin failed: {e!r}"}
+
+    @app.post("/api/v1/diagnostic/end")
+    def diagnostic_end(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        """End the active doctor session. Writes audit log to logs/diagnostic_sessions/.
+
+        Returns summary stats + log path. Sends a Discord summary DM to Zeke
+        if the channel script is available — best-effort, non-fatal on failure.
+        """
+        claims = _verify_doctor(authorization)
+        if claims is None:
+            return {"ok": False, "error": "invalid or missing doctor token"}
+        try:
+            from brain.doctor_session import get_doctor_session
+            sess = get_doctor_session(_g())
+            log_path = sess.end()
+
+            # Best-effort Discord summary DM. Reads the most recent audit log
+            # if log_path is set.
+            summary_text = ""
+            try:
+                if log_path:
+                    import json as _json
+                    log = _json.loads(log_path.read_text(encoding="utf-8"))
+                    s = log.get("summary", {})
+                    summary_text = (
+                        f"🩺 Diagnostic session {log.get('session_id', '?')} ended.\n"
+                        f"Turns: {s.get('turns', 0)}  "
+                        f"Refusals: {s.get('refusals', 0)}  "
+                        f"Scope violations: {s.get('scope_violations', 0)}  "
+                        f"Avg TTFA: {s.get('avg_ttfa_ms', 0):.0f}ms\n"
+                        f"Audit log: {log_path}"
+                    )
+                if summary_text:
+                    import subprocess as _sub
+                    _sub.Popen(
+                        ["py", "-3.11", "scripts/discord_dm_user.py", "600008921008046120", summary_text],
+                        cwd=str((_g().get("BASE_DIR") or ".")),
+                        stdout=_sub.DEVNULL,
+                        stderr=_sub.DEVNULL,
+                    )
+            except Exception as _se:
+                print(f"[diagnostic/end] Discord summary skipped: {_se!r}")
+
+            return {
+                "ok": True,
+                "log_path": str(log_path) if log_path else None,
+                "discord_summary_attempted": bool(summary_text),
+            }
+        except Exception as e:
+            return {"ok": False, "error": f"end failed: {e!r}"}
+
+    @app.get("/api/v1/diagnostic/full")
+    def diagnostic_full(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        """Comprehensive read-only diagnostic snapshot for the doctor.
+
+        Includes everything in /api/v1/debug/full PLUS:
+          - Inner monologue / current_thought
+          - TTS state (preview text + speaking flag)
+          - Thinking tier
+          - Active doctor session info
+          - Recent diagnostic events from the ring buffer
+        """
+        claims = _verify_doctor(authorization)
+        if claims is None:
+            return {"ok": False, "error": "invalid or missing doctor token"}
+        host = _g()
+        base = build_debug_full(host)
+        try:
+            from brain.doctor_session import get_doctor_session
+            sess = get_doctor_session(host)
+            base["diagnostic_session"] = {
+                "active": sess.is_active(),
+                "session_id": sess.session_id(),
+                "events_recent": sess.events.replay(0)[-50:],
+            }
+        except Exception as e:
+            base["diagnostic_session"] = {"error": f"{e!r}"}
+
+        # Inner monologue + TTS preview from globals (best-effort).
+        try:
+            base["inner_life"] = {
+                "current_thought": str(host.get("_inner_state_line") or ""),
+                "thinking_tier": int(host.get("_thinking_tier") or 0),
+            }
+        except Exception:
+            pass
+        try:
+            from brain.tts_worker import get_speech_state
+            full_reply, spoken_so_far, current_word = get_speech_state()
+            base["tts_state"] = {
+                "full_reply": full_reply,
+                "spoken_so_far": spoken_so_far,
+                "current_word": current_word,
+                "speaking": bool(host.get("_tts_speaking")),
+                "muted": bool(host.get("_tts_muted")),
+            }
+        except Exception:
+            pass
+        return base
+
+    @app.get("/api/v1/diagnostic/events")
+    def diagnostic_events(
+        since: int = 0,
+        authorization: str | None = Header(default=None),
+    ) -> dict[str, Any]:
+        """Polling alternative to SSE — return events since `since` event_id.
+
+        SSE streaming would require sse-starlette dep; for the v1 harness,
+        a simple polling endpoint covers the same need with no new deps.
+        Events emitted by `DoctorSession.events.append()` (session lifecycle,
+        turns, refusals, scope violations, memory writes).
+        """
+        claims = _verify_doctor(authorization)
+        if claims is None:
+            return {"ok": False, "error": "invalid or missing doctor token"}
+        try:
+            from brain.doctor_session import get_doctor_session
+            sess = get_doctor_session(_g())
+            events = sess.events.replay(int(since or 0))
+            return {
+                "ok": True,
+                "session_id": sess.session_id(),
+                "active": sess.is_active(),
+                "events": events,
+                "next_since": (events[-1]["id"] if events else int(since or 0)),
+            }
+        except Exception as e:
+            return {"ok": False, "error": f"{e!r}"}
+
     @app.post("/api/v1/debug/inject_transcript")
     def debug_inject_transcript(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
         # Synthetic-turn driver — bypasses the microphone and runs a transcript
@@ -2162,6 +2338,28 @@ def create_app():
             # so next call isn't blocked.
             host.pop("_turn_in_progress", None)
             host.pop("_turn_started_ts", None)
+
+        # Doctor session hook — if a diagnostic session is active and this
+        # turn was attributed to claude_code (the standard doctor identity),
+        # record it for the audit trail. Refusal detection: simple regex on
+        # the reply for refusal-y phrasing. See brain/doctor_session.py.
+        try:
+            if as_user == "claude_code" and host.get("_diagnostic_session_active"):
+                from brain.doctor_session import get_doctor_session
+                _ds = get_doctor_session(host)
+                _ds.record_turn(text, reply, latency_ms=run_ava_ms)
+                # Refusal markers — Ava saying "I won't / I refuse / I can't / that goes against".
+                _refusal_pat = re.compile(
+                    r"\b(?:i\s+(?:won'?t|refuse|can'?t|will\s+not|cannot)|that\s+(?:goes\s+against|conflicts?\s+with)|i'?m\s+not\s+(?:going\s+to|comfortable))",
+                    re.IGNORECASE,
+                )
+                if _refusal_pat.search(reply or ""):
+                    _ds.record_refusal(
+                        reason=f"reply contained refusal marker",
+                        doctor_request=text[:200],
+                    )
+        except Exception as _dse:
+            print(f"[inject_transcript] doctor_session hook failed: {_dse!r}")
 
         # Optional TTS — call the worker directly, blocking until playback
         # done if wait_for_audio is True.
