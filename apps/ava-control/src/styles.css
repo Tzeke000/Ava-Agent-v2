@@ -1770,6 +1770,45 @@ body,
   opacity: 0.85;
   animation: innerStateFadeIn 0.85s ease both;
 }
+
+/* Inner monologue — Ava's current thought, rendered just below the
+   orb's other status lines. Distinct from speaking-text (which shows
+   the actual reply). Italic + dimmer + 💭 prefix to make it visually
+   subordinate to the spoken response. Wraps to multiple lines if the
+   thought is longer; truncated with ellipsis after ~3 lines. */
+.presence-inner-thought {
+  width: min(720px, 88vw);
+  min-height: 0;
+  max-height: 4.5em;
+  margin: 0.4rem auto 0;
+  text-align: center;
+  font-family: "Segoe UI", "Cascadia Mono", system-ui, sans-serif;
+  font-style: italic;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+  color: rgba(190, 210, 240, 0.78);
+  pointer-events: none;
+  user-select: text;  /* user can copy the thought if they want */
+  transition: opacity 0.9s ease;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  box-sizing: border-box;
+  padding: 0 0.4rem;
+}
+.presence-inner-thought.empty {
+  opacity: 0;
+}
+.presence-inner-thought.live {
+  opacity: 0.85;
+  animation: innerThoughtFadeIn 1.2s ease both;
+}
+@keyframes innerThoughtFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 0.85; }
+}
 @keyframes innerStateFadeIn {
   from { opacity: 0; }
   to   { opacity: 0.85; }

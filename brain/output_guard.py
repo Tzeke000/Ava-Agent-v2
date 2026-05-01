@@ -22,6 +22,13 @@ def scrub_visible_reply(text: str) -> str:
     cleaned = text
     for pat in _INTERNAL_BLOCK_PATTERNS:
         cleaned = pat.sub("", cleaned)
+    # Strip inner-monologue 💭 lines — these belong on the snapshot's
+    # inner_life.current_thought surface (rendered as text under the orb
+    # in the UI), not in the chat reply or TTS playback. Hardware test
+    # 2026-04-30 night: the chat showed
+    #   💭 "Wondering if repetition in conversation often stems..."
+    # appended to Ava's reply and being spoken out loud.
+    cleaned = "\n".join(ln for ln in cleaned.splitlines() if "💭" not in ln)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     if cleaned and cleaned[-1] not in '.!?"\'':
         tail = cleaned.rsplit('\n', 1)[-1]

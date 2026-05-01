@@ -2086,6 +2086,13 @@ export default function App() {
             {innerStateLine}
           </div>
         )}
+        {/* Inner monologue — Ava's current thought, rendered under the orb.
+            Distinct from the spoken reply: this is what she's thinking
+            *about*, not what she's saying. Pulled from
+            snapshot.inner_life.current_thought (refreshed each tick). */}
+        <div className={`presence-inner-thought ${currentInnerThought ? "live" : "empty"}`}>
+          {currentInnerThought ? `💭 ${currentInnerThought}` : ""}
+        </div>
         <div className="presence-input-row">
           <input
             type="text"
