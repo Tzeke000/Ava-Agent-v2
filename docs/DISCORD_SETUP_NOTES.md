@@ -148,3 +148,68 @@ file-based patch is per-user, no-admin, and survives Claude Code reinstalls.
 If anything in the auto-spawn path goes sideways, the original
 "open a second shell and run `bun run --silent start` in the plugin
 cache dir" workflow still works.
+
+## Permission approval over Discord
+
+The plugin **already relays Claude Code permission prompts to Discord** — no
+extra wiring needed. It declares the `claude/channel/permission` MCP
+capability (`server.ts:452`) and handles the full round-trip:
+
+1. Claude Code emits `notifications/claude/channel/permission_request` when
+   a tool call needs approval (`server.ts:478`).
+2. The plugin DMs every allowlisted user a `🔐 Permission: <tool>` message
+   with three buttons: `See more`, `Allow ✅`, `Deny ❌` (`server.ts:491-506`).
+3. The user taps a button **or** types `yes <code>` / `no <code>` — both
+   paths emit `notifications/claude/channel/permission` back to Claude Code
+   (`server.ts:744-796`, `833-840`).
+
+### To use it
+
+Launch the session **without** `--dangerously-skip-permissions`:
+
+```powershell
+claude --channels plugin:discord@claude-plugins-official
+```
+
+With `--dangerously-skip-permissions` set, Claude Code never asks for
+approval at all, so the plugin never sees a permission_request to forward.
+That flag is the current workaround for "I don't want to be in the
+terminal" — but the Discord-relay path is the real solution and gives you
+per-call gating from your phone.
+
+### Group DMs are intentionally excluded
+
+The plugin only sends permission DMs to users in `access.allowFrom`, never
+to group channels (`server.ts:472-475`). Pairing one user via
+`/discord:access` is enough.
+
+## Sending long prompts as .md attachments
+
+The plugin **already supports file attachments** — no polling handler
+needed.
+
+When you DM the bot with an attached file, the inbound channel notification
+includes `attachment_count` and `attachments="name/type/size; ..."`
+(`server.ts:862-885`). Claude calls
+`download_attachment(chat_id, message_id)` (`server.ts:692-705`) which
+writes the file under the local inbox and returns the path, ready to
+`Read`.
+
+### Workflow
+
+1. Save your prompt as `prompt.md` (or any text file ≤ 25 MB).
+2. Open the Discord DM with the bot, attach the file, optionally include a
+   short message ("execute this please").
+3. Claude is notified of the attachment, downloads it, reads the contents,
+   and runs the prompt.
+
+That's it — no `scripts/` polling, no extra infra. The MCP tool
+`download_attachment` is the canonical path; building a parallel Python
+poller would duplicate it and race the MCP server's own download path.
+
+### Limits
+
+- 25 MB per attachment, 10 attachments per message (Discord limits, also
+  enforced at `server.ts:133` and `617-621`).
+- Attachments land in the plugin's local inbox; paths are returned by the
+  tool call.
