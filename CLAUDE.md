@@ -19,6 +19,49 @@ Ava is a local adaptive AI companion running on Python 3.11 and a Tauri desktop 
 
 ---
 
+## Standing Operating Rules
+
+These apply to every work order in this repo without needing to be restated.
+
+### 1. Progress pings via Discord
+
+For any work order with **multiple discrete tasks or steps**, send a Discord DM before starting and after finishing each task:
+
+- Before starting: `▶️ Starting task N of X: <short name>`
+- After finishing: `✅ Finished task N of X: <short name>`
+- At the very end: `🏁 <summary line>`
+
+Send via:
+
+```powershell
+py -3.11 scripts\discord_dm_user.py 600008921008046120 "<message>"
+```
+
+When the session is already inside a Discord channel (inbound `<channel source="discord" ...>` is the trigger), the channel's `reply` tool is an acceptable substitute — same destination, no subprocess spawn.
+
+This applies to every multi-step work order, **not just** ones that explicitly request pings. The user is frequently away from the terminal — Discord is their only real-time visibility into progress. Skipping pings is treated as a defect even if the work itself succeeds.
+
+Single-task work orders (one quick fix, one diagnostic check) only need the final `🏁` status.
+
+### 2. Don't reinvent the wheel
+
+Before implementing any new feature, capability, or significant subsystem for Ava, do this research pass **first**:
+
+1. Search whether a working open-source implementation already exists (`web_search`, GitHub search via `web_fetch`).
+2. If found, clone or download it. Evaluate code quality, license, and fit for Ava's architecture.
+3. Assess fit on this hardware: latency budget, impact on voice loop / vision pipeline / response latency, alignment with existing patterns (dual-brain, tool registry, memory levels, identity-anchored design).
+4. **Good match at acceptable speed → integrate** (with attribution in the source). Don't write from scratch what's already been built and tested by others.
+5. **Match exists but too slow / heavy / poor fit →** document why, then either optimize the existing implementation for Ava's constraints **or** build new with the existing implementation as reference. Don't re-derive techniques in a vacuum.
+6. **No good match →** document the search results so future searches don't repeat the same dead ends.
+
+**Applies to:** new tools, new perception modules, new memory mechanisms, new reasoning patterns, new UI components, new integrations.
+
+**Does NOT apply to:** bug fixes on existing code, doc edits, config changes, one-line patches.
+
+**Failure standard:** if the user can show a well-known open-source implementation existed that would have worked for Ava with reasonable adaptation, and Claude Code wrote new code without considering it, that's a violation of this rule.
+
+---
+
 ## Key paths
 
 | Path | Role |

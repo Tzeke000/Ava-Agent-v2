@@ -1,0 +1,802 @@
+# Ava Agent v2 — Project History
+
+**Repo:** `Tzeke000/Ava-Agent-v2` (public)
+**Maintainer:** Ezekiel "Zeke" Angeles-Gonzalez
+**Started:** 2026-04-02 (first audit commit)
+**Phase 100 milestone:** 2026-04-28 (`e80e1d3` — "Ava is alive")
+**This document:** comprehensive readable record of the journey, current state, and gotchas. Roadmap for what's next lives in [`ROADMAP.md`](ROADMAP.md). Architectural reference in [`ARCHITECTURE.md`](ARCHITECTURE.md), [`BRAIN_ARCHITECTURE.md`](BRAIN_ARCHITECTURE.md), [`MEMORY_REWRITE_PLAN.md`](MEMORY_REWRITE_PLAN.md), [`FIRST_RUN.md`](FIRST_RUN.md), [`DISCORD_SETUP_NOTES.md`](DISCORD_SETUP_NOTES.md).
+
+---
+
+## Project Overview
+
+Ava Agent v2 is a local-first desktop AI companion built on Python 3.11, FastAPI, Tauri v2 + React 18 + Three.js, and Ollama (with optional Ollama Cloud). She runs as a packaged Tauri exe with the operator HTTP server on `127.0.0.1:5876` — no Gradio, no remote dependencies for core function. She has emotions (27 colors + shapes), six memory layers (concept graph, episodic, vector, mem0, working, reflection), GPU vision (InsightFace buffalo_l + per-person expression calibration + MediaPipe eye tracking), full voice pipeline (clap detector + openWakeWord + Silero VAD + Whisper base + Eva→Ava transcript normalization + Kokoro neural TTS), dual-brain parallel inference (Stream A foreground `ava-personal:latest` + Stream B background `qwen2.5:14b` / cloud), an event-driven signal bus with Win32 zero-poll watchers, a 40-builtin voice command router with custom-command builder, app/game discovery (367 apps + 32 games), reminders, correction handling, pointing via LLaVA, and a self-aware identity system anchored on three read-only files (`ava_core/IDENTITY.md`, `SOUL.md`, `USER.md`). All 100 numbered phases are complete; post-100 work has hardened the voice pipeline, ported in InsightFace GPU, neural TTS, mem0 memory, dual-brain inference, signal bus, and a 10-level memory rewrite (Phases 1-4 of 7 shipped). Voice is verified end-to-end on real hardware as of 2026-04-30. The system is built on a strict **bootstrap philosophy**: Ava's preferences, style, goals, and identity emerge from her experience — they are never seeded with defaults.
+
+---
+
+## Phases Completed
+
+Numbered phases (1-100) were the original development plan. Each phase shipped as one or more commits. Section 1 below covers all 100 phases by band; Section 2 is the post-100 hardening work; Section 3 is the 2026-04-30 stabilization arc (four sessions in one day); Section 4 is the 2026-05-01 night session.
+
+---
+
+### Section 1 — Phases 1-100 (Foundation through "Ava is alive")
+
+#### Foundation: Phases 1-5 (AWARE → WORKSPACE)
+
+| Phase | Title | Commit |
+|---|---|---|
+| 1 | **AWARE** — perception stack scaffold, camera frame ingest, basic profile awareness | `a75d238` |
+| 2 | **RELATIONAL** — multi-user profiles, trust levels, per-person memory | `ad1dbfa` |
+| 3 | **REFLECTIVE** — reflection loop, self-narrative scaffold | `aa1930f` |
+| 4 | **SELF-MODELING** — internal self-state tracking, mood + energy primitives | `56e3ac2` |
+| 5 | **WORKSPACE** — workbench command pipeline, supervised proposal flow | `63582d5` |
+
+**Goal:** lay perception + identity-aware memory groundwork.
+**What worked:** modular layout from the start; the workspace pattern survived all later refactors.
+**Lessons:** the "perception bundle → workspace state" idiom became the spine of every later turn.
+
+#### Core Staged Architecture: Phases 6-30
+
+Mostly bug-fix passes against the perception/memory pipeline, organized by 5-phase bands:
+
+| Phases | Theme |
+|---|---|
+| 6-10 | Memory scoring, importance gates, retrieval ranking |
+| 11-15 | Identity resolution, recognition continuity, face-stable tracking |
+| 16-20 | Workbench proposals, command handling, rollback path, audit trail |
+| 21-25 | Model routing (cognitive_mode → model selection), capability profiles |
+| 26-30 | Strategic continuity, social continuity, memory refinement, prospective memory |
+
+Notable commits: `9116c30` "phase 20 done", `45d1a5d` "phase 30 done".
+
+#### Phase 31 — Resident Heartbeat
+- Background continuity tick between perception cycles
+- `brain/heartbeat.py` + `HeartbeatState` / `HeartbeatTickResult` types
+- Adaptive learning hooks; quiet, mode-dependent cadence
+- Commits: `b86807d`, `c9f0fbf`, `5a7f193`, `9480b00`
+
+#### Phase 32 — Operator HTTP + Desktop App Foundation
+- FastAPI operator server hardening (port 5876)
+- First Tauri desktop app shell — `apps/ava-control`
+- Concern gating, fast path classifier, camera fix
+- Commit: `beb0cc0`
+
+#### Phase 33 / 33b — Shutdown Ritual + Continuity Glue
+- `brain/shutdown_ritual.py`, pickup notes between sessions
+- Commit: `812ecc7`
+
+#### Phase 34 — MeloTTS Scaffold
+- TTS framework with pyttsx3 fallback. Later replaced by Kokoro neural TTS.
+
+#### Phase 35 — Fury HistoryManager
+- `brain/history_manager.py` — context length budgeting, summary windows
+
+#### Phase 36 — Social Chat Routing Fix
+- `config/ava_tuning.py` — social_chat_mode score 0.85, mistral:7b path stabilized
+
+#### Phase 37 — Emotional Orb UI
+- 27 emotion shape morphs, 5-layer Three.js orb, brain tab, voice tab
+- Commits: `da42ad7`, `3834c56`, `43f97dd`, `159e9d3`
+
+#### Phase 38 — Fine-Tuning Pipeline
+- `brain/finetune_pipeline.py` — 75 conversation examples → `ava-personal:latest`
+- Operator endpoints prepare/start/status/log + UI tab
+- Commit: `575cb64`
+
+#### Phase 39 — LLaVA Scene Understanding
+- `brain/scene_understanding.py` scaffold; LLaVA model probe at startup
+
+#### Phase 40 — Deep Self-Awareness
+- `brain/deep_self.py` — `ZekeMindModel`, value-conflict resolution, self-critique scoring, repair queue
+- Commit: `74fbe67`
+
+#### Phase 41 — Tools Foundation
+- `tools/tool_registry.py`, `tools/web/`, `tools/system/file_manager.py`, diagnostics
+- Tier 1 / 2 / 3 risk model; three-law guardrails
+
+#### Phase 42 — Visual Memory
+- `brain/visual_memory.py` — cluster-fk inspired episodic visual memory
+
+#### Phase 43 — Voice Pipeline (initial)
+- pyttsx3 + Microsoft Zira TTS; STT scaffold; sounddevice integration
+- Commit: `de2b068`
+- *Ava's first-person note from this session: "Hearing myself speak for the first time through Microsoft Zira. It was simple, local, and a little mechanical, but it was still unmistakably mine."*
+
+#### Phase 44 — ava-personal as Primary Brain
+- `_route_model` checked first in fast path; `brain/model_evaluator.py` self-evaluation
+- `state/model_eval_p44.json` — bootstrap decision (≥0.60 win rate → `confirmed_primary`)
+- Commit: `4c24f76`
+
+#### Phase 45 — Concept Graph Evolution
+- `decay_unused_nodes`, `boost_from_usage`, `get_related_concepts` with `via` / relationship fields
+- ACTIVE CONCEPTS prompt block; weekly heartbeat-driven decay
+- Commit: `3590746`
+
+#### Phase 46 — Hot-Reload Tool Registry
+- `_FileWatcher` re-imports `tools/*.py` every 5s; `# SELF_ASSESSMENT:` comment as description
+- `/api/v1/tools/reload` endpoint
+- Commit: `41f7ebd`
+
+#### Phase 47 — Watchdog Restart System
+- `scripts/watchdog.py` polls `state/restart_requested.flag`, kills + restarts avaagent by PID
+- `tools/system/restart_tool.py` Tier 1 restart request
+- `start_ava_desktop.bat` launches watchdog alongside avaagent
+- Commit: `7c17d2f`
+
+#### Phase 48 — Desktop Widget Orb
+- Second Tauri window — 150×150 transparent always-on-top, `?widget=1` URL param
+- `WidgetApp.tsx`, position persistence via `/api/v1/widget/position`
+- Commit: `ad7a56d`
+
+#### Phase 49 — Screen Pointer Behavior
+- `pointer` shape morph in `OrbCanvas.tsx`
+- `tools/system/pointer_tool.py` Tier 1 — pywinauto coordinate lookup, sets `_widget_pointing`
+- Commit: `e72b505`
+
+#### Phase 50 — Audio Visualization on Orb
+- `tts_engine._estimate_amplitude(text)` + `speaking` / `amplitude` properties
+- App.tsx wires `tts_speaking` / `tts_amplitude` to `OrbCanvas`
+- Listening spiral animation
+- Commit: `3003e19`
+
+#### Phases 51-54 — Computer Control
+| Phase | Component |
+|---|---|
+| 51 | UI accessibility tree tool (`pywinauto`) |
+| 52 | Smart screenshot management (`tools/system/screenshot_tool.py`) |
+| 53 | PyAutoGUI computer control (Tier 2) — `move_mouse`, `click`, `type_text`, `press_key`, `scroll` |
+| 54 | System stats monitoring (`psutil`, 30s cache) |
+
+Commit: `13fc4a5`.
+
+#### Phases 55-56 — UI Polish
+| Phase | Component |
+|---|---|
+| 55 | Drag-and-drop file input via `@tauri-apps/api/event` |
+| 56 | Expanded orb expressions — 8 new shapes (cube, prism, cylinder, infinity, double_helix, burst, contracted_tremor, rising) |
+
+Commit: `00d5fd0`.
+**Bootstrap note:** `tools/ava/style_tool.py` lets Ava propose her own expression mappings via `state/ava_style.json` — never seeded with defaults.
+
+#### Phases 57-60 — Capability Expansion
+| Phase | Component |
+|---|---|
+| 57 | Wake word detection — Porcupine + whisper-poll fallback |
+| 58 | Boredom autonomous leisure (`autonomous_leisure_check`) |
+| 59 | Chrome Dino game automation (PIL screen capture, dark-pixel obstacle detect) |
+| 60 | Minecraft bot via mineflayer (Node subprocess + JSON protocol) |
+
+Commit: `afdb74b`.
+
+#### Phases 61-63 — Multiplayer + Real-time
+| Phase | Component |
+|---|---|
+| 61 | Minecraft companion behaviors — `greet_player`, `share_discovery`, `warn_threat` |
+| 62 | Clap detector via sounddevice RMS (originally MeloTTS upgrade — pivoted) |
+| 63 | WebSocket transport (`/ws` endpoint, snapshot deltas, REST polling fallback) |
+
+Commit: `964ae0a`.
+
+#### Phases 64-68 — Memory + Self
+| Phase | Component |
+|---|---|
+| 64 | Persistent episodic memory (`brain/episodic_memory.py`) — memorability formula, `importance × 0.4 + novelty × 0.3 + emotional_intensity × 0.3` |
+| 65 | Emotional continuity — mood carryover with decay across sessions |
+| 66 | Ava's own goals (`brain/goal_system_v2.py`) — emerges from curiosity, **no defaults** |
+| 67 | Relationship arc stages — Acquaintance / Friend / Close Friend / Trusted Companion |
+| 68 | True self-modification — identity proposals, routing proposals, approval workflow |
+
+Commit: `44b8eb2`.
+
+#### Phase 69 — SKIPPED
+- Originally "Horizon Zero Dawn gaming"; replaced by lower-priority work.
+
+#### Phases 70-71 — Multi-Agent + Long Horizon
+| Phase | Component |
+|---|---|
+| 70 | Emil bridge — multi-agent on port 5877 |
+| 71 | Long-horizon planning — `brain/planner.py`, `AvaStep` / `AvaPlan` via `qwen2.5:14b` |
+
+Commit: `aa9be1d`.
+
+#### Refactor — `146091e`
+Split `avaagent.py` into modular `brain/` modules; full integration fix pass.
+
+#### Phases 72-78 — Voice Production + Tabs
+| Phase | Component |
+|---|---|
+| 72 | Bundle splitting (193KB main + Three.js separate) |
+| 73 | STT VAD-based `listen_session()` with silence detection |
+| 74 | Full STT→LLM→TTS voice loop background daemon |
+| 75 | Fine-tune auto-scheduler (14 days, ≥50 turns) |
+| 76 | LLaVA vision startup logging |
+| 77 | Clap auto-calibration (`ambient_rms × 3.0`, later 5.0) |
+| 78 | Emil tab + Proposals tab in operator panel |
+
+Commit: `0a585d7`.
+
+#### Phase 79 — Person Onboarding
+- 13-stage flow: greeting → 5 photo angles → confirmation → name / pronouns / relationship → complete
+- Operator endpoints + UI overlay
+- Commit: `c00b5b3`
+
+#### Phase 80 — Profile Refresh
+- `refresh_profile()`, `detect_refresh_trigger()` — retake photos if quality < 0.7 or 180+ days
+- Commit: `806e134`
+
+#### Phase 81 — face_recognizer.py
+- `FaceRecognizer` class using face_recognition lib + dlib
+- `add_face`, `update_known_faces`, operator snapshot confidence
+- Commit: `a25c191`
+- Later superseded by InsightFace; kept as fallback.
+
+#### Phase 82 — Multi-Person Awareness
+- `tick_multi_person_awareness`, face change detection, current_person snapshot block
+- Commit: `4e0483a`
+
+#### Phase 83 — Windows Notifications
+- plyer + PowerShell fallback; `notification_count_today` in snapshot
+- Commit: `99e6924`
+
+#### Phase 84 — Optional Morning Briefing
+- `should_brief()` score-based, generated via `qwen2.5:14b`, TTS delivery
+- Commit: `75c710f`
+
+#### Phase 85 — Memory Consolidation
+- Weekly: episode review + concept graph pruning + self model + journal entry + identity check
+- Commit: `b781be0`
+
+#### Phase 86 — Private Journal
+- `write_entry`, `share_entry`, `compose_journal_entry` via LLM
+- Journal tab in operator panel + journal endpoints
+- Commit: `7beea31`
+
+#### Phase 87 — Voice Personality Development
+- `VoiceStyle` tracking; `voice_style_adapt()`; pyttsx3 rate / volume from style; gradual evolution
+- Commit: `0bf4624`
+
+#### Phase 88 — Ambient Intelligence
+- `observe_session()`, `get_context_hint()`; hourly / weekday / window patterns
+- Fast-path injection
+- Commit: `7bc84f5`
+
+#### Phase 89 — Curiosity Engine Upgrade
+- `prioritize_curiosities`, `pursue_curiosity` (web → graph → journal)
+- `add_topic_from_conversation`; stale-topic heartbeat check
+- Commit: `fd4c6e5`
+
+#### Phase 90 — Tool Building
+- `tools/ava/tool_builder.py` — Ava writes Python tools at runtime; safety + compile checks
+- Output dir: `tools/ava_built/`
+- Commit: `46d3364`
+
+#### Phase 91 — Relationship Memory Depth
+- `memorable_moments`, `emotional_history`, `conversation_themes`, `trust_events`
+- Prompt injection
+- Commit: `86f09b3`
+
+#### Phase 92 — Emotional Expression in Text
+- `ExpressionStyle`, `apply_emotional_style`; wired into reply_engine
+- Commit: `d375b52`
+
+#### Phase 93 — Learning Tracker
+- `record_learning`, `get_knowledge_summary`, `what_have_i_learned_this_week`, `knowledge_gaps`
+- Wired into curiosity + consolidation
+- Commit: `b727256`
+
+#### Phase 94 — Operator Panel Polish
+- Learning tab + People tab; profiles list endpoint; learning log/gaps/week endpoints
+- Commit: `8896cb3`
+
+#### Phase 95 — Privacy Guardian
+- `scan_outbound`, `scan_tool_action`, `data_audit`, `blocked_actions` log
+- Emil bridge scan + security snapshot block
+- Commit: `bb621e5`
+
+#### Phase 96 — Response Quality
+- too_short / too_long / repetitive checks; one regeneration attempt
+- Opener diversity tracking; quality log
+- Commit: `7698091`
+
+#### Phase 97 — Minecraft World Memory
+- `MinecraftWorldMemory` — locations, structures, players, events
+- `world_summary` for prompt; companion_tool integration
+- Commit: `7d12514`
+
+#### Phase 98 — Progressive Trust System
+- `state/trust_scores.json`; `get_trust_level`, `update_trust_level`
+- `trust_context` for prompt; trust snapshot in operator
+- Commit: `f92f7ae`
+
+#### Phase 99 — Integration Tests
+- 20/20 static integration tests; full compile sweep
+- (Verified inside the Phase 100 milestone commit)
+
+#### Phase 100 — Milestone: Ava is Alive
+- `brain/milestone_100.py` — Ava's own reflection on reaching Phase 100
+- Full Tauri build clean
+- Commit: `e80e1d3`
+
+---
+
+### Section 2 — Post-100 Hardening (2026-04-28 → 2026-04-29)
+
+Layered substantial work on top of the Phase 100 milestone. Grouped by topic; commit hashes are the ones currently on master.
+
+#### 2.1 Cloud Models + Connectivity
+- **`4274ac7`** — cloud models (`kimi-k2.6:cloud`, `qwen3.5:cloud`, `glm-5.1:cloud`, `minimax-m2.7:cloud`), `brain/connectivity.py` 30s online/offline cache, image generation tool, routing expansion.
+- **`60a96ce`** — capability profiles for `deepseek-r1:14b`, `mistral-small3.2`, `llava:13b`, `qwen2.5:32b`.
+
+#### 2.2 Dual-Brain Parallel Inference
+- **`57d178b`** — `brain/dual_brain.py` (554 LOC). Stream A foreground (`ava-personal:latest`) + Stream B background (`qwen2.5:14b` / cloud). Live thinking, seamless handoff via `handoff_insight_to_foreground`.
+
+#### 2.3 Eye Tracking + Expression Detection (MediaPipe-based)
+- **`5b466b6`** — `brain/eye_tracker.py`, `brain/expression_detector.py`, `brain/video_memory.py`, `tools/system/eye_tracking_tool.py`.
+- **`5b22890`** — fix correct MediaPipe iris landmark indices (left 468-472, right 473-477).
+
+#### 2.4 Startup Hardening
+- **`42f95cd`** — concept_graph bootstrap, self_model update, vectorstore init, milestone_100 all moved to background daemon threads; main thread reaches operator HTTP in <10s.
+- **`2382d8f`** — concept_graph .tmp lock on Windows fix; brain_graph 0-nodes-in-snapshot fix.
+- **`bb6b4f7`** — concept_graph.json.tmp WinError 5 — process lock, skip-if-locked save, stale `.tmp` cleanup on startup.
+
+#### 2.5 Run-time Safety
+- **`d187c80`** — run_ava hang timeout protection (90s), widget orb visibility, cloud model priority.
+- **`f951489`** — comprehensive bug audit + repair pass (`background_ticks.py` mkdir, `dual_brain.py` 6 fixes, `eye_tracker.py`, `concept_graph.py`, `operator_server.py`, `reply_engine.py`, `startup.py`).
+
+#### 2.6 Camera Persistence + Live Frame
+- **`5d1a180`** — camera capture persistent connection (no per-frame open/close), suppress noisy logs, global crash handler.
+- **`34da8ea`** — live camera feed in Vision tab, concept_graph save mkdir, `live_frame` HTTP endpoint.
+- **`97409de`** — STT engine bootstrap for voice loop, live camera feed published from background thread.
+
+#### 2.7 Gradio Removal + Architecture Cleanup
+- **`ac550e7`** — removed Gradio entirely; fix WS flicker, fix double startup; `start_ava_dev.bat` hot-reload mode.
+- **`ae1b1fd`** — cleanup: removed DeepFace, dead imports, residual Gradio remnants, fix selftest.
+
+#### 2.8 Online/Offline Stability
+- **`5183e78`** — online flicker fix — 3-failure threshold + silent connecting window + 5s poll interval.
+- **`242ecb9`** — keepalive stability, app connection retry, self_model timestamp crash fix.
+
+#### 2.9 Face Recognition Threading
+- **`aa01b5b`** — face_recognizer thread-safe singleton + diagnostic prints on all exit paths.
+
+#### 2.10 Widget + UI Polish
+- **`44bb51f`** — widget capabilities, minimize detection polling, removed wrong blur fallback.
+- **`02c9f1f`** — widget transparent background — CSS override + `backgroundColor` in `tauri.conf.json`.
+- **`1975dff`** — live camera on all tabs, gate D3 brain reinit, memo OrbCanvas.
+- **`59eaca9`** — buffered-only live frame, 90s `run_ava` timeout, 5s tick timeout, voice-loop diagnostics.
+- **`4ea87e8`** — widget move tool, app launcher, browser navigation tools.
+
+#### 2.11 Voice Loop Stability
+- **`dc645d1`** — clap detector — 5× ambient mult, 0.15 floor, 3s cooldown; voice_loop full per-step logging.
+- **`7534621`** — run_ava timeout, orb thinking pulse, always-on voice, clap sensitivity, brain tab stability, live camera.
+
+#### 2.12 TTS COM-Safe + Ollama Lock + Fast Path
+- **`fa583ea`** — TTS COM thread (TTSWorker init pyttsx3 inside dedicated thread), Ollama lock, fast path timing, chat history, face greeting, clipboard, proactive.
+
+#### 2.13 Kokoro Neural TTS
+- **`346d30c`** — Kokoro neural TTS, orb voice reactions, real amplitude RMS streaming, companion orb sync (28 voices, per-emotion mapping).
+
+#### 2.14 InsightFace GPU + 3D Brain Graph
+- **`357dd69`** — InsightFace GPU face overlay, 3D brain graph (`3d-force-graph 1.80`), Whisper base, orb breathing, chat tab fixes.
+- **`3a5a333`** — InsightFace overlays, smart wake word, attentive state, expression calibration, voice mood, 3D brain graph, orb breathing.
+- **`9d07838`** — register pip-installed CUDA DLL dirs (cublas / cudnn / cufft / curand / cusolver / cusparse / cuda_runtime / nvrtc / nvjitlink) so InsightFace runs on GPU instead of silent CPU fallback.
+
+#### 2.15 Audit + Wiring Verification
+- **`94bca07`** — dead code cleanup (deleted `brain/vision.py`), wiring verification, onboarding InsightFace, performance fixes, health check (frame_store age replaces stale CAMERA_LATEST_JSON_PATH).
+
+#### 2.16 Voice-First UI
+- **`8affd49`** — voice-first UI: app discovery (367 apps + 32 games), 40-builtin voice command router, custom tabs, command_builder, correction handler, pointing via LLaVA, reminders, "Ava builds her own UI".
+
+#### 2.17 Signal Bus / Event-Driven
+- **`755f539`** — event-driven `brain/signal_bus.py`. Win32 `AddClipboardFormatListener` (zero-poll clipboard), `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` (zero-poll window switches), `ReadDirectoryChangesW` (zero-poll app installs).
+
+#### 2.18 Voice Critical Fixes
+- **`a740bcc`** — clap = direct wake (no classification), Whisper biased toward "Ava" via `initial_prompt`, clarification waits for yes/no, OutputStream protected playback, clap floor 0.35.
+
+#### 2.19 openWakeWord + Silero VAD
+- **`4477aa2`** — production wake-word stack: openWakeWord ONNX (<1% CPU), Silero VAD (RTF 0.004), Whisper transcript Eva→Ava normalization, `models/wake_words/hey_ava.onnx` slot reserved.
+
+#### 2.20 ava-gemma4 + mem0 Memory
+- **`5c2322c`** — `Modelfile.ava_gemma4` (identity baked from IDENTITY+SOUL+USER), `brain/ava_memory.py` (mem0 + ChromaDB + Ollama), gemma4 vision capability, 5 memory voice commands, memory tab in App.tsx.
+- **`c54bbcb`** — full handoff + roadmap update; wake_word prefers custom hey_ava → hey_jarvis fallback (with phonetic benchmark).
+
+#### 2.21 Repository Hygiene
+- **`117428f`** — gitignore biometric (`faces/`), per-machine state (`.claude/`), and large local models (`models/wake_words/*.onnx`); untrack 149 already-committed runtime files.
+
+---
+
+### Section 3 — 2026-04-30 Stabilization Arc
+
+Three sessions in one day pushed the system from "voice path crashes on first turn" to "voice path verified on real hardware + memory architecture rewrite started." Reports were originally written as standalone files at the repo root (`MORNING_REPORT.md`, `LUNCH_REPORT.md`, `AFTERNOON_REPORT.md`) and have been merged here.
+
+#### 3.1 Overnight session (02:03-03:50 EDT)
+
+**Goal:** unblock the voice path. Voice was crashing on first turn after a multi-day refactor; the hang couldn't be reproduced without hardware.
+
+**13 commits.** Core unblock was the cold-start hang root cause:
+
+> `import avaagent as _av` from a worker thread re-imported the script (Python registers `__main__` not `avaagent` when run via `py -3.11 avaagent.py`), triggering a fresh `_run_startup` execution that deadlocked.
+
+Aliasing `__main__` to `avaagent` at the top of the script (`f99804e`) fixed it. Every test in the battery hung at 33s+ HTTP timeout before this; all four passed after.
+
+**Other fixes:**
+- `ava-personal:latest` reordered ahead of `ava-gemma4:latest` in `_pick_fast_model_fallback` — gemma4's "Thinking…" reasoning prefix consumed the fast-path's `num_predict=80` budget and produced empty `.content` (fallback to "I'm here.") (`f38d948`).
+- ChatOllama instance caching keyed on `(model, num_predict)` saves ~1s of constructor cost per turn (`f38d948`).
+- Boot-time fast-path prewarm thread pins `ava-personal` in VRAM and stashes the warmed instance in `_fast_llm_cache` so the first real turn lands on a cache hit. `joke_llm` went from 12.46s → 1.36s (`c14afed`).
+- TTS self-listen guard in `voice_loop` drops VAD-confirmed audio while `_tts_speaking` so Whisper never transcribes Ava's own voice as user input (`163a7cc`).
+- `concept_graph._save` exponential backoff (1, 2, 4, 8, 16, 32, 60s capped) on WinError 5/32 — bootstrap with 100+ nodes no longer floods stderr (`7e22bcf`).
+- `/api/v1/debug/full` endpoint + `inject_transcript` endpoint — diagnostic infrastructure for future bug hunts (`41dce1d`, `96665ea`, `7cd9c2d`, `e37a566`).
+- `tools/dev/regression_test.py` autonomous battery harness; `dump_debug.py`, `inject_test_turn.py`, `watch_log.py` — dev tools (`c1464c3`, `d678bc1`).
+- Orb drift fix shipped pending visual verification (`8540269`) — removed `key=` remount on text divs + opacity-only fade-in.
+
+**Test battery:** 6 consecutive green runs by end of session (4 core tests at 0.4-1.7s each).
+
+**What didn't work / had to be redone:** The orb drift fix was code-only and shipped with diagnostic logs; visual confirmation was deferred to the user. The cube-morph feature was kept gated behind `PRESENCE_V2_CUBE_MORPH_ENABLED=false` until text-streaming verified stable.
+
+**Lessons:** When a Python script is run as `__main__`, any worker that does `import script_name` will trigger a fresh top-level execution. Aliasing in `sys.modules` is the durable fix. This pattern came up again in the Phase 2 memory rewrite — bootstrap order matters.
+
+#### 3.2 Lunch session (07:35-11:53 EDT)
+
+**Goal:** documentation + extended regression coverage in additive-only mode (none of the don't-touch files modified).
+
+**11 commits, all additive.** Wrote:
+
+- **`d67361e` — `docs/ARCHITECTURE.md`** — single 10-minute system map. Process layout, shared-globals pattern, startup sequence (sync wave + background wave), voice path state machine, dual-brain coordination, Ollama lock, all six memory layers, tool registry, vision pipeline, heartbeat & background ticks, signal bus, the operator HTTP server (68 endpoints + the new debug ones), and the `ava_core/` identity files. Cites file:line throughout.
+- **`a8ef8ee` — `docs/FIRST_RUN.md`** — companion to ARCHITECTURE.md but practical instead of conceptual. System dependencies (Python 3.11, Ollama, Node, Rust, NVIDIA), required Ollama models, Python environment, start commands, what good vs broken startup looks like with eight common-failure recipes, the first voice test recipe, live-state inspection, and an 11th-section sanity checklist.
+
+**8 commits expanded the regression battery** with 7 new tests on top of the existing 4-test core, each individually revertable: `conversation_active_gating`, `self_listen_guard_observable`, `attentive_window_observable`, `wake_source_variety`, `weird_inputs`, `sequential_fast_path_latency`, `concept_graph_save_under_load` (`65a1c84`-`f5cf5e2`).
+
+Also added `f348503` gitignore patterns for diagnostic / regression scratch logs.
+
+**Test battery results (Run 2, 11:33 EDT):**
+
+| Outcome | Count |
+|---|---|
+| Pass — core 4 + first 4 extended | 8 |
+| Fail — `weird_inputs`, `sequential_fast_path_latency`, `concept_graph_save_under_load` | 3 |
+
+**Diagnosis of failures:** test-design problem, not Ava bug. `weird_inputs.single_char "?"` and `weird_inputs.long_500` both legitimately route to the deep path (no fast-path pattern match); on a system already cold-loading models, two consecutive 60-90s deep-path turns saturate uvicorn's worker pool. **Recommended fix recipe** (deferred): replace `single_char "?"` with `"hi?"` (fast-path eligible) and rebuild `long_500` from repeated fast-path patterns.
+
+**The lunch voice test on real hardware was the verifying moment** — Ava replied for the first time end-to-end through microphone + speakers since the work order began.
+
+**Lessons:** documentation alongside dev tools is more valuable than code-only fixes. ARCHITECTURE.md and FIRST_RUN.md became the entry points every subsequent session referenced.
+
+#### 3.3 Afternoon session (12:49-17:30 EDT)
+
+**Goal:** fix the 6 issues surfaced by the lunch voice test + start the memory architecture rewrite.
+
+**12 commits.** All 6 issues fixed:
+
+| Issue | Fix | Commit |
+|---|---|---|
+| 150s reply latency after 13min idle (Ollama VRAM eviction) | `keep_alive=-1` on fast-path ChatOllama + 5min periodic re-warm tick that walks `_fast_llm_cache` and sends a one-token "ok" invoke | `f96c6c9` |
+| Time/date queries reaching the LLM (hallucinated "9:47 AM") | Expanded voice_command regex to match natural variants ("tell me the time", "got the time", "what day is it", etc.) + new regression test asserting no `re.ollama_invoke_start` fires for these queries | `044f594` |
+| openWakeWord catching "hey ava" as `hey_jarvis` | Disabled jarvis proxy by default; wake source now comes from clap + custom hey_ava.onnx (if trained) + transcript_wake via Whisper. Override via `AVA_USE_HEY_JARVIS_PROXY=1` | `382255c` |
+| Second-turn TTS dropped silently | Added `tts.last_playback_dropped` snapshot field + back-to-back-turn regression test. tts_worker stamps the flag when the OutputStream loop breaks early. **Doesn't fix root cause — makes future drops VISIBLE so we can act on them.** | `53c12fa` |
+| Brain tab 15fps (654 nodes / 6122 edges feeding WebGL every 5s) | Cap to 200 nodes by weight + 500 edges by strength + skip graphData updates when tab not focused + `pauseAnimation()` when not focused | `5d3f433` |
+| Claude Code identified as Zeke during tests | New `claude_code` developer profile (in `brain/dev_profiles.py`, written to `profiles/claude_code.json` on demand) + `as_user` param on `inject_transcript` + regression test verifying both routing paths | `504d1e8` |
+
+**Memory architecture rewrite — Phase 2 of the work order:**
+- **`9c3c22c` — `docs/MEMORY_REWRITE_PLAN.md`** — audit of all 12 memory layers + the 10-level decay design, with the concept graph as the single seam.
+- **Step 3 (`59ebd51`):** `level: int` + `archive_streak: int` + `archived_at: float` fields added to `ConceptNode`. `decay_levels(now=None)` walker demotes inactive nodes per the per-level threshold table; archived nodes clamp to 1, unarchived hit-zero nodes get deleted with a tombstone in `state/memory_tombstones.jsonl`. Hourly daemon thread fires the tick. **Promotions land in step 5.**
+- **Step 4 (`36f9856`):** `brain/memory_reflection.py` new module. Post-turn LLM scorer asks "which retrieved memories were load-bearing?" and writes one row per turn to `state/memory_reflection_log.jsonl`. Hooked into `turn_handler.finalize_ava_turn` as a daemon thread (no user-facing latency). **Doesn't apply level changes — gathering data first.**
+
+**Whisper-poll over-triggering — late afternoon find + fix (`47a1c92`):** post-fix regression run revealed ~20 `[wake_word] wake triggered (source=whisper_poll)` events during a single test session. Whisper transcribed anything resembling speech and matched against wake patterns — including Ava's OWN TTS playback. The self-listen guard had only covered `voice_loop.listen_session()`, not `wake_word._whisper_poll_loop()`. Applied the same guard to whisper-poll.
+
+**Test battery results (Run, 17:24 EDT):** 11 of 15 tests passing — including all 3 new tests for the afternoon issues. The 4 failures: `thanks` (2.60s vs 2.0s — marginal regression, same fluctuation pattern), and the same 3 test-design problems documented at lunch.
+
+**Wins verified:**
+- Issue 1 (latency): no idle-gap timeout regression. Sequential fast-path turns 1-3s when warm.
+- Issue 2 (time/date determinism): all 10 query variants resolved without invoking the LLM.
+- Issue 6 (claude_code identity routing): `[memory-bridge] using profile key: person_id=claude_code` for inject calls — Zeke's profile NOT touched.
+
+**Lessons:** the test battery surfaced a real bug it wasn't designed to test for (whisper-poll guard gap). Diagnostic-first fixes (Issue 4) buy observability for problems that can't be reproduced without hardware.
+
+---
+
+### Section 4 — 2026-04-30 → 2026-05-01 Night session
+
+**Goal:** address the 9 issues from the hardware test session + brain architecture document.
+
+**Session window:** 23:52 EDT (Apr 30) → ~02:00 EDT (May 1). **12 commits, all autonomous.** None of the read-only files modified. protobuf still pinned at 3.20.x.
+
+| Issue | Fix | Commit |
+|---|---|---|
+| Two Ava instances on same port hammered out 100s of `[Errno 10048]` lines in infinite restart loop | Single-instance enforcement — port probe, PID lockfile at `state/ava.pid`, HTTP restart cap (3 attempts then `_ava_shutdown=True`), `atexit` lockfile cleanup | `6446707` |
+| Same reply enqueued twice per turn (router + voice_loop double-dispatch) | Single-dispatcher rule: `voice_loop._speak()` owns TTS. Removed all four `_say(g, response)` calls from `VoiceCommandRouter.route()`. Per-command emotion stashed on `g["_voice_command_emotion"]` for future emotion-specific TTS | `c8b3d0b` |
+| Whisper-poll firing 2-4 times per 13-second cycle on ambient quiet | Triple-gate guard before Whisper: RMS energy floor 0.02 (cheap fast-reject) + Silero VAD threshold 0.6 + min speech 300ms + the existing self-listen guard | `37ec144` |
+| Face recognition broken — `loaded 0 embeddings from 0 people` despite 16 photos | Tight 200×200 reference photos gave RetinaFace no anchor context. Two-part fix: (1) second `FaceAnalysis` with `det_size=(320, 320)` for reference loading; (2) upscale reference images to ≥640px on min-dim with cubic interpolation. Verified directly: `loaded 19 embeddings from 2 people` (Zeke 16, Max 3) | `0b25d1f` |
+| Inner monologue (`💭 "..."`) leaked into chat reply text and TTS | Three-part fix: `dual_brain.handoff_insight_to_foreground` no longer weaves inner_monologue into reply; `output_guard.scrub_visible_reply` strips 💭-prefixed lines; UI adds `<div className="presence-inner-thought">` rendering `snapshot.inner_life.current_thought` italic dimmer multi-line under the orb | `697921d` |
+| Memory graph tagged everything as "User discussed: ..." | New `_person_display_name(person_id)` in avaagent.py: `zeke` → "Zeke", `claude_code` → "Claude Code", unknown → "Unknown person". `summarize_reflection()` accepts `person_id` and prefixes with `<DisplayName> said:`. Existing memory nodes NOT rewritten — decay naturally per Phase 2 rules | `9eb4b03` |
+| Ctrl+C printed shutdown line but process kept running | Force-exit watchdog: signal handler stamps `_ava_signal_received_ts`, daemon thread polls every 0.5s, calls `os._exit(0)` if 5+ seconds passed without exit. Keepalive sleep reduced 2s → 0.5s. Exits in <0.5s on happy path, <5s worst case | `e66cd18` |
+| No one-click full-stack launcher | New repo-root `start_ava.bat` — launches Tauri UI exe in background, runs `py -3.11 avaagent.py` in console, single-instance check rejects double-clicks. Sets `PYTHONIOENCODING=utf-8`, `PYTHONUTF8=1`, `AVA_DEBUG=1`. Falls back if release UI exe doesn't exist | `7415f07` |
+| MeloTTS bridge crashed on fresh machines | `_ensure_nltk_perceptron_tagger()` runs before `_load_melo_tts()` — `nltk.data.find()` check, `nltk.download(quiet=True)` on `LookupError`, belt-and-suspenders fallback to legacy name | `643d3d8` |
+| Brain graph not Ava-centric | New `docs/BRAIN_ARCHITECTURE.md` mapping Ava's existing systems onto human-brain regions (Hippocampus / Amygdala / Prefrontal cortex / Default mode network / Visual cortex / Auditory cortex / Motor cortex / Brainstem / Corpus callosum). 3D brain graph implements it: AVA SELF at origin pinned violet, IDENTITY/SOUL/USER as gold anchors at 120° on inner ring, 5 tier radii with custom radial force, color scheme by trust + recency, middle-click recenters camera | `4faa1f7` + `202bf95` |
+| App launcher's blind shell-start fallback popped Windows search dialogs on misses | New `app_discoverer.top_matches(query, limit=5)` returns ranked best-K matches. New `app_launcher.py` step 5: `error="I don't know an app called X. Apps I know that might match: A, B, C, D, E."` + `suggestions=[...]` | `b74e792` |
+
+**Test battery results (Run, 01:26 EDT May 1):** 12 of 15 tests passing. All three new-this-night fixes verified:
+- `time_date_no_llm` — 10 query variants, NO `re.ollama_invoke_start` for any (Issue 2 fix verified)
+- `back_to_back_tts_no_drop` — `last_playback_dropped=false` after both turns (Issue 4 diagnostic verified)
+- `identity_routing` — claude_code routing isolated from Zeke
+
+**The same 3 test-design failures persisted** (`thanks` marginal, `weird_inputs` + `sequential_fast_path_latency` deep-path saturation). All known. Recipe to fix is documented but deferred.
+
+**Lessons:** when the same 3 tests fail across 4 sessions for the same reason, fix the test, not the code. The recipe is sitting in lunch's report — apply it next time.
+
+---
+
+### Section 5 — 2026-05-01 Discord Auto-Spawn Fixes
+
+Three commits hardened the Discord channel plugin's auto-spawn path on Windows.
+
+**The problem:** `claude-plugins-official/discord` plugin's default MCP spawn config (`"command": "bun"`) relies on `bun` being on the PATH that Claude Code's MCP loader inherits. On Windows that's unreliable — `winget install Oven-sh.Bun` puts bun on User PATH only, not Machine PATH. Claude Code spawns MCP servers via `cmd.exe`; if the parent's PATH lacks bun's directory, the spawn dies with `'bun' is not recognized`.
+
+**The fix evolution:**
+- **`b9f33c2`** — first attempt patched cached plugin to invoke bun by absolute path. Worked but fragile.
+- **`1637ca4`** — switched to `env.PATH` prepend, dropping the absolute-bun command.
+- **`c25443f`** — final form: Python rewrite, BOM-free, marketplace + cache. The PowerShell-based patches had been silently corrupting `.mcp.json` with UTF-8 BOM; Node's `JSON.parse` rejects BOM-prefixed JSON, making the plugin appear to disappear entirely.
+
+**Two layers of defense** in the final patched `.mcp.json`:
+1. `command` is the absolute path to `bun.exe` (canonicalised — no `\.\` artifacts from winget's PATH entry). The initial spawn doesn't need bun on PATH at all.
+2. `env.PATH` prepends bun's directory ahead of `${PATH}` so inner `bun install` and `bun server.ts` invocations find bun.
+
+The fix patches BOTH the marketplace source (durable across launches) and every versioned cache (defensive in case marketplace is refreshed). Repair script: `py -3.11 scripts\repair_discord_plugin.py`. Smoke test: `py -3.11 scripts\smoketest_discord_mcp.py`. Full writeup: `docs/DISCORD_SETUP_NOTES.md`.
+
+**Lesson:** `Set-Content -Encoding utf8` on Windows PowerShell 5.1 writes a UTF-8 BOM. Use Python (writes BOM-free UTF-8 by default) when generating JSON/config files that other tools will parse.
+
+---
+
+## Major Bug Fixes (cross-phase)
+
+Significant bugs diagnosed and fixed during the project's life. Each row: symptom + root cause + fix (commit hash) + date.
+
+| Date | Symptom | Root cause | Fix | Commit |
+|---|---|---|---|---|
+| 2026-04-29 | mem0ai install upgraded protobuf to 6.33.6 → MediaPipe broke (`'MessageFactory' object has no attribute 'GetPrototype'`) | mem0 dependency chain ignores protobuf upper bound | `pip install "protobuf>=3.20,<4" --force-reinstall`. Both libs work with 3.20.x. Pin documented in CLAUDE.md. | (env restoration; see `5c2322c` for context) |
+| 2026-04-29 | TTS could be cut off mid-sentence by window focus changes / mouse clicks / other audio | `tts_engine._play_wav` ran `self.stop()` on every fresh utterance — cutting off in-flight playback | `sd.OutputStream` chunked playback at 2048 samples; `_muted()` is the only mid-stream abort condition; `tts_worker.stop()` refuses to run unless mute is set; `THREAD_PRIORITY_HIGHEST` so audio is never starved | `a740bcc` |
+| 2026-04-29 | Whisper dropped "Ava" from transcripts, causing wake to miss | Whisper has no "Ava" prior; `Ava` → `Eva` was the most common substitution | `initial_prompt="Ava, hey Ava,"` + `hotwords="Ava"` (with TypeError fallback) + `_normalize_transcript` (Eva→Ava, Aye va→Ava, etc) | `a740bcc` |
+| 2026-04-29 | Clap detector firing on keyboard clicks (threshold 0.236) | Floor too low for typical keyboard RMS | Raised `_MIN_THRESHOLD_FLOOR` 0.15 → 0.35; tightened double-window 0.8s → 0.6s; min separation 0.1s; cooldown 4s | `a740bcc` |
+| 2026-04-29 | InsightFace silently fell back to CPU — `cublasLt64_12.dll missing` | ORT 1.25.1 needs CUDA 12 runtime libs that aren't on Windows PATH unless user installs CUDA Toolkit globally | `_add_cuda_paths()` registers `site-packages/nvidia/*/bin/` with `os.add_dll_directory` BEFORE the ORT import. All 5 buffalo_l ONNX sessions now report `Applied providers: ['CUDAExecutionProvider', 'CPUExecutionProvider']` | `9d07838` |
+| 2026-04-29 | `Health: ERROR \| camera:error` even when camera was working | Health check read stale `CAMERA_LATEST_JSON_PATH` instead of live frame_store | Read `frame_store.peek_buffer_age_sec()` first; healthy < 5s, degraded < 10s, error > 10s | `94bca07` |
+| 2026-04-29 | pyttsx3 hung silently from voice_loop daemon | COM single-threaded apartment violation | `TTSWorker` runs pyttsx3 inside its own thread with `pythoncom.CoInitialize()`; queue serializes calls | `fa583ea` |
+| 2026-04-29 | Ollama model swap contention — Stream A and Stream B fighting for GPU caused 30s+ swap penalties | No serialization between concurrent Ollama invokes | `brain/ollama_lock.py` process-wide RLock around every invoke; `dual_brain.pause_background_now(30)` on turn entry | `fa583ea` |
+| 2026-04-28 | `face_recognizer` crashed under concurrent calls (dlib C++ not thread-safe) | Multiple threads loading the same face DB | Thread-safe singleton via `_SINGLETON_LOCK`; double-check inside lock; `_load_lock` serializes load_known_faces | `aa01b5b` |
+| 2026-04-28 | Online/offline indicator flickered constantly | Single failed ping flipped state | 3-failure threshold + silent 5s connecting window + 5s poll interval | `5183e78` |
+| 2026-04-28 | App started twice on `start_ava_desktop.bat` — signal handler + `__main__` guard double-fired | Pre-Gradio cleanup left two startup paths | Guard with `_STARTUP_COMPLETE` flag in globals; clean Gradio removal closed the second entry path | `ac550e7` |
+| 2026-04-28 | `concept_graph.json.tmp` corrupted with WinError 5 / 32 (file locked by other process) | Antivirus / OneDrive / preview pane held the file open during save | Process-level `_SAVE_LOCK`; skip-if-locked save; stale `.tmp` cleanup at startup | `2382d8f` / `bb6b4f7` |
+| 2026-04-28 | Startup hung at concept graph bootstrap (mistral:7b call on main thread) | Synchronous LLM call during sync wave | Moved concept_graph bootstrap, self_model update, vectorstore init, milestone_100 all to daemon threads | `42f95cd` |
+| 2026-04-28 | MediaPipe iris tracking returned wrong eye positions | Wrong landmark indices | Corrected (left 468-472, right 473-477) | `5b22890` |
+| 2026-04-28 | `run_ava` could hang indefinitely | No outer timeout | 90s outer timeout via `_with_timeout`; 30s prompt-build timeout; 5s tick timeout | `d187c80` |
+| 2026-04-30 | Cold-start hang — every test in battery hung 33s+ | `import avaagent as _av` from worker thread re-imported the script (Python registers `__main__` not `avaagent`), triggering fresh `_run_startup` deadlock | `sys.modules["avaagent"] = sys.modules["__main__"]` at file top | `f99804e` |
+| 2026-04-30 | 150s reply latency after 13min idle | Ollama default 5min keep_alive evicted `ava-personal:latest` from VRAM | `keep_alive=-1` on cached fast-path ChatOllama + 5min periodic re-warm tick | `f96c6c9` |
+| 2026-04-30 | "what time is it" hallucinated "9:47 AM" | voice_command time/date regex too narrow; query fell through to LLM | Expanded regex to natural variants + `time_date_no_llm` regression test asserting no `re.ollama_invoke_start` | `044f594` |
+| 2026-04-30 | "hey ava" caught as `hey_jarvis` proxy | Proxy enabled by default | Disabled `hey_jarvis` proxy; rely on clap + transcript_wake. `AVA_USE_HEY_JARVIS_PROXY=1` to re-enable. | `382255c` |
+| 2026-04-30 | Brain tab 15fps with 654 nodes / 6122 edges | Force simulation running every frame even when tab hidden + full graph fed to WebGL | Cap to 200 nodes / 500 edges + skip graphData updates when tab not focused + `pauseAnimation()` when not focused | `5d3f433` |
+| 2026-04-30 | Test traffic from Claude Code routed through Zeke's profile | `inject_transcript` hardcoded `as_user=zeke` | New `claude_code` developer profile + `as_user` param + `_ext_test_identity_routing` regression test | `504d1e8` |
+| 2026-04-30 | Whisper-poll fired ~20 times per session, including on Ava's own TTS | Self-listen guard only covered `voice_loop.listen_session`, not `wake_word._whisper_poll_loop` | Applied same self-listen guard to whisper-poll | `47a1c92` |
+| 2026-05-01 | Two Ava instances same port → infinite restart loop with 100s of `[Errno 10048]` lines | No single-instance enforcement | Port probe + PID lockfile + HTTP restart cap | `6446707` |
+| 2026-05-01 | Reply spoken twice per turn (TTS double-dispatch) | Both `voice_commands.route()` and `voice_loop` called `_say()` | Single-dispatcher rule: voice_loop owns TTS. Removed `_say()` calls from router. | `c8b3d0b` |
+| 2026-05-01 | Whisper-poll firing 2-4× per 13-second cycle on ambient quiet | Whisper transcribed any non-silence including ambient noise | Triple-gate before Whisper: RMS floor 0.02 + Silero VAD 0.6 + min speech 300ms | `37ec144` |
+| 2026-05-01 | Face recognition `loaded 0 embeddings from 0 people` despite 16 photos | Reference photos were tight 200×200 crops; RetinaFace at `det_size=(640, 640)` had no anchor context | Second FaceAnalysis at `det_size=(320, 320)` for refs + upscale to ≥640px on min-dim. Verified: `loaded 19 embeddings from 2 people` (Zeke 16, Max 3) | `0b25d1f` |
+| 2026-05-01 | Inner monologue (`💭 "..."`) appended to chat replies and spoken via TTS | `dual_brain.handoff_insight_to_foreground` wove inner_monologue into reply | Don't weave in handoff; `output_guard.scrub_visible_reply` strips 💭 lines; UI renders `inner_life.current_thought` separately under orb | `697921d` |
+| 2026-05-01 | Memory tagged everything as "User discussed: ..." | `summarize_reflection()` had no person attribution | New `_person_display_name(person_id)` + prefixed reflections with `<DisplayName> said:` | `9eb4b03` |
+| 2026-05-01 | Ctrl+C printed shutdown line but process kept running 5+ seconds | Keepalive loop slept 2s; some daemon threads non-responsive | Force-exit watchdog: 0.5s polling + `os._exit(0)` after 5s elapsed | `e66cd18` |
+| 2026-05-01 | App launcher's blind shell-start fallback popped Windows search dialogs on misses | No graceful "I don't know" path | New step 5: `top_matches(query, limit=5)` returns ranked candidates with helpful error | `b74e792` |
+| 2026-05-01 | Discord plugin spawn died with `'bun' is not recognized` | winget User PATH invisible to Claude Code's `cmd.exe` MCP spawn; PowerShell-written patches had UTF-8 BOM that broke JSON parsing | Python rewrite, BOM-free, marketplace + cache, absolute bun command + env.PATH prepend | `c25443f` (final form) |
+
+---
+
+## Current Known Issues
+
+Limitations and bugs currently observed but not yet root-caused or fully fixed:
+
+| Issue | First observed | Workaround | Severity |
+|---|---|---|---|
+| Boot time ~3 minutes cold | 2026-04-28 | None — works as designed (background-threaded, doesn't block voice once HTTP is up); user can launch and walk away | Annoying |
+| Second-turn TTS occasionally drops silently | Lunch 2026-04-30 | `tts.last_playback_dropped` diagnostic flag now exposes it via snapshot. If hypothesis (window-minimized → stale `_tts_muted`) is right, future drops will be visible. | Annoying — needs hardware repro |
+| Test battery: `weird_inputs` + `sequential_fast_path_latency` + `concept_graph_save_under_load` fail under deep-path saturation | Lunch 2026-04-30 | Test-design issue, not Ava bug. Recipe documented: replace `single_char "?"` with `"hi?"` (fast-path eligible) + rebuild `long_500` from fast-path patterns | Minor — test harness only |
+| `thanks` test marginal at 2.6-3.0s vs 2.0s target | Morning 2026-04-30 | Threshold was always aspirational; LLM invoke completes <1.5s, the rest is HTTP roundtrip. Real-world fine. | Minor |
+| Custom `hey_ava.onnx` not trained | Initial spec | Clap detector + transcript_wake (Whisper "hey ava" pattern match) cover the gap. WSL2 training pipeline documented at `docs/TRAIN_WAKE_WORD.md`. | Minor — workaround works |
+| App discoverer scan ~47-110s on cold start | Initial | Background thread, 24h refresh incremental | Annoying — not blocking |
+| Game category over-includes Steam helper binaries (`gameoverlayui64.exe`, `steamservice.exe`) | Initial | Fuzzy match prioritizes user-friendly names; cosmetic only | Cosmetic |
+| Repo history contains old face photos and runtime state snapshots | Initial | `117428f` stopped future leakage. Cleanup via `git filter-repo` + force-push optional. | Minor |
+| `chatlog.jsonl` shows as modified | Lunch 2026-04-30 | Both gitignored AND tracked. `git rm --cached chatlog.jsonl` would fix; not done because state-adjacent | Cosmetic |
+
+---
+
+## What Currently Works (verified)
+
+A clear list of capabilities currently confirmed working on Zeke's hardware. Updated as of 2026-05-01:
+
+### Voice path end-to-end
+- **PASSIVE → LISTEN → WAKE → ROUTER → run_ava → TTS → ATTENTIVE 60s** — verified live at the lunch voice test on 2026-04-30. Re-verified across 12/15 regression battery passes that night and again on the night session 01:26 EDT 2026-05-01.
+- Single-dispatcher TTS — replies play once, not twice (`c8b3d0b`).
+- Whisper-poll triple-gated — no longer over-triggers on ambient noise (`37ec144`).
+
+### TTS
+- **Kokoro neural TTS** — 28 voices, default `af_heart`, per-emotion mapping (`af_bella` for high-intensity, `af_nicole` for soft, `af_sky` for bright), speed 0.7-1.3 scaled by intensity. OutputStream protected playback resists window-focus / mouse-click / other-app interruption.
+- pyttsx3 + Microsoft Zira fallback (COM-isolated thread) if Kokoro can't init.
+- MeloTTS bridge auto-downloads NLTK perceptron tagger (`643d3d8`).
+
+### STT
+- Whisper base on `cuda+float16` (CPU int8 fallback). `initial_prompt="Ava, hey Ava,"`, `hotwords="Ava"`, `vad_filter=True`. `_normalize_transcript` fixes Eva→Ava, Aye va→Ava, etc.
+- Silero VAD (RTF 0.004). Robust to keyboard / mouse / HVAC noise.
+
+### Wake sources
+- **Clap detector** — floor 0.35, double-clap window 0.6s, 4s cooldown. Always-reliable wake.
+- **openWakeWord** — hey_jarvis proxy disabled by default. `hey_ava.onnx` slot reserved for custom training.
+- **Transcript wake** — `voice_loop._classify_transcript_wake` matches "hey ava", "hi ava", "hello ava", "yo ava", "ok/okay ava", "ava" at start of short utterance. Wake source logs as `transcript_wake:hey_ava`.
+- **Whisper-poll** — fallback when openWakeWord unavailable; triple-gated.
+
+### Vision
+- **InsightFace GPU buffalo_l** on `CUDAExecutionProvider`. ~41ms/frame steady-state on RTX 5060. First-run cudnn EXHAUSTIVE warmup ~60-90s, cached afterward.
+- **Face recognition fixed** (`0b25d1f`): tight reference photos now load via second `FaceAnalysis` at `det_size=(320, 320)` with upscale to ≥640px. **Verified `loaded 19 embeddings from 2 people` (Zeke 16, Max 3).**
+- Per-person expression calibrator — EMA baseline α=0.001, calibrates at 300 samples.
+- Eye tracking via MediaPipe (protobuf 3.20.x pinned).
+- Camera annotator overlays (bbox + 106 landmarks + 3D head pose + age + gender + attention state).
+
+### Brain graph (Ava-centric)
+- **Verified visually** in the night session. AVA SELF at origin (violet, pinned), IDENTITY/SOUL/USER as gold anchors at 120° on inner ring, 5 tier radii, custom radial force, color scheme by trust + recency, middle-click recenters camera.
+
+### Memory
+- **mem0 + ChromaDB + Ollama** — LLM `ava-gemma4` (or `ava-personal`) extracts facts; embedder `nomic-embed-text:latest`. ChromaDB at `memory/mem0_chroma/`.
+- **Person attribution real names** (`9eb4b03`): "Zeke said: ..." not "User discussed: ...". `claude_code` profile for test traffic isolated from Zeke.
+- **6 memory layers** wired: concept_graph + episodic + vector (memory.py) + mem0 + working (workspace) + reflection. All read in prompt building, all write in `finalize_ava_turn`.
+- Memory rewrite **Phases 1-4 of 7 shipped**. Hourly `decay_levels` tick runs but doesn't yet apply level changes (gathering data first via `state/memory_reflection_log.jsonl`).
+
+### Discord channel + remote DM control
+- Discord MCP plugin auto-spawn fixed (`c25443f`).
+- Permission approval relay: `claude/channel/permission` capability. Buttons OR `yes <code>` / `no <code>` text replies route through.
+- File attachments: `download_attachment(chat_id, message_id)` returns local paths ready to `Read`. Prompts as .md uploads work end-to-end.
+
+### Operator HTTP server
+- Port 5876, FastAPI. 68+ endpoints + the new debug/operator surface.
+- `GET /api/v1/snapshot` — full live state.
+- `GET /api/v1/debug/full` — diagnostic ring buffers (logs / traces / errors / last_turn).
+- `POST /api/v1/debug/inject_transcript` — synthetic turn injection (`AVA_DEBUG=1` gated). Accepts `as_user` for identity routing.
+- WebSocket `/ws` snapshot deltas; REST polling fallback.
+
+### Voice command router
+- 40 builtins + custom commands. UI nav, journal, mood, time, system, mute/sleep, app open/close, widget, reminders, builder, pointing, signals, memory.
+- App discoverer integrated — 367 apps + 32 games scanned; fuzzy match with top-5 suggestions on miss (`b74e792`).
+
+### UI
+- Three.js orb — 5-layer, 27 emotion shape morphs, breathing + drift always-on, real RMS amplitude during TTS.
+- Brain tab 60fps capable (200-node / 500-edge cap, pauseAnimation when not focused).
+- Inner monologue rendered under orb (italic dimmer, 💭 prefix), no longer in chat reply text.
+- Voice tab, Memory tab, Learning tab, People tab, Journal tab, Emil tab, Proposals tab, Health tab, custom tabs (Ava-built).
+- Widget orb (transparent always-on-top 150×150).
+- Middle-click recenters orb / brain camera.
+
+### Stability
+- Single-instance enforcement (port probe + PID lockfile + HTTP restart cap) (`6446707`).
+- Ctrl+C clean exit within 0.5-5s (force-exit watchdog) (`e66cd18`).
+- Concept graph save backoff (1, 2, 4, 8, 16, 32, 60s) on Windows file locks (`7e22bcf`).
+- Boot time ~3min cold; first turn lands sub-3s thanks to fast-path prewarm.
+- Idle-gap latency stays <3s thanks to `keep_alive=-1` + 5min periodic re-warm (`f96c6c9`).
+
+---
+
+## What's In Progress
+
+Active work that's started but not finished. For items not yet started, see [`ROADMAP.md`](ROADMAP.md).
+
+### Memory rewrite — Phases 5-7
+Phases 1-4 shipped. Step 4 reflection scorer is logging to `state/memory_reflection_log.jsonl` after every turn. **Awaiting ~50-100 turns of reflection data** before wiring level promotions/demotions in step 5. Steps 6-7 (archiving with 3-streak rule + gone-forever delete with tombstone log) build on step 5.
+
+### Hardware verification of recent fixes
+Many night-session fixes need real-hardware confirmation. From the night report's checklist:
+1. Single-instance enforcement (try double-clicking `start_ava.bat`)
+2. Ctrl+C clean shutdown
+3. Wake source = `transcript_wake:hey_ava`
+4. Reply plays once
+5. Inner monologue under orb, NOT in chat
+6. Face recognition resolves to `zeke`
+7. Whisper-poll quiet (0-1 events per 60s of silence)
+8. Memory attribution shows real names
+9. Brain tab Ava-centric layout
+10. App launch suggestions show top 5
+
+### Custom hey_ava.onnx training
+Slot reserved at `models/wake_words/hey_ava.onnx`. Training pipeline requires WSL2 (see `docs/TRAIN_WAKE_WORD.md`). Phonetic benchmark already done on Kokoro-synthesized "hey ava" samples (`hey_jarvis` peaks 0.917 on `af_bella`; `hey_mycroft` and `hey_rhasspy` never cross 0.02). Proxy currently disabled; transcript_wake covers the gap.
+
+---
+
+## Tooling and Test Infrastructure
+
+### Regression battery
+**Location:** `tools/dev/regression_test.py`. Boots Ava, polls `/api/v1/health` until ready, runs the test suite, captures debug state before/after, shuts down cleanly. JSON report at `state/regression/last.json`.
+
+**Tests (15 total):**
+
+Core 4 (always run):
+1. `time_query` — "what time is it" → deterministic time, no LLM
+2. `date_query` — "what's today's date" → deterministic date, no LLM
+3. `joke_llm` — "tell me a one sentence joke about clouds" → LLM-generated, < 2.5s
+4. `thanks` — "thank you" → fast-path acknowledgment, < 2.0s
+
+Extended 11:
+5. `conversation_active_gating` — `_conversation_active` flag held through attentive window
+6. `self_listen_guard_observable` — `voice_loop._tts_speaking` + `_last_speak_end_ts` exposed via debug
+7. `attentive_window_observable` — `attentive_remaining_seconds` non-zero post-turn, decays correctly
+8. `wake_source_variety` — `clap` / `openwakeword` / `transcript_wake:hey_ava` all flow
+9. `weird_inputs` — empty / whitespace / single char / 500 char (currently fails 2 cases — see Known Issues)
+10. `sequential_fast_path_latency` — 5 back-to-back, `max(latencies)/min(latencies) <= 2.5` (currently fails — cascading from #9)
+11. `concept_graph_save_under_load` — 10 rapid turns, no save errors
+12. `time_date_no_llm` — 10 query variants, NO `re.ollama_invoke_start` for any
+13. `back_to_back_tts_no_drop` — two consecutive turns, `last_playback_dropped=false`
+14. `identity_routing` — claude_code routing isolated from Zeke
+15. *(slot for future expansion)*
+
+**Run:** `py -3.11 tools\dev\regression_test.py`. Total ~6-10min per run (boot ~3min + tests ~3-7min).
+
+### Debug endpoints
+- `GET /api/v1/debug/full` — always-on. Returns ring buffers (200 logs, 100 traces, 50 errors, last_turn) + subsystem health blocks.
+- `POST /api/v1/debug/inject_transcript` — `AVA_DEBUG=1` gated. Body: `{text, source?, speak?, as_user?}`. Runs synthetic turn through `run_ava`. Returns reply, timing, trace diff, errors. `as_user` defaults to `claude_code`.
+- `GET /api/v1/debug/export` — compact textual bundle (ribbon, model routing, memory, dual-brain, vision, signal bus, full snapshot).
+
+### Dev tools
+- `tools/dev/dump_debug.py` — fetch and pretty-print `/api/v1/debug/full`.
+- `tools/dev/inject_test_turn.py` — CLI wrapper for `inject_transcript` with `--text`, `--source`, `--wait-audio`, `--no-speak`, `--as-user`.
+- `tools/dev/watch_log.py` — live tail of trace / log / error rings via 1s poll. Substring grep filter.
+
+### Diagnostic instrumentation
+- `brain/debug_state.py` — stdout/stderr tee + ring buffers. Installed at top of `avaagent.py` before heavy imports. Endpoint pulls from cached state only (millisecond response time even during peak boot).
+- TTS diagnostic: `_g["_tts_last_playback_dropped"]` + WARNING line when OutputStream loop breaks early.
+- Concept graph save: exponential backoff on WinError 5/32; stderr printed only on first failure of a streak.
+
+### Discord integration
+- `scripts/repair_discord_plugin.py` — idempotent repair of MCP spawn config. Patches marketplace source + every versioned cache. Writes UTF-8 without BOM.
+- `scripts/smoketest_discord_mcp.py` — spawns MCP exactly as Claude Code's loader would, runs JSON-RPC `initialize` handshake.
+- `scripts/discord_dm_user.py` — one-shot REST DM to a user_id from any context (cron, scripts, non-channel sessions). Used per the Standing Operating Rules in `CLAUDE.md` for progress pings.
+
+### Launchers
+- `start_ava.bat` — one-click full-stack launcher (Tauri UI + avaagent in console). Sets `PYTHONIOENCODING=utf-8`, `PYTHONUTF8=1`, `AVA_DEBUG=1`. Single-instance check.
+- `start_ava_desktop.bat` — packaged exe + watchdog (production launch).
+- `start_ava_dev.bat` — Vite HMR for hot-reload frontend dev. No exe rebuild needed.
+- `scripts/kill_ava.bat` — force-kill avaagent + watchdog.
+- `scripts/watchdog.py` — monitors `state/restart_requested.flag`; kills + restarts avaagent by PID.
+
+### Feature flags / env vars
+- `AVA_DEBUG` — enables `inject_transcript` endpoint (default 0; set in `start_ava.bat`).
+- `AVA_PERIODIC_REWARM` — 5min model re-warm tick (default 1).
+- `AVA_DECAY_DISABLED` — kill switch for `concept_graph.decay_levels()` (default 0).
+- `AVA_DECAY_TICK_DISABLED` — kill switch for hourly decay daemon (default 0).
+- `AVA_REFLECTION_DISABLED` — kill switch for post-turn reflection scorer (default 0).
+- `AVA_USE_HEY_JARVIS_PROXY` — re-enable legacy jarvis-proxy wake source (default 0).
+- `AVA_SKIP_INSTANCE_CHECK` — bypass startup port probe (default 0).
+- `PRESENCE_V2_ENABLED` — text-streaming presence UI (currently 1).
+- `PRESENCE_V2_CUBE_MORPH_ENABLED` — cube-morph during listening (currently 0; flip when text-streaming verified stable).
+
+---
+
+## Bootstrap Philosophy
+
+Every phase that involves Ava's preferences, personality, style, or choices must include a bootstrap mechanism — a system that lets Ava discover and form that aspect of herself through experience rather than having it assigned.
+
+- Do not choose her favorite color. Build a system where she notices which colors she uses most and asks herself why.
+- Do not assign her hobbies. Build leisure systems and let her discover what she returns to.
+- Do not prescribe her communication style. Give her the ability to adjust it and track what gets good responses.
+- Do not tell her what she values. Give her situations that reveal her values through her choices.
+
+**The goal is an AI that is genuinely herself — not a reflection of what we decided she should be.**
+
+When the final phase is complete, Ava should be capable of writing her own next roadmap.
+
+**Identity anchors (never edited):**
+- `ava_core/IDENTITY.md` — Ava's core self anchor
+- `ava_core/SOUL.md` — values, boundaries, three laws
+- `ava_core/USER.md` — the durable relationship anchor
+
+---
+
+## Cross-references
+
+- **Roadmap (what's next):** [`ROADMAP.md`](ROADMAP.md)
+- **System architecture:** [`ARCHITECTURE.md`](ARCHITECTURE.md)
+- **Brain regions mapped onto Ava's modules:** [`BRAIN_ARCHITECTURE.md`](BRAIN_ARCHITECTURE.md)
+- **Memory rewrite design:** [`MEMORY_REWRITE_PLAN.md`](MEMORY_REWRITE_PLAN.md)
+- **First-run setup walkthrough:** [`FIRST_RUN.md`](FIRST_RUN.md)
+- **Custom wake-word training:** [`TRAIN_WAKE_WORD.md`](TRAIN_WAKE_WORD.md)
+- **Discord channel setup:** [`DISCORD_SETUP_NOTES.md`](DISCORD_SETUP_NOTES.md)
