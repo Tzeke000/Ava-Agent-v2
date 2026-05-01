@@ -229,12 +229,15 @@ Tails the rings in real time without scrolling through the boot log.
 | --- | --- |
 | `docs/ARCHITECTURE.md` | The 10-minute system map. Read this before changing anything substantial. |
 | `docs/FIRST_RUN.md` | This file. |
-| `docs/AVA_HANDOFF.md` | Full historical handoff covering decisions and tradeoffs. |
-| `docs/AVA_ROADMAP.md` | Phase board (1-100 complete) and forward-looking work. |
-| `docs/AVA_HISTORY.md` | Commit-by-commit narrative. |
+| `docs/HISTORY.md` | Project history — phases 1-100, post-100 hardening, stabilization arcs, cross-phase bug fixes. (Replaces the older `AVA_HANDOFF.md` / `AVA_ROADMAP.md` Section 1 / `AVA_HISTORY.md`, all consolidated 2026-05-01.) |
+| `docs/ROADMAP.md` | Forward-looking work — Ready to ship / Designed-awaiting / In design / Awaiting user / Long-term. |
+| `docs/BRAIN_ARCHITECTURE.md` | Neuro-symbolic mapping of Ava's modules onto brain regions. |
+| `docs/MEMORY_REWRITE_PLAN.md` | The 10-level memory rewrite design (Phases 1-4 shipped, 5-7 designed). |
+| `docs/CONVERSATIONAL_DESIGN.md` | Voice naturalness architecture — streaming chunks, tier system, interrupt model. |
 | `docs/TRAIN_WAKE_WORD.md` | How to train a custom `hey_ava.onnx` wake word (WSL2 required). |
-| `MORNING_REPORT.md` | Latest overnight session summary, written by Claude when given the autonomous overnight prompt. |
-| `CLAUDE.md` | Project rules + key commands for Claude Code sessions. |
+| `docs/DISCORD_SETUP_NOTES.md` | Discord channel plugin setup, permission relay, .md uploads. |
+| `docs/research/voice_naturalness/findings.md` | Research pass for the conversational naturalness work order. |
+| `CLAUDE.md` | Project rules + key commands + standing operating rules for Claude Code sessions. |
 
 ---
 
@@ -259,7 +262,7 @@ curl http://127.0.0.1:5876/api/v1/tts/state
 
 Look at `available`, `engine_type` (should be `kokoro`), `muted`. If `muted: true`, the user toggled mute (deliberate or accidental) — toggle it back via the UI's mute button or `POST /api/v1/tts/toggle`.
 
-If the orb drifts off-screen or the UI looks wrong, see `MORNING_REPORT.md` for the most recent UI fix and `apps/ava-control/src/App.tsx`'s `PRESENCE_V2_ENABLED` / `PRESENCE_V2_CUBE_MORPH_ENABLED` flags — toggling these gates the streaming text and cube morph independently.
+If the orb drifts off-screen or the UI looks wrong, see `docs/HISTORY.md` § Section 3.1 for the orb-drift fix and `apps/ava-control/src/App.tsx`'s `PRESENCE_V2_ENABLED` / `PRESENCE_V2_CUBE_MORPH_ENABLED` flags — toggling these gates the streaming text and cube morph independently.
 
 ---
 
