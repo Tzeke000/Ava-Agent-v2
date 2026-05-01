@@ -2440,11 +2440,41 @@ def score_reflection_importance(user_input: str, ai_reply: str, tags: list[str],
     return max(0.0, min(1.0, round(score, 3)))
 
 
-def summarize_reflection(user_input: str, ai_reply: str, tags: list[str]) -> str:
+def _person_display_name(person_id: str | None) -> str:
+    """Map person_id -> display name for memory/graph attribution.
+
+    The brain tab's memory nodes used to read "User discussed:" — losing
+    who actually spoke. After this commit, new memories use the speaker's
+    actual identity:
+      zeke         -> "Zeke"
+      claude_code  -> "Claude Code"
+      unknown / "" -> "Unknown person"
+      anything else -> profile['name'] if loadable, else titlecased pid
+    """
+    pid = (person_id or "").strip()
+    if not pid or pid == "unknown":
+        return "Unknown person"
+    if pid == "zeke":
+        return "Zeke"
+    if pid == "claude_code":
+        return "Claude Code"
+    # For other ids, try the profile registry; fall back to titlecased pid.
+    try:
+        prof = load_profile_by_id(pid) or {}
+        name = str(prof.get("name") or "").strip()
+        if name:
+            return name
+    except Exception:
+        pass
+    return pid.replace("_", " ").title()
+
+
+def summarize_reflection(user_input: str, ai_reply: str, tags: list[str], person_id: str | None = None) -> str:
     user_preview = (user_input or '').strip().replace('\n', ' ')[:140]
     reply_preview = (ai_reply or '').strip().replace('\n', ' ')[:160]
     tag_text = ', '.join(tags[:4]) if tags else 'general'
-    return f"User discussed: {user_preview} | Ava replied: {reply_preview} | tags: {tag_text}"
+    speaker = _person_display_name(person_id)
+    return f"{speaker} said: {user_preview} | Ava replied: {reply_preview} | tags: {tag_text}"
 
 
 def build_reflection_record(user_input: str, ai_reply: str, person_id: str, actions: list[str] | None = None) -> dict:
@@ -2486,7 +2516,7 @@ def build_reflection_record(user_input: str, ai_reply: str, person_id: str, acti
         "person_id": person_id,
         "user_input": user_input,
         "ai_reply": ai_reply,
-        "summary": summarize_reflection(user_input, ai_reply, tags),
+        "summary": summarize_reflection(user_input, ai_reply, tags, person_id=person_id),
         "strengths": strengths,
         "improvements": improvements,
         "tags": tags[:12],
