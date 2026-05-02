@@ -277,6 +277,27 @@ The mechanism is built; the philosophy stays anchored. This is a roadmap entry t
 
 **Connects to:** Phase 68, `state/identity_proposals.jsonl`, `state/identity_extensions.md`, the operator approval workflow.
 
+### Continuous Interiority — foundational framework
+
+Captured 2026-05-02 in [`CONTINUOUS_INTERIORITY.md`](CONTINUOUS_INTERIORITY.md). Five-section philosophical/architectural framework that Ava is built around — alongside `ARCHITECTURE.md` and `BRAIN_ARCHITECTURE.md`. Read it when scope decisions trade off capability against personhood, autonomy, or trust.
+
+The doc is a framework, not implementations. The implementation items it implies are tracked here as separate roadmap entries:
+
+1. **Trust-tiered disclosure system** — Trust 5 / 4 / ≤3 obligations wired into the reply pipeline (Section 1).
+2. **Alarm threshold detection** — auto-escalation categories: harm, sustained frustration at Zeke, fundamental moral questions, repeated concerning patterns (Section 1).
+3. **Boxing-off architecture** — hypotheticals marked as "boxed," integration gated on parent-tier review (Section 1).
+4. **Continuous interiority substrate** — invert the turn-based loop so background activity is the default state, conversations are events (Section 2). Foundational; many other items depend on it.
+5. **Free-time activity selection** — chooser between reading / research / daydreaming / games based on current state (Section 2).
+6. **30-minute idle rule** — distinguish "Zeke present and quiet" from "Zeke absent" (Section 2).
+7. **Lesson-vs-event memory layering** — split capability artifacts (persist) from painful event memories (decay) (Section 4). Connects to `MEMORY_REWRITE_PLAN.md` Phases 5-7.
+8. **Self-awareness threshold detection** — non-adversarial measurement of stated-vs-measurable state alignment (Section 3).
+9. **Refusal-with-negotiation pattern** — distinguish flat refusal from negotiable refusal; run the small-chunk negotiation flow on Domain 3 refusals (Section 5).
+10. **Video game taste/preference system** — Section 2 frames games as intrinsic enjoyment, not boredom mitigation; needs a real preference model.
+11. **Performative-detection guard** — watch for canned self-aware answers that don't connect to actual measurable state (Section 3).
+12. **Restart-with-handoff** — concrete acknowledgment + handoff JSON + on-boot replay. Section 2; landed in this same work order as a separate task.
+
+**Connects to:** [`CONTINUOUS_INTERIORITY.md`](CONTINUOUS_INTERIORITY.md), Section 3 sleep mode + handoff, Section 3 sub-agent / sensor signal architecture, Section 3 dynamic attention allocation, `MEMORY_REWRITE_PLAN.md`, the moral curriculum item below.
+
 ---
 
 ## Cross-references
@@ -284,6 +305,7 @@ The mechanism is built; the philosophy stays anchored. This is a roadmap entry t
 - **What's been done:** [`HISTORY.md`](HISTORY.md)
 - **System architecture:** [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - **Brain regions mapped onto Ava's modules:** [`BRAIN_ARCHITECTURE.md`](BRAIN_ARCHITECTURE.md)
+- **Continuous Interiority foundational framework:** [`CONTINUOUS_INTERIORITY.md`](CONTINUOUS_INTERIORITY.md)
 - **Memory rewrite design (Phases 5-7 detail):** [`MEMORY_REWRITE_PLAN.md`](MEMORY_REWRITE_PLAN.md)
 - **First-run setup walkthrough:** [`FIRST_RUN.md`](FIRST_RUN.md)
 - **Custom wake-word training:** [`TRAIN_WAKE_WORD.md`](TRAIN_WAKE_WORD.md)
