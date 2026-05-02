@@ -35,6 +35,7 @@ the snapshot so the orb can react in real time.
 from __future__ import annotations
 
 import math
+import os
 import queue
 import threading
 import time
@@ -445,16 +446,97 @@ class TTSWorker:
         preview = text[:60].replace("\n", " ")
         print(f"[tts_worker] kokoro spoke voice={voice} speed={speed:.2f} chars={len(text)}: {preview!r}")
 
+    def _resolve_tts_devices(self, sample_rate: int) -> list[dict[str, Any]]:
+        """Return one descriptor per output device TTS should play to.
+
+        Configuration via env var AVA_TTS_DEVICES (comma-separated):
+          - "speakers,cable" (default) — laptop speakers + VB-CABLE Input
+          - "speakers"                 — laptop speakers only
+          - "cable"                    — VB-CABLE only (silent locally)
+          - "auto"                     — Windows system default only
+          - explicit name substrings   — match against sd device names
+
+        Bug 0.1 fix (2026-05-02): default Windows output device on this
+        machine is CABLE Input, so the user couldn't hear Ava — TTS played
+        only to the virtual cable that Claude was capturing. Speakers got
+        nothing. Default is now BOTH so the user hears her AND the cable
+        keeps working.
+        """
+        sd = self._sd
+        spec = (os.environ.get("AVA_TTS_DEVICES") or "speakers,cable").strip().lower()
+        if spec == "auto":
+            return [{"device": None, "label": "system_default"}]
+
+        targets = [t.strip() for t in spec.split(",") if t.strip()]
+        # Map shortcut keywords to substring patterns. Order matters — e.g. we
+        # want a real "Speakers (Realtek)" before "CABLE In" even if both exist.
+        keyword_patterns = {
+            "speakers": ("speakers (realtek", "speakers (", "realtek", "speakers"),
+            "cable": ("cable input (vb-audio", "cable input"),
+            "headphones": ("headphones",),
+        }
+
+        devices: list[dict[str, Any]] = []
+        seen_idx: set[int] = set()
+        try:
+            all_devs = list(sd.query_devices())
+        except Exception as e:
+            print(f"[tts_worker] query_devices failed: {e!r}")
+            return [{"device": None, "label": "system_default"}]
+
+        for target in targets:
+            patterns = keyword_patterns.get(target, (target,))
+            picked: int | None = None
+            for pat in patterns:
+                for i, d in enumerate(all_devs):
+                    if i in seen_idx:
+                        continue
+                    if int(d.get("max_output_channels") or 0) <= 0:
+                        continue
+                    name_lower = str(d.get("name") or "").lower()
+                    if pat in name_lower:
+                        # Avoid the cable when looking for speakers (some Realtek
+                        # rows precede CABLE rows but the keyword set already
+                        # protects this — this is belt-and-suspenders).
+                        if target == "speakers" and "cable" in name_lower:
+                            continue
+                        picked = i
+                        break
+                if picked is not None:
+                    break
+            if picked is not None:
+                seen_idx.add(picked)
+                devices.append({
+                    "device": picked,
+                    "label": f"{target}={all_devs[picked].get('name', picked)!r}",
+                })
+            else:
+                print(f"[tts_worker] no device matched '{target}' — skipping")
+
+        if not devices:
+            print("[tts_worker] no TTS devices resolved — falling back to system default")
+            return [{"device": None, "label": "system_default"}]
+        return devices
+
+
     def _play_with_amplitude(self, audio_np: Any, sample_rate: int, words: Optional[list[str]] = None) -> None:
-        """Play audio via a protected sd.OutputStream that cannot be
+        """Play audio via protected sd.OutputStream(s) that cannot be
         interrupted by window focus changes or other UI events.
 
         Uses stream.write() with a chunked feed so amplitude updates land in
-        real time. The ONLY conditions that abort playback mid-stream:
+        real time. By default plays to BOTH the laptop speakers and VB-CABLE
+        simultaneously (Bug 0.1 fix, 2026-05-02) — see _resolve_tts_devices
+        for the AVA_TTS_DEVICES env var.
+
+        The ONLY conditions that abort playback mid-stream:
           - the user has explicitly muted (g["_tts_muted"] = True)
           - the worker is shutting down (self._stop_evt set)
         Window focus changes, mouse clicks, other apps grabbing the mic — all
         are ignored. Audio plays through to completion.
+
+        Per-stream failures are tolerated: if cable opens but speakers don't
+        (or vice versa), the working stream still plays. Only if ALL streams
+        fail do we fall back to sd.play().
 
         If `words` is provided, advances current_word / spoken_so_far in
         lockstep with playback (Option 1 estimated cadence: words evenly
@@ -487,14 +569,36 @@ class TTSWorker:
                 pass
         played_full = False
         idx = 0  # initialized here so the finally's drop-stamp can read it
+
+        # Open one stream per configured destination. Per-stream failures are
+        # tolerated — we only fall back to sd.play() if EVERY stream fails.
+        device_descs = self._resolve_tts_devices(sample_rate)
+        streams: list[Any] = []
+        opened_labels: list[str] = []
+        for desc in device_descs:
+            try:
+                kwargs = {
+                    "samplerate": sample_rate,
+                    "channels": 1,
+                    "dtype": "float32",
+                    "blocksize": chunk_size,
+                    "latency": "low",
+                }
+                if desc["device"] is not None:
+                    kwargs["device"] = desc["device"]
+                s = sd.OutputStream(**kwargs)
+                s.start()
+                streams.append(s)
+                opened_labels.append(desc["label"])
+            except Exception as e:
+                print(f"[tts_worker] OutputStream open {desc['label']} failed: {e!r}")
+        if streams:
+            print(f"[tts_worker] playing to: {', '.join(opened_labels)}")
+
         try:
-            with sd.OutputStream(
-                samplerate=sample_rate,
-                channels=1,
-                dtype="float32",
-                blocksize=chunk_size,
-                latency="low",
-            ) as stream:
+            if not streams:
+                raise RuntimeError("no TTS output streams opened")
+            try:
                 idx = 0
                 while idx < n_samples:
                     # Explicit mute is the only mid-stream abort.
@@ -528,13 +632,39 @@ class TTSWorker:
                                 current=current,
                             )
 
-                    stream.write(chunk.reshape(-1, 1))
+                    chunk_2d = chunk.reshape(-1, 1)
+                    # Write to every open stream. Drop a stream on error so
+                    # one bad device doesn't tank the whole playback. The
+                    # remaining streams keep playing audio that is still
+                    # synchronized chunk-by-chunk.
+                    failed: list[Any] = []
+                    for s in streams:
+                        try:
+                            s.write(chunk_2d)
+                        except Exception as e:
+                            print(f"[tts_worker] stream.write failed: {e!r} — dropping stream")
+                            failed.append(s)
+                    for s in failed:
+                        try:
+                            s.close()
+                        except Exception:
+                            pass
+                        streams.remove(s)
+                    if not streams:
+                        raise RuntimeError("all TTS output streams dropped mid-playback")
                     idx += chunk_size
                 # Set played_full only when the full sample buffer was fed
-                # to the stream. Mid-stream mute/shutdown breaks the loop
-                # before this point.
+                # to all surviving streams.
                 if idx >= n_samples:
                     played_full = True
+            finally:
+                for s in streams:
+                    try:
+                        s.stop()
+                        s.close()
+                    except Exception:
+                        pass
+                streams = []
         except Exception as e:
             print(f"[tts_worker] OutputStream failed ({e!r}) — using sd.play fallback")
             try:
