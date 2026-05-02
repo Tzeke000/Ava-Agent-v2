@@ -15,8 +15,11 @@ Usage:
         # result.suggested_response are populated.
         ...
 
-Behind feature flag AVA_VALIDITY_CHECK_ENABLED (default 0). Off by default
-until the pattern set is validated against real Zeke turns.
+Behind feature flag AVA_VALIDITY_CHECK_ENABLED. Default ON as of
+2026-05-02 — pattern set was validated by the bench-anchored tests at
+scripts/test_validity_check.py (14/14 including the actual bench prompt
+both ava-personal and qwen3.5 confabulated on). Set the flag to "0" /
+"false" to disable if the pattern set ever produces false positives.
 """
 from __future__ import annotations
 
@@ -51,8 +54,11 @@ _LETTERS_NOT_IN_DAYS = frozenset(
     if not any(chr(c) in d for d in _DAYS)
 )
 
+# Allow intervening words between the noun ("month" / "day") and the verb
+# ("contain"/"has"/etc.) so phrasings like "What month OF THE YEAR contains
+# the letter X?" still match. .*? is lazy so it picks the closest verb.
 _LETTER_FREQ_PATTERN = re.compile(
-    r"\b(?:what|which)\s+(month|day)\s+(?:contain|has|have|include)s?\s+(?:the\s+)?(?:letter\s+)?([a-z])\b",
+    r"\b(?:what|which)\s+(month|day)\b.*?\b(?:contain|has|have|include)s?\s+(?:the\s+)?(?:letter\s+)?([a-z])\b",
     re.IGNORECASE,
 )
 
@@ -190,5 +196,12 @@ def classify(text: str) -> TrickResult | None:
 
 
 def is_enabled() -> bool:
-    """Feature flag: AVA_VALIDITY_CHECK_ENABLED. Default off."""
-    return os.environ.get("AVA_VALIDITY_CHECK_ENABLED", "0") not in ("0", "", "false", "False")
+    """Feature flag: AVA_VALIDITY_CHECK_ENABLED. Default ON as of 2026-05-02.
+
+    Set the env var to "0" or "false" to disable. Keep enabled unless
+    a false-positive pattern surfaces — the hint-style wiring in
+    reply_engine.py is conservative (the LLM still owns the reply
+    text), so risk of leaving it on is low.
+    """
+    val = os.environ.get("AVA_VALIDITY_CHECK_ENABLED", "1")
+    return val not in ("0", "", "false", "False")

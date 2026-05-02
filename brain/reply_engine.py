@@ -315,12 +315,40 @@ def run_ava(
                     "- No 'um'/'uh' filler for performance. If you actually need a moment to think, say so "
                     "plainly; if you don't, just speak."
                 )
+                # Confabulation Layer 1 — pattern-based trick-question router.
+                # The bench (LOCAL_MODEL_OPTIMIZATION.md §5b) showed both
+                # ava-personal and qwen3.5 confabulating on letter-frequency
+                # tricks ("December" / "October" for "month with X"). When a
+                # known trick pattern matches, we hint the honest answer to
+                # the LLM as guidance — Ava still phrases it in her own voice,
+                # but the underlying claim is grounded in the deterministic
+                # pattern check, not the model's training data.
+                _validity_hint = ""
+                try:
+                    from brain.validity_check import classify, is_enabled
+                    if is_enabled():
+                        _trick = classify(user_input)
+                        if _trick is not None:
+                            _trace(f"re.validity_trick_caught type={_trick.trick_type}")  # TRACE-PHASE1
+                            _validity_hint = (
+                                "\n\n"
+                                f"NOTE — this user prompt matches a known trick-question pattern "
+                                f"(category: {_trick.trick_type}). The honest, deterministically-correct "
+                                f"answer is:\n\n  {_trick.suggested_response}\n\n"
+                                "Use that as the underlying claim, but phrase it naturally in your own "
+                                "voice — don't read the canned text verbatim and don't lecture about "
+                                "the trick. Be direct and conversational."
+                            )
+                except Exception as _vc_exc:
+                    # validity_check is non-critical — failure here must
+                    # never break the reply pipeline.
+                    print(f"[validity_check] skipping due to error: {_vc_exc!r}")
                 _simple_prompt = (
                     f"You are Ava — a local adaptive AI companion to Zeke.{_addressee}\n"
                     f"Identity: {_identity}\n"
                     f"Current mood: {_mood_label}.\n"
                     f"Recent conversation:\n{_last_msgs_str}\n\n"
-                    f"{_naturalness_clause}\n\n"
+                    f"{_naturalness_clause}{_validity_hint}\n\n"
                     f"User just said: {user_input}\n"
                     f"Respond naturally and warmly. Don't add any tool blocks or formatting."
                 )
@@ -657,6 +685,22 @@ def run_ava(
         # ── Step: depth classification ────────────────────────────────────────
         print(f"[run_ava] step: classify reply depth (t={time.time()-_t_start:.2f}s)")
         _depth = _av.classify_reply_depth(user_input, _g)
+
+        # Confabulation Layer 1 force-fast: if a known trick-question
+        # pattern matches, force fast path. Trick questions don't benefit
+        # from deep retrieval — the answer is deterministic from the
+        # pattern, not the model's reasoning. Forcing fast path also
+        # avoids paying the 30-150s deep-model swap penalty on a question
+        # that should resolve in <3s.
+        try:
+            from brain.validity_check import classify as _vc_classify, is_enabled as _vc_enabled
+            if _vc_enabled() and _vc_classify(user_input) is not None:
+                if _depth != "fast":
+                    _trace("re.validity_force_fast_path")  # TRACE-PHASE1
+                    _depth = "fast"
+        except Exception as _vc_exc:
+            print(f"[validity_check] depth-override skipped: {_vc_exc!r}")
+
         use_fast_path = _depth == "fast"
         _g["reply_path_selected"] = "fast" if use_fast_path else "deep"
         _g["reply_path_reason"] = f"classify_reply_depth_{_depth}"
