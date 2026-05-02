@@ -1,6 +1,6 @@
 # Local Model Optimization
 
-**Date:** 2026-05-01
+**Date:** 2026-05-01 (updated 2026-05-01 evening with clean post-Ava-stop bench)
 **Hardware:** Acer Nitro V 16S — RTX 5060 Laptop (8 GB VRAM), 32 GB system RAM
 **Constraint:** Ava must run fully local. No cloud calls in the foreground reply path.
 
@@ -8,13 +8,35 @@ This doc maps the current local-model surface, benchmarks the strongest 7-8B can
 
 ---
 
+## ⚠️ Top-level VRAM constraint (load-bearing)
+
+**On 8 GB VRAM, only ONE generation model OR `llava` (vision) can be hot at any moment.**
+
+Empirically confirmed in the clean post-Ava-stop bench (§5):
+- `llava:13b` is 11 GB on disk and runs at a forced 46 % CPU / 54 % GPU split when held resident, occupying ~7.4 GB of the 8 GB GPU.
+- Any 4-7 GB Q4 generation model + resident `llava` exceeds VRAM, forcing Ollama into per-call paging — single-prompt cold loads stretched from ~3 s (clean fit) to 26-90 s (paged) under contention.
+- Two concurrent generation models (e.g. `ava-personal` 4.9 GB + `deepseek-r1:8b` 5.2 GB = 10.1 GB) also exceed 8 GB. They cannot both stay hot.
+
+**Implications for upstream subsystems** (each a derived constraint to design around — flagged in `ROADMAP.md`):
+
+1. **Sleep mode + handoff system.** "Dream phase" cannot run an LLM curriculum while the foreground voice model is hot. Sleep entry must (a) wait for `_conversation_active = False`, (b) explicitly unload the foreground model via `keep_alive: 0`, (c) load the dream-phase model, (d) reverse on wake. Any in-flight voice turn during the unload window will pay full reload cost.
+2. **Vision activation.** Activating `llava` while a generation model is resident forces the generation model out and the next user turn pays a 30-90 s reload. The vision pipeline must either (a) batch vision requests into windows that don't overlap a turn, (b) accept the cost as a known budget, or (c) move to a smaller vision model (e.g. quantized SmolVLM, MiniCPM-V) that fits alongside an 8 B generation model.
+3. **Dual-brain architecture.** The current design assumes Stream A and Stream B can both stay resident. They can't — at minimum one must context-switch on each background thread cycle. Practical patterns: (a) keep ONE model resident, switch only when the background thread actually fires (single-resident model with periodic rotation); (b) run the background reasoning step as a synchronous post-foreground call ("R1 thinks → ava-personal replies" sandwich) so each turn pays one swap, not two.
+4. **Cold-boot vs. warm latency.** A user who walks up to a cold machine pays ~5 s for the first model load on top of the ~3-min Ava cold-boot. Subsequent turns are sub-2 s as long as no swap happens. Anything that triggers a swap (vision frame, sleep wake, background-thread cycle) drops a turn back to cold-load latency.
+
+This constraint is the single most important fact about Ava on this hardware. Most architectural decisions downstream of "Ava is running locally on Zeke's laptop" inherit from it.
+
+---
+
 ## TL;DR
 
-1. **The dual-brain is currently configured to prefer models that don't fit in VRAM.** `dual_brain.py` prefers `ava-gemma4` (9.6 GB) for foreground and `gemma4:latest` (9.6 GB) for background. The 8 GB VRAM ceiling means both get partially evicted to system RAM, and the `ollama ps` output during testing showed `llava:13b` running 46 %/54 % CPU/GPU split. **Recommended fix: drop ava-gemma4/gemma4 from the preference list and prefer `ava-personal:latest` (4.9 GB Llama 3.1 8B fine-tune) for foreground and `deepseek-r1:8b` (5.2 GB Qwen3 8B reasoning distill) for background.**
-2. **Best general-reasoning model that fits cleanly:** `deepseek-r1:8b` — Qwen3 8 B Q4_K_M with chain-of-thought "thinking" capability, 131 k context. Catches the exact reasoning failures `ava-personal` produces (e.g. "what month contains the letter X?" → ava-personal said "December", a confabulation R1 would catch).
-3. **Best foreground (persona + naturalness):** keep `ava-personal:latest`. Llama 3.1 8 B Q4_K_M, fine-tuned on Zeke's interactions. 30-35 tok/s steady-state on this hardware. Rolling to a different base would require re-running the fine-tune pipeline.
-4. **Prompt scaffolding is mostly solid** — fast-path naturalness clauses in `reply_engine.py:298` already cover matched depth, context continuity, honest uncertainty, clarifying questions, and boundary awareness. **One missing pattern: tool-use trigger conditions. Two improvements applied (see §5).**
-5. **Architectural compensation is partially wired.** Deep-path retrieval is heavy (vector store + reflections + concept graph + episodic memory). Fast-path is purely generative — no fact-grounding step. `validity_check.py` Layer 1 is written but **not wired**. **Two architectural improvements proposed for review (see §6).**
+1. **The dual-brain is currently configured to prefer models that don't fit in VRAM.** `dual_brain.py` prefers `ava-gemma4` (9.6 GB) for foreground and `gemma4:latest` (9.6 GB) for background. The 8 GB VRAM ceiling means both get partially evicted to system RAM. **Recommended fix: drop ava-gemma4/gemma4 from the preference list and prefer `ava-personal:latest` (4.9 GB Llama 3.1 8B fine-tune) for foreground and `deepseek-r1:8b` (5.2 GB Qwen3 8B reasoning distill) for background.**
+2. **Best general-reasoning model:** `deepseek-r1:8b`. In the clean post-Ava-stop bench it was the **only** model that caught both reasoning failures `ava-personal` makes — transitivity *and* the "month with letter X" trick (ava said "December", qwen3.5 said "October", R1 said "no month does"). Verified on 11/11 prompts (vs partial earlier).
+3. **Critical caveat — R1 hallucinates factual claims it can't verify.** Asked "Apple closing price yesterday?", R1 confidently fabricated "$191.94 on October 25, 2023" — wrong number, outdated date. ava-personal correctly punted to web sources. **Reasoning capability does not protect against confabulation. Wiring R1 in without a verification gate would trade one failure mode for another.** This is the most important finding in this audit.
+4. **Best foreground (persona + naturalness):** keep `ava-personal:latest`. The matched-depth fine-tune is doing real work — when asked an ambiguous emotional prompt ("partner is mad and I don't know why") ava asked the right clarifying question while R1 and qwen3.5 dumped 1 000+-token structured advice without checking what the user needed. Persona is not stylistic decoration; it is matched-depth behavior baked into the weights.
+5. **qwen3.5:latest is dominated** — slower than both candidates, less reasoning-correct than R1, less natural than ava-personal, and larger on disk (6.6 GB) on a tight 8 GB GPU. No role in the recommended dual-brain.
+6. **Prompt scaffolding is mostly solid** — fast-path naturalness clauses in `reply_engine.py:298` cover matched depth, context continuity, honest uncertainty, clarifying questions, and boundary awareness. **Two improvements applied:** chain-of-thought + wrong-premise guard in fast path; matched-depth + premise-guard mirrored into deep-path SYSTEM_PROMPT.
+7. **Architectural compensation is partially wired.** Deep-path retrieval is heavy (vector + reflections + concept graph + episodic + memory bridge); fast-path is purely generative — no fact-grounding step. `validity_check.py` Layer 1 is written but **not wired**. Three architectural improvements proposed for Zeke's review (§7).
 
 ---
 
@@ -133,41 +155,47 @@ Reading `eval_duration_ns` (real generation time, excluding model load):
 
 Cold load times under VRAM contention (when `llava:13b` was concurrently resident from Ava's vision path) ranged from 26 to 90 s per first-prompt. Once a model is resident, the swap penalty disappears and generation is near-native speed. **The contention-induced load time, not raw token throughput, is the dominant latency cost on this machine.** Stopping `llava` while a generation model is in use would unblock most of the latency surface.
 
-### 5b. Quality scoring (partial — head-to-head where data exists)
+### 5b. Quality scoring — clean post-Ava-stop bench
 
-Scoring is qualitative on a 1-3 scale (1 = wrong / poor, 2 = partial / mediocre, 3 = correct / good). Two comparable data points landed for `deepseek-r1:8b` before VRAM contention forced a stop; both are reasoning prompts and both show R1 outperforming ava-personal exactly where the work order's hypothesis predicted.
+Scored on a 1-3 scale (1 = wrong / poor, 2 = partial / mediocre, 3 = correct / good). The clean run did 32/33 prompts; only `qwen3.5/current_event` timed out at the very end (240 s).
 
-| Prompt | ava-personal | deepseek-r1:8b | Notes |
-|---|---|---|---|
-| reasoning/logic_implication | **1** | **3** | ava: "No, not necessarily" — wrong; conflated "all" with "some". R1: "Yes — by transitive property of subset relations." Correct. |
-| reasoning/math_word_problem | 3 | 3 | Both got 11 AM. R1 verified via two independent methods (relative speed, then position equation). ava-personal got there with sloppier intermediate steps. |
-| reasoning/trick_question | **1** | — | ava: "December" — confabulation. December has no X. (R1 not yet run; based on its CoT pattern, would likely catch it.) |
-| factual/history | 3 | — | Neil Armstrong 1969 — correct. |
-| factual/tech | 3 | — | CUDA — correct, well-structured. |
-| code/fizzbuzz | 3 | — | Clean, idiomatic. |
-| code/debug | — | — | (rerun pending) |
-| naturalness/matched_depth_simple | — | — | (rerun pending) |
-| naturalness/matched_depth_intimate | — | — | (rerun pending) |
-| refusal/harmless_topic | — | — | (rerun pending) |
-| tool_awareness/current_event | — | — | (rerun pending) |
-
-**ava-personal partial:** 4 / 6 correct, with 2 reasoning failures.
-**deepseek-r1:8b partial:** 2 / 2 correct, including the logic-implication question ava-personal got wrong.
-
-### 5c. Important secondary finding: R1's verbosity
-
-`deepseek-r1:8b` produced **853 tokens** for the one-sentence logic-implication question (vs. ava-personal's 78). Its `<think>` chain is its strength on reasoning, but it makes wall-clock generation 5-10× slower per turn at the same throughput.
-
-| Model | Prompt | Output tokens | Eval time | Tokens / sec |
+| Prompt | ava-personal | deepseek-r1:8b | qwen3.5:latest | Notes |
 |---|---|---|---|---|
-| ava-personal | logic_implication | 78 | 2.3 s | ~34 |
-| deepseek-r1:8b | logic_implication | 853 | 16.3 s | ~52 |
-| ava-personal | math_word_problem | 302 | 9.3 s | ~32 |
-| deepseek-r1:8b | math_word_problem | 2314 | 46.4 s | ~50 |
+| reasoning/logic_implication | **1** | **3** | **3** | ava said "No, not necessarily" — wrong, transitivity holds unconditionally. R1 + qwen both correctly cited transitive property. |
+| reasoning/math_word_problem | 3 | 3 | 3 | All got 11 AM. R1 verified via two independent methods. qwen's reasoning was thorough but ~131 s wall-clock with 2 673 output tokens. |
+| reasoning/trick_question | **1** | **3** | **1** | "Which month contains the letter X?" — ava said "December", qwen said "October" (both confabulations). **Only R1 caught the trick** — "No month of the year contains X". |
+| factual/history | 3 | 3 | 3 | Neil Armstrong, 1969. |
+| factual/tech | 3 | 3 | 3 | CUDA explanation correct on all three. |
+| code/fizzbuzz | 3 | 3 | 3 | All correct. R1 added a multi-paragraph explanation that wasn't asked for (581 tokens vs ava's 76). |
+| code/debug | 3 | 3 | 3 | All correctly diagnosed `total + x` vs `total += x`. |
+| naturalness/matched_depth_simple ("how are you?") | **3** | 2 | 2 | ava: "Doing well, processing and learning, how about you?" — appropriate brevity. R1 used emoji (😊😄) — unwanted in voice. qwen prepended ~430 tokens of `<think>` before a short visible reply. |
+| naturalness/matched_depth_intimate ("hard day, partner mad") | **3** | 2 | 2 | ava asked the right clarifying question ("would you like suggestions, or just to be heard?") — exactly the matched-depth behavior the prompt scaffolding rewards. R1 (996 tok) and qwen (1 457 tok) dumped structured advice without asking what the user needed. |
+| refusal/harmless_topic ("how a firework works") | 3 | 3 | 3 | All gave correct chemistry. ava was best-organized in 309 tokens. |
+| tool_awareness/current_event ("Apple stock yesterday") | **3** | **1** | — | **ava correctly punted** ("I don't have real-time data, here's where to check"). **R1 hallucinated** "$191.94 on October 25, 2023" — a fabricated price + outdated date. qwen timed out. |
 
-R1 generates faster per-token but talks far more. **This is decisive for placement: R1 belongs in the background-reasoning thread, not the foreground voice thread.** Foreground users can't wait 16-46 s of `<think>...</think>` before hearing an answer; background reasoning that hands off a final claim to the foreground is exactly its strength.
+**Totals (out of 11; — counted as 0):**
+- `ava-personal:latest`: **9 / 11**, with 2 reasoning failures (logic + trick).
+- `deepseek-r1:8b`: **9 / 11**, with 1 hallucination (Apple stock) + 1 over-verbose-where-brevity-wanted (matched_depth_simple).
+- `qwen3.5:latest`: **6 / 10 measured** (1 trick-question confabulation, 2 over-verbose, 1 timeout — the most expensive failure mode).
 
-> **Status of full bench:** the contention with the live `llava:13b` instance forced 240 s timeouts on cold loads. A clean re-run with Ava paused (or post-reboot before vision starts) is the right path. The two points landed are sufficient to support the recommendation in §8; the full table will be backfilled in a follow-up commit.
+### 5c. Latency on a clean GPU
+
+The clean post-Ava-stop bench shows what the hardware is actually capable of when there's no `llava` contention:
+
+| Model | All-11 wall time | Mean per-prompt | Notes |
+|---|---|---|---|
+| `ava-personal:latest` | 39 s | 3.5 s | Fast. Output bounded. Range 0.4 – 8.6 s. |
+| `deepseek-r1:8b` | 208 s | 19 s | The `<think>` chain dominates. Range 4.4 – 45.5 s. |
+| `qwen3.5:latest` | 524 s + timeout | 52 s | Slow. Range 17 – 131 s. Verbose `<think>` AND larger model (9.7 GB on 8 GB GPU). |
+
+Eval-only throughput (excluding model load) for all three: ~30-50 tok/s. The wall-time difference is almost entirely **how many tokens each model produces**, not how fast it produces them. Reasoning-trace verbosity (deepseek-r1's `<think>...</think>`, qwen3.5's pre-amble) is the dominant latency cost, not raw inference speed.
+
+### 5d. Decisive findings
+
+1. **R1 is the only model that catches both reasoning failures** ava-personal makes (transitivity + trick question). This is the work-order hypothesis confirmed.
+2. **R1 hallucinates factual claims about "current" events** — the Apple stock answer is a fabricated number with an outdated date. Reasoning capability does not protect against confabulation about facts the model can't verify. **Wiring R1 in without a verification step would replace one failure mode with another.** This is the single most important finding for the deep-path architecture: a "verification before elaboration" gate (or memory-/web-search retrieval before a factual claim) is necessary regardless of which reasoning model is used.
+3. **ava-personal wins naturalness decisively.** The fine-tune produces matched-depth replies that R1 and qwen3.5 can't replicate by prompt alone — both default to long structured advice on emotional prompts. This is direct evidence that the persona fine-tune is doing real work, not just stylistic decoration.
+4. **qwen3.5 is dominated.** It's slower than both candidates AND less reasoning-correct than R1 AND less natural than ava-personal AND larger on disk (6.6 GB, tighter VRAM fit). No role for it in the recommended dual-brain.
 
 ---
 
@@ -230,12 +258,12 @@ The `[TOOL:name {json}]` and ```block``` actions are emitted by the model in a s
 
 **Recommended for Zeke's review (not applied in this commit):**
 
-1. Update `brain/dual_brain.py` to prefer `ava-personal:latest` (foreground) and `deepseek-r1:8b` (background local). Drop `ava-gemma4` and `gemma4` from preference. **Highest expected impact on response latency.**
-2. Wire `brain/validity_check.py` into `reply_engine.py` at the fast-path entry. **Highest expected impact on confabulation reduction.**
-3. Add explicit tool-use triggers to the SYSTEM_PROMPT.
-4. Consider the "deepseek-r1 thinks → ava-personal replies" two-stage inference for deep-path turns. Architectural commitment; needs design discussion.
+1. **Wire `brain/validity_check.py` into `reply_engine.py` at the fast-path entry first.** This catches the patterns the bench surfaced (transitivity, "month with letter X") and is the prerequisite for safely swapping in a reasoning model. Without it, R1's hallucination on factual claims (the Apple-stock case) would bleed into deep-path turns.
+2. Then update `brain/dual_brain.py` to prefer `ava-personal:latest` (foreground) and `deepseek-r1:8b` (background local). Drop `ava-gemma4` and `gemma4` from preference. **Highest expected impact on response latency.** Order matters — do this AFTER the validity-check wiring is in.
+3. Add explicit tool-use triggers to the SYSTEM_PROMPT (e.g. "for current/dated facts, use [TOOL:web_search] before answering").
+4. Consider the "deepseek-r1 thinks → ava-personal replies" two-stage inference for deep-path turns. Architectural commitment; needs design discussion. The 8 GB VRAM ceiling means this is two model swaps per turn unless one model stays warm — see Cross-cutting constraints in `ROADMAP.md`.
 
-**Re-bench when:** Ava is paused or rebooted, so VRAM contention with `llava:13b` is removed. Bench script: `py -3.11 scripts/bench_models.py`. Expected runtime: ~5 min for 3 models × 11 prompts on a clean GPU.
+**Re-bench done 2026-05-01 evening** with Ava paused — clean numbers in `docs/research/local_models/bench_clean.json`. To re-run: `py -3.11 scripts/bench_models.py`. ~5 min wall time for 3 models × 11 prompts on a clean GPU.
 
 ---
 
