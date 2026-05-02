@@ -586,6 +586,27 @@ The fix patches BOTH the marketplace source (durable across launches) and every 
 
 ---
 
+### Section 6 — 2026-05-01 App-scan parallelism retro fix
+
+**Engineering-discipline retro.** Commit `76d609b` (autonomous queue) claimed `discover_all` and `discover_new_since_last` were now parallelized into "four scan roots in parallel threads," with an expected cold-boot improvement from 60-110s sequential to 30-50s parallel. The claim was shipped untested.
+
+When Ava booted post-VB-CABLE reboot the trace ring buffer recorded what actually happened on the cold-cache run: `app_disc.discover_all_done ms=217756`. Reading the per-root scan_done timestamps, two of the four "parallel" threads were scanning multiple roots in series:
+
+- The `lnk` thread did Public Desktop → ProgramData StartMenu → User StartMenu serially (3+25+15s).
+- The `program_files` thread did `C:\Program Files` → `C:\Program Files (x86)` serially (150+67s).
+
+Wall time was therefore bounded by `150 + 67 = 217s` — the bottleneck thread, with PF and PF(x86) running back-to-back. Real per-root parallelism would land at `max(150, 67, 40) = 150s`.
+
+**Fix.** Refactored `_run_scans_parallel` in `brain/app_discoverer.py` to fan out via `concurrent.futures.ThreadPoolExecutor` with **six** independent tasks: PF, PF(x86), Desktop .lnk dirs, Start Menu .lnk dirs, Steam, Epic. Added `root` parameter to `_scan_program_files` so each root is its own task. Removed the dead `_lnk_dirs` helper. Added `scripts/bench_app_discovery.py` for repeatable timing.
+
+**Verification (warm cache, post-reboot):** 3-run wall times 1.34s / 1.19s / 1.17s. Trace shows all four primary roots starting within 2-3ms of each other (real parallelism, not the previous serialized chains).
+
+**Cold-cache prediction:** ~150s, dominated by the `C:\Program Files` walk alone. The original work order's <60s target is not reachable from parallelism alone on this hardware — the PF scan walks 195 binaries at depth 3 and that is the realistic floor. Hitting <60s would require additional optimizations (depth reduction, exclusion list, lnk-target prefilter); flagged but not in scope here.
+
+**Discipline note.** This is exactly the failure that Standing Operating Rule 4 ("verify fixes before claiming them as done") exists to prevent. The original parallelism claim was theoretical and shipped without the cold-boot timing test that would have caught the wrong-thread-count assumption immediately. Logged here so the pattern is visible in retrospect.
+
+---
+
 ## Major Bug Fixes (cross-phase)
 
 Significant bugs diagnosed and fixed during the project's life. Each row: symptom + root cause + fix (commit hash) + date.
@@ -637,7 +658,7 @@ Limitations and bugs currently observed but not yet root-caused or fully fixed:
 | Test battery: `weird_inputs` + `sequential_fast_path_latency` + `concept_graph_save_under_load` fail under deep-path saturation | Lunch 2026-04-30 | Test-design issue, not Ava bug. Recipe documented: replace `single_char "?"` with `"hi?"` (fast-path eligible) + rebuild `long_500` from fast-path patterns | Minor — test harness only |
 | `thanks` test marginal at 2.6-3.0s vs 2.0s target | Morning 2026-04-30 | Threshold was always aspirational; LLM invoke completes <1.5s, the rest is HTTP roundtrip. Real-world fine. | Minor |
 | Custom `hey_ava.onnx` not trained | Initial spec | Clap detector + transcript_wake (Whisper "hey ava" pattern match) cover the gap. WSL2 training pipeline documented at `docs/TRAIN_WAKE_WORD.md`. | Minor — workaround works |
-| App discoverer scan ~47-110s on cold start | Initial | Background thread, 24h refresh incremental | Annoying — not blocking |
+| App discoverer cold scan ~150s on this hardware (post-fix) | 2026-05-01 | Six-thread fan-out reduces wall time to `max(per-thread)` ≈ 150s, bounded by `C:\Program Files` walk. Background thread, 24h refresh incremental, sub-2s warm cache. Further reduction needs depth/exclusion tuning. | Annoying — not blocking |
 | Game category over-includes Steam helper binaries (`gameoverlayui64.exe`, `steamservice.exe`) | Initial | Fuzzy match prioritizes user-friendly names; cosmetic only | Cosmetic |
 | Repo history contains old face photos and runtime state snapshots | Initial | `117428f` stopped future leakage. Cleanup via `git filter-repo` + force-push optional. | Minor |
 | `chatlog.jsonl` shows as modified | Lunch 2026-04-30 | Both gitignored AND tracked. `git rm --cached chatlog.jsonl` would fix; not done because state-adjacent | Cosmetic |
