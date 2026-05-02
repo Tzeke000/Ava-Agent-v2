@@ -21,6 +21,8 @@ import re
 import struct
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -239,39 +241,64 @@ class AppDiscoverer:
     # ── public ────────────────────────────────────────────────────────────────
 
     # ── parallel scan helpers ──────────────────────────────────────────────
-    # The four scan roots (lnk dirs, Program Files, Steam, Epic) are I/O
-    # bound and independent. Running them in parallel threads cuts
-    # cold-boot time roughly in half on machines where Program Files
-    # dominates (60-110s sequential -> 30-50s parallel). The Python GIL
-    # doesn't block I/O, so threading is the right primitive here.
+    # The scan roots are I/O bound and independent. Running them in parallel
+    # threads cuts wall time substantially when Program Files dominates.
+    # The Python GIL doesn't block I/O, so threading is the right primitive.
+    #
+    # Six independent scan tasks fan out via ThreadPoolExecutor:
+    #   1. C:\Program Files
+    #   2. C:\Program Files (x86)
+    #   3. .lnk Desktop directories  (Desktop + Public Desktop)
+    #   4. .lnk Start Menu directories (ProgramData + User Start Menu)
+    #   5. Steam appmanifests
+    #   6. Epic Games launcher
+    #
+    # Earlier versions ran (1)+(2) sequentially in one thread and (3)+(4)
+    # sequentially in another, which capped speedup at ~2x even though four
+    # cores were idle. True per-root fan-out matches the I/O parallelism
+    # the disk subsystem can actually serve.
     #
     # Each scan writes to its OWN local dict to avoid TOCTOU races on
     # _add_entry's dedup check. Results are merged under self._lock.
 
     def _run_scans_parallel(self) -> dict[str, dict[str, Any]]:
-        """Run all four scans in threads; return merged registry dict."""
+        """Run all scan roots in parallel threads; return merged registry."""
+        paths = _expand_search_paths()
+        pf_roots = paths["program_files"]
+        pf_root = pf_roots[0] if len(pf_roots) > 0 else None
+        pfx_root = pf_roots[1] if len(pf_roots) > 1 else None
+        desktop_dirs = [p for p in paths["desktop"] if p.is_dir()]
+        start_menu_dirs = [p for p in paths["start_menu"] if p.is_dir()]
+
+        tasks: list[tuple[str, Any]] = []
+        if pf_root is not None and pf_root.is_dir():
+            tasks.append(("program_files", partial(self._scan_program_files, root=pf_root)))
+        if pfx_root is not None and pfx_root.is_dir():
+            tasks.append(("program_files_x86", partial(self._scan_program_files, root=pfx_root)))
+        if desktop_dirs:
+            tasks.append(("desktop_lnk", partial(self._scan_lnk_dirs, desktop_dirs)))
+        if start_menu_dirs:
+            tasks.append(("start_menu_lnk", partial(self._scan_lnk_dirs, start_menu_dirs)))
+        tasks.append(("steam", self._scan_steam))
+        tasks.append(("epic", self._scan_epic))
+
         results: list[dict[str, dict[str, Any]]] = []
         results_lock = threading.Lock()
 
-        def _wrap(name: str, fn) -> None:
+        def _run(name: str, fn) -> None:
             local: dict[str, dict[str, Any]] = {}
             try:
-                fn(local)
+                fn(target=local)
             except Exception as e:
                 print(f"[app_discovery] {name} scan error: {e!r}")
             with results_lock:
                 results.append(local)
 
-        threads = [
-            threading.Thread(target=_wrap, args=("lnk", lambda t: self._scan_lnk_dirs(self._lnk_dirs(), target=t)), daemon=True, name="ava-app-scan-lnk"),
-            threading.Thread(target=_wrap, args=("program_files", lambda t: self._scan_program_files(target=t)), daemon=True, name="ava-app-scan-pf"),
-            threading.Thread(target=_wrap, args=("steam", lambda t: self._scan_steam(target=t)), daemon=True, name="ava-app-scan-steam"),
-            threading.Thread(target=_wrap, args=("epic", lambda t: self._scan_epic(target=t)), daemon=True, name="ava-app-scan-epic"),
-        ]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        max_workers = max(1, len(tasks))
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="ava-app-scan") as pool:
+            futures = [pool.submit(_run, name, fn) for name, fn in tasks]
+            for f in futures:
+                f.result()
 
         merged: dict[str, dict[str, Any]] = {}
         for r in results:
@@ -429,14 +456,6 @@ class AppDiscoverer:
 
     # ── scan helpers ──────────────────────────────────────────────────────────
 
-    def _lnk_dirs(self) -> list[Path]:
-        paths = _expand_search_paths()
-        out: list[Path] = []
-        for p in paths["desktop"] + paths["start_menu"]:
-            if p.is_dir():
-                out.append(p)
-        return out
-
     def _scan_lnk_dirs(self, dirs: Iterable[Path], target: Optional[dict[str, dict[str, Any]]] = None) -> None:
         tgt = target if target is not None else self._registry
         for d in dirs:
@@ -460,22 +479,35 @@ class AppDiscoverer:
                 print(f"[app_discovery] lnk scan {d} error: {e}")
             _trace(f"app_disc.scan_done root={d} ms={int((time.time()-_t0)*1000)} found={len(tgt)-_before}")  # TRACE-PHASE1
 
-    def _scan_program_files(self, target: Optional[dict[str, dict[str, Any]]] = None) -> None:
+    def _scan_program_files(
+        self,
+        target: Optional[dict[str, dict[str, Any]]] = None,
+        root: Optional[Path] = None,
+    ) -> None:
+        """Scan one or both Program Files roots for top-level .exe files.
+
+        If `root` is provided, only that root is scanned (used by the
+        parallel runner so PF and PF(x86) get their own threads). If
+        `root` is None, scans both — kept for backward compat.
+        """
         tgt = target if target is not None else self._registry
-        paths = _expand_search_paths()
+        if root is not None:
+            roots: list[Path] = [root]
+        else:
+            roots = list(_expand_search_paths()["program_files"])
         # Top-level .exe scan in Program Files / Program Files (x86) only.
         # LOCALAPPDATA is huge and dominated by per-app caches/installers/
         # helpers; the .lnk shortcut scan already picks up the user-facing
         # entry points there. Skipping it cuts the initial scan from ~45s
         # to ~5-10s.
-        for root in paths["program_files"]:
-            if not root.is_dir():
+        for r in roots:
+            if not r.is_dir():
                 continue
             _t0 = time.time()  # TRACE-PHASE1
             _before = len(tgt)  # TRACE-PHASE1
-            _trace(f"app_disc.scan_start root={root}")  # TRACE-PHASE1
+            _trace(f"app_disc.scan_start root={r}")  # TRACE-PHASE1
             try:
-                for exe in self._iter_exes(root, max_depth=3):
+                for exe in self._iter_exes(r, max_depth=3):
                     name = exe.stem
                     # Skip obvious uninstallers / setup binaries.
                     low = name.lower()
@@ -483,8 +515,8 @@ class AppDiscoverer:
                         continue
                     self._add_entry(str(exe), name, source="program_files", target=tgt)
             except Exception as e:
-                print(f"[app_discovery] program_files {root} error: {e}")
-            _trace(f"app_disc.scan_done root={root} ms={int((time.time()-_t0)*1000)} found={len(tgt)-_before}")  # TRACE-PHASE1
+                print(f"[app_discovery] program_files {r} error: {e}")
+            _trace(f"app_disc.scan_done root={r} ms={int((time.time()-_t0)*1000)} found={len(tgt)-_before}")  # TRACE-PHASE1
 
     def _iter_exes(self, root: Path, max_depth: int) -> Iterable[Path]:
         # Depth-limited BFS instead of rglob+post-filter. rglob walks the
