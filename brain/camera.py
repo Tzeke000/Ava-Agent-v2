@@ -341,6 +341,19 @@ class CameraManager:
             return f"❌ Failed to save face sample: {e}"
 
     def train_face_recognizer(self, g: dict) -> str:
+        """LEGACY no-op since 2026-05-02 (Bug 0.4).
+
+        InsightFace is the canonical recognizer. It uses embedding similarity
+        with stored face references, not LBPH training, so there's nothing
+        to train here. Onboarding adds embeddings via
+        person_onboarding.add_face_sample → InsightFaceEngine.add_face,
+        which is the equivalent of "training" in the new pipeline.
+        """
+        return (
+            "OK — recognition uses InsightFace (embedding similarity), not OpenCV LBPH. "
+            "Add face samples through onboarding to grow the embedding set."
+        )
+        # Unreachable — kept for reference of the old LBPH flow.
         recognizer = self.get_face_recognizer(g)
         if recognizer is None:
             return "❌ OpenCV face recognizer is unavailable. Install opencv-contrib-python in this venv."
@@ -387,38 +400,56 @@ class CameraManager:
             return f"❌ Face training failed: {e}"
 
     def recognize_face(self, image, g: dict):
-        recognizer = self.get_face_recognizer(g)
-        if recognizer is None:
-            return "Facial recognition unavailable in this OpenCV build", None
-        model_path = Path(g.get("FACE_MODEL_PATH", "state/face_model.yml"))
-        if not model_path.exists():
-            return "Face model not trained", None
-        crop = self.extract_face_crop(image, g)
-        if crop is None:
-            return "No face detected", None
+        """Recognize a face using InsightFace as the canonical recognizer.
+
+        Bug 0.4 fix (2026-05-02): the previous implementation used OpenCV
+        LBPH (cv2.face.LBPHFaceRecognizer_create) and returned the message
+        "Facial recognition unavailable in this OpenCV build" because the
+        installed opencv-python (not opencv-contrib-python) doesn't ship
+        the face module. Meanwhile InsightFace was the actual recognizer
+        in use everywhere else, so the snapshot showed contradictory
+        state: recognized_text="...unavailable..." plus
+        recognized_person_id="zeke" from InsightFace.
+
+        Now this function delegates to the InsightFace engine stored at
+        g["_insight_face"] (matches person_onboarding.py and the
+        background-tick consumer). Returns the same shape as before:
+        (display_text, person_id_or_None).
+        """
+        if image is None:
+            return "No camera image", None
+        engine = g.get("_insight_face")
+        if engine is None or not getattr(engine, "available", False):
+            return "InsightFace not yet ready", None
         try:
-            recognizer.read(str(model_path))
-        except Exception:
-            pass
-        face_labels = g.get("face_labels") or self.load_face_labels(g)
-        threshold = float(g.get("FACE_RECOGNITION_THRESHOLD", 80.0))
-        try:
-            label, confidence = recognizer.predict(crop)
-            person_id = face_labels.get(int(label))
-            if person_id is None:
-                return f"Unknown face ({confidence:.1f})", None
-            if confidence <= threshold:
-                load_profile_by_id = g.get("load_profile_by_id")
-                if callable(load_profile_by_id):
-                    try:
-                        profile = load_profile_by_id(person_id)
-                        return f"Recognized: {profile.get('name', person_id)} ({confidence:.1f})", person_id
-                    except Exception:
-                        pass
-                return f"Recognized: {person_id} ({confidence:.1f})", person_id
-            return f"Unknown face ({confidence:.1f})", None
+            results = engine.analyze_frame(image)
         except Exception as e:
             return f"Recognition error: {e}", None
+        if not results:
+            return "No face detected", None
+        # Pick the largest face (most confident detection), matching
+        # extract_face_crop's "largest by area" tiebreak.
+        def _area(r):
+            try:
+                x1, y1, x2, y2 = r.get("bbox") or (0, 0, 0, 0)
+                return max(0, x2 - x1) * max(0, y2 - y1)
+            except Exception:
+                return 0
+        best = max(results, key=_area)
+        person_id = str(best.get("person_id") or "").strip() or None
+        confidence = float(best.get("confidence") or 0.0)
+        threshold = float(g.get("FACE_RECOGNITION_INSIGHT_THRESHOLD", 0.45))
+        if person_id is None or person_id == "unknown" or confidence < threshold:
+            return f"Unknown face (conf={confidence:.2f})", None
+        load_profile_by_id = g.get("load_profile_by_id")
+        if callable(load_profile_by_id):
+            try:
+                profile = load_profile_by_id(person_id)
+                name = profile.get("name") or person_id
+                return f"Recognized: {name} ({int(confidence*100)}% confidence)", person_id
+            except Exception:
+                pass
+        return f"Recognized: {person_id} ({int(confidence*100)}% confidence)", person_id
 
     def get_gaze_info(self, frame: Any, g: dict) -> dict:
         """Return gaze region, expression, attention state from EyeTracker + ExpressionDetector."""
