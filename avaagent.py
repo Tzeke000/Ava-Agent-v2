@@ -6631,17 +6631,17 @@ def _execute_tool_tags_from_reply(reply: str) -> tuple[str, list[str]]:
 def _pick_fast_model_fallback() -> str | None:
     """Prefer Ava's identity-baked model for fast conversational replies.
 
-    ava-personal:latest comes first because the fast path uses num_predict=80
-    and the model needs to produce a final response in those tokens. Reasoning
-    models like ava-gemma4 emit thinking-prefix output ("Thinking... Process:
-    1. ...") that consumes the budget before any final reply lands; ChatOllama
-    returns empty .content in that case, falling through to "I'm here." Use
-    ava-gemma4 only for the deep path where there's room for reasoning.
+    ava-personal:latest is the only model that fits cleanly in 8 GB VRAM
+    AND wins the naturalness bench (LOCAL_MODEL_OPTIMIZATION.md §5b). The
+    fast path uses num_predict=80, so reasoning models with <think> chains
+    are doubly bad here — they exhaust the budget before producing a final
+    reply. ava-gemma4 / gemma4 dropped from preference 2026-05-02 (don't
+    fit in 8 GB; force paging).
     """
     preferred = [
         "ava-personal:latest", "ava-personal",
-        "ava-gemma4", "ava-gemma4:latest",
-        "mistral:7b", "mistral", "llama3.1:8b", "llama3.1", "llama3:8b", "llama3",
+        "llama3.1:8b", "llama3.1", "llama3:8b", "llama3",
+        "mistral:7b", "mistral",
     ]
     try:
         from brain.model_routing import discover_available_model_tags
@@ -6657,7 +6657,16 @@ def _pick_fast_model_fallback() -> str | None:
 
 
 def _pick_deep_model_fallback() -> str | None:
-    preferred = ["gemma4:latest", "gemma4", "qwen2.5:14b", "deepseek-r1:14b", "deepseek-r1:8b", "llama3.1:8b", "gemma2:9b"]
+    """Deep-path model preference. Updated 2026-05-02.
+
+    deepseek-r1:8b leads — it's the Qwen3 8B reasoning distill, fits in
+    8 GB, and was the only bench model that caught both transitivity AND
+    letter-frequency tricks. Falls back to llama3.1:8b (same size, no
+    reasoning trace) and gemma2:9b (older but still fits). gemma4 (9.6 GB),
+    qwen2.5:14b (9 GB), and deepseek-r1:14b (9 GB) dropped — they exceed
+    the 8 GB VRAM ceiling and force Ollama paging.
+    """
+    preferred = ["deepseek-r1:8b", "llama3.1:8b", "gemma2:9b", "mistral:7b"]
     try:
         from brain.model_routing import discover_available_model_tags
 
