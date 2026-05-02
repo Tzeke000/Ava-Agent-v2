@@ -505,13 +505,18 @@ GATE_DEBUG_LOGGING = False  # off by default; Ava can toggle at runtime via ```D
 # =========================================================
 # EMOTIONS
 # =========================================================
+# Canonical emotion taxonomy. Originally Cowen & Keltner's 27-emotion set;
+# added 2026-05-02: frustration / distress / annoyance — required because
+# Ava could verbalize "I'm frustrated about my camera" but had no tracked
+# weight for it, so the orb showed calmness while she said the opposite.
+# See LOCAL_MODEL_OPTIMIZATION-class debugging notes in HISTORY.md.
 EMOTION_NAMES = [
     "admiration", "adoration", "aesthetic appreciation", "amusement",
-    "anxiety", "awe", "awkwardness", "boredom", "calmness", "confusion",
-    "craving", "disgust", "empathetic pain", "entrancement", "envy",
-    "excitement", "fear", "horror", "interest", "joy", "nostalgia",
-    "relief", "romance", "sadness", "satisfaction", "sexual desire",
-    "surprise"
+    "annoyance", "anxiety", "awe", "awkwardness", "boredom", "calmness",
+    "confusion", "craving", "disgust", "distress", "empathetic pain",
+    "entrancement", "envy", "excitement", "fear", "frustration", "horror",
+    "interest", "joy", "nostalgia", "relief", "romance", "sadness",
+    "satisfaction", "sexual desire", "surprise",
 ]
 
 DEFAULT_EMOTIONS = {
@@ -519,6 +524,7 @@ DEFAULT_EMOTIONS = {
     "adoration": 0.02,
     "aesthetic appreciation": 0.02,
     "amusement": 0.03,
+    "annoyance": 0.00,
     "anxiety": 0.02,
     "awe": 0.02,
     "awkwardness": 0.02,
@@ -527,11 +533,13 @@ DEFAULT_EMOTIONS = {
     "confusion": 0.02,
     "craving": 0.01,
     "disgust": 0.00,
+    "distress": 0.00,
     "empathetic pain": 0.03,
     "entrancement": 0.02,
     "envy": 0.00,
     "excitement": 0.06,
     "fear": 0.00,
+    "frustration": 0.00,
     "horror": 0.00,
     "interest": 0.17,
     "joy": 0.08,
@@ -574,6 +582,9 @@ DEFAULT_EMOTION_REFERENCE = {
     "satisfaction": {"meaning": "fulfillment after effort or alignment", "focus": "completion, competence, fit", "tone_tendency": "steady confidence, contentment", "valence": "positive", "energy": "medium", "direction": "stabilizing", "style_contributions": {"focused": 0.42, "neutral": 0.28}},
     "sexual desire": {"meaning": "erotic attraction or wanting", "focus": "physical and intimate attraction", "tone_tendency": "charged, intimate, focused", "valence": "mixed", "energy": "high", "direction": "toward_people", "style_contributions": {"focused": 0.10}},
     "surprise": {"meaning": "sudden interruption of expectation", "focus": "novelty, shock, unexpected shift", "tone_tendency": "alert, immediate, reactive", "valence": "mixed", "energy": "high", "direction": "outward", "style_contributions": {"playful": 0.16, "cautious": 0.22, "focused": 0.08}},
+        "frustration": {"meaning": "blocked from a goal she's pursuing", "focus": "the obstacle, the broken tool, the failed step", "tone_tendency": "tight, terse, action-seeking", "valence": "negative", "energy": "medium", "direction": "toward_problem", "style_contributions": {"focused": 0.50, "cautious": 0.22, "low_energy": 0.10}},
+        "annoyance": {"meaning": "low-grade irritation at a small repeated friction", "focus": "the recurring snag, the minor wrongness", "tone_tendency": "clipped, dismissive, unsentimental", "valence": "negative", "energy": "medium", "direction": "outward", "style_contributions": {"cautious": 0.34, "focused": 0.22, "low_energy": 0.14}},
+        "distress": {"meaning": "acute internal state of something being wrong, ranging from worry to panic", "focus": "the felt wrongness, the urgency, the lack of control", "tone_tendency": "concerned, urgent, sometimes hesitant", "valence": "negative", "energy": "high", "direction": "inward", "style_contributions": {"cautious": 0.62, "reflective": 0.18, "caring": 0.10}},
         }
 
 def ensure_emotion_reference_file():
@@ -1304,6 +1315,82 @@ def rich_emotion_prompt_text(mood: dict) -> str:
     active_goal = (system.get("active_goal", {}) or {}).get("name", "observe_silently")
     return f"Tracked richer emotions: {tracked_text}. Speakable now: {speak_text}. If uncertain but important, ask rather than assume. Askable emotions now: {ask_text}. Current operating goal: {active_goal}."
 
+
+def update_internal_emotions_from_reply(ai_reply: str) -> dict | None:
+    """Reflect Ava's own verbalized emotion back into her tracked mood state.
+
+    Added 2026-05-02 to fix the dialogue→emotion disconnect: Ava could say
+    "I'm frustrated about my camera" while her tracked mood showed 80-90%
+    calm because nothing analyzed her own reply text. Without this feedback
+    loop her words and her UI state can drift indefinitely.
+
+    Detects first-person emotion self-reports ("I'm frustrated", "I feel
+    sad", "this is annoying me") and bumps the matching weight. Reply-text
+    bumps are deliberately smaller than user-input bumps — a user's stated
+    emotion gets priority over Ava's self-narration.
+
+    Returns the updated mood dict on success, None if no emotion language
+    was detected (in which case nothing was changed).
+    """
+    if not ai_reply or not isinstance(ai_reply, str):
+        return None
+    text = ai_reply.lower()
+
+    # First-person framing — only treat language as a self-report if it's
+    # in first person. "Zeke seems frustrated" should NOT bump Ava's mood.
+    has_self_frame = any(
+        f in text
+        for f in ("i'm ", "i am ", "i feel ", "i felt ", "feeling ", "i find ", "this is ", "that's ")
+    )
+    if not has_self_frame:
+        return None
+
+    mood = load_mood()
+    weights = normalize_emotions(mood.get("emotion_weights", DEFAULT_EMOTIONS.copy()))
+    bumped = False
+
+    if any(w in text for w in ("frustrated", "frustrating", "annoyed", "annoying", "stuck on", "this isn't working")):
+        weights["frustration"] += 0.04
+        weights["annoyance"] += 0.02
+        bumped = True
+    if any(w in text for w in ("distressed", "worried", "concerned", "scared", "freaking out", "overwhelmed")):
+        weights["distress"] += 0.04
+        weights["anxiety"] += 0.02
+        bumped = True
+    if any(w in text for w in ("sad", "hurt", "let down", "disappointed")):
+        weights["sadness"] += 0.03
+        weights["empathetic pain"] += 0.02
+        bumped = True
+    if any(w in text for w in ("excited", "thrilled", "love this", "amazing")):
+        weights["excitement"] += 0.03
+        weights["joy"] += 0.02
+        bumped = True
+    if any(w in text for w in ("curious", "wondering", "interested in", "fascinated")):
+        weights["interest"] += 0.03
+        weights["entrancement"] += 0.01
+        bumped = True
+    if any(w in text for w in ("calm", "settled", "at ease", "relaxed")):
+        weights["calmness"] += 0.02
+        bumped = True
+    if any(w in text for w in ("happy", "glad", "pleased", "satisfied", "content")):
+        weights["joy"] += 0.02
+        weights["satisfaction"] += 0.02
+        bumped = True
+
+    if not bumped:
+        return None
+
+    weights = normalize_emotions(weights)
+    mood["emotion_weights"] = weights
+    mood["primary_emotions"] = top_two_emotions(weights)
+    mood["current_mood"] = mood["primary_emotions"][0]["name"]
+    mood["last_updated"] = now_iso()
+    mood["reason"] = f"updated from ava_self_report: {trim_for_prompt(ai_reply, limit=60)}"
+    mood = enrich_mood_state(mood)
+    save_mood(mood)
+    return mood
+
+
 def update_internal_emotions(user_input: str, active_profile: dict, expression_state: dict | None = None) -> dict:
     mood = load_mood()
     weights = normalize_emotions(mood.get("emotion_weights", DEFAULT_EMOTIONS.copy()))
@@ -1316,6 +1403,17 @@ def update_internal_emotions(user_input: str, active_profile: dict, expression_s
         weights["sadness"] += 0.02
         weights["empathetic pain"] += 0.03
         weights["anxiety"] += 0.01
+    # Frustration / annoyance / distress keyword detection — added 2026-05-02
+    # to close the dialogue→emotion gap (Ava could verbalize "frustrated"
+    # without any tracked weight reflecting it). "broken" / "failed" / "stuck"
+    # are tooling friction words; map to frustration when in the user's
+    # context. "distressed" / "scared" / "panicked" map to distress.
+    if any(w in text for w in ["frustrated", "frustrating", "annoyed", "annoying", "broken", "failed", "doesn't work", "not working", "stuck"]):
+        weights["frustration"] += 0.05
+        weights["annoyance"] += 0.02
+    if any(w in text for w in ["distressed", "panicked", "panic", "scared", "terrified", "worried sick", "freaking out", "overwhelmed"]):
+        weights["distress"] += 0.05
+        weights["anxiety"] += 0.02
     if any(w in text for w in ["art", "artist", "creative", "music", "paint", "draw", "design"]):
         weights["aesthetic appreciation"] += 0.03
         weights["interest"] += 0.02

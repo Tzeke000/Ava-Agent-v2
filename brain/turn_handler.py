@@ -48,6 +48,16 @@ def finalize_ava_turn(
     _av.log_chat("assistant", ai_reply, {"person_id": person_id, "person_name": active_profile["name"], "actions": actions})
     _av.maybe_autoremember(user_input, ai_reply, person_id)
 
+    # Reflect Ava's verbalized emotion back into her tracked mood. Closes the
+    # dialogue→emotion gap surfaced 2026-05-02 (Ava could say "frustrated"
+    # while the orb showed 80-90% calm because nothing analyzed her own
+    # reply text). Best-effort; swallow errors so a mood update bug never
+    # breaks turn finalization.
+    try:
+        _av.update_internal_emotions_from_reply(ai_reply)
+    except Exception as _emo_exc:
+        print(f"[turn_handler] reply-emotion update failed: {_emo_exc!r}")
+
     # Persist turn to state/chat_history.jsonl so the UI can hydrate across restarts.
     try:
         import json as _json
