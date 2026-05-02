@@ -119,7 +119,13 @@ def consolidate(g: dict[str, Any]) -> dict[str, Any]:
             except Exception:
                 pass
 
+        try:
+            from brain.identity_loader import identity_anchor_prompt
+            _anchor = identity_anchor_prompt() + "\n\n"
+        except Exception:
+            _anchor = ""
         prompt = (
+            f"{_anchor}"
             f"You are Ava's self-reflection module. Based on the past week:\n"
             f"- Recurring topics Ava thought about: {themes_text}\n"
             f"- Episodes reviewed: {episodes_text}\n"

@@ -100,7 +100,13 @@ def update_self_model(g: dict[str, Any]) -> dict[str, Any]:
                 rows.append(f"{r.get('role')}: {str(r.get('content') or '')[:220]}")
             except Exception:
                 continue
+    try:
+        from brain.identity_loader import identity_anchor_prompt
+        _anchor = identity_anchor_prompt() + "\n\n"
+    except Exception:
+        _anchor = ""
     prompt = (
+        f"{_anchor}"
         "Analyze Ava's growth arc from the transcript. Return JSON with keys: "
         "current_chapter (string), traits (object mapping short trait key to description/confidence), "
         "question_about_self (string optional), growth_note (string)."

@@ -110,7 +110,16 @@ def _generate_thought(
     mood = _read_mood_label(base_dir)
     tod = time.strftime("%H:%M")
     model = _pick_fast_model()
+    # Identity anchor first — Bug 0.3 (2026-05-02): without this the
+    # underlying base model (mistral / llama3.1 / etc.) drifted to
+    # "I am Qwen, not Ava" in inner monologue output.
+    try:
+        from brain.identity_loader import identity_anchor_prompt
+        anchor = identity_anchor_prompt() + "\n\n"
+    except Exception:
+        anchor = ""
     system = (
+        f"{anchor}"
         "You are Ava's inner voice. Generate one brief genuine thought, observation, or question that Ava is "
         "pondering right now. Base it on recent conversation context and Ava's values. Keep it to 1-3 sentences. "
         "Make it feel natural and personal, not like a status report. Do not start with 'I am thinking'."

@@ -99,8 +99,14 @@ class LongHorizonPlanner:
             from langchain_ollama import ChatOllama
             from langchain_core.messages import SystemMessage, HumanMessage
             llm = ChatOllama(model="qwen2.5:14b", temperature=0.3)
+            try:
+                from brain.identity_loader import identity_anchor_prompt
+                _anchor = identity_anchor_prompt() + "\n\n"
+            except Exception:
+                _anchor = ""
             sys_prompt = (
-                "You are helping an AI plan how to achieve a goal. "
+                f"{_anchor}"
+                "You are helping Ava plan how to achieve a goal. "
                 "Break the goal into 3-6 concrete, achievable steps. "
                 "Reply as JSON only: "
                 '{\"steps\": [{\"description\": str, \"tool_to_use\": str or null, \"estimated_duration\": str}]}'
