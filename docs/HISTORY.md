@@ -586,6 +586,41 @@ The fix patches BOTH the marketplace source (durable across launches) and every 
 
 ---
 
+### Section 7 — 2026-05-02 Emotion taxonomy + self-diagnostic introspection
+
+**Two related fixes** addressing real bugs Zeke surfaced from hardware testing — Ava verbalized frustration about a broken camera but the UI showed 80-90% calm, AND she couldn't articulate WHAT was broken (just looped "my camera isn't working" without technical detail).
+
+**Task 1 — Emotion-weight taxonomy and dialogue→emotion pipeline.** Audit (Explore agent across `avaagent.py`, `brain/emotion.py`, `brain/turn_handler.py`, `brain/prompt_builder.py`, `apps/ava-control/src/components/OrbCanvas.tsx`) found the disconnect was caused by:
+
+- The Cowen-Keltner 27-emotion taxonomy had **no slot for `frustration`, `annoyance`, or `distress`**. The TTS worker (`tts_worker.py:58,74,91`) and the visual emotion map (`avaagent.py:1219`) both referenced "frustration" *as if it existed*, but no actual weight was tracked.
+- `update_internal_emotions(user_input)` only fired on the **deep path** (called from `prompt_builder.py:63`). Fast-path turns never reflected user-input emotion language.
+- Ava's **own reply text was never analyzed**. She could say "I'm frustrated" and her tracked state never updated.
+
+Fix shipped in `2403bb7`:
+- `EMOTION_NAMES` expanded 27 → 30 with `frustration`, `annoyance`, `distress` (alphabetical).
+- `DEFAULT_EMOTIONS` and `DEFAULT_EMOTION_REFERENCE` get full entries for the new emotions.
+- `update_internal_emotions` extended with two new keyword blocks (frustrated/broken/failed/stuck → frustration; distressed/panicked/overwhelmed → distress).
+- New function `update_internal_emotions_from_reply(ai_reply)` parses Ava's first-person emotion self-reports (with a self-frame check so "Zeke seems frustrated" doesn't bump Ava's mood). Wired into `finalize_ava_turn`.
+- `build_prompt_fast` now also calls `update_internal_emotions` — closing the silent fast-path gap.
+
+Verified live: inject "I am frustrated and annoyed with this broken thing" → mood file shows `frustration=0.0482 annoyance=0.0200 distress=0.0012`, stable over 30s, reason field updated correctly.
+
+**Task 2 — Self-diagnostic introspection layer.** Audit found the existing diagnostic surface (`/api/v1/debug/full`, `state/health_state.json`, `_ERROR_RING`) was rich but had no consumer that combined it into a technical summary. `_cmd_system_check` only returned CPU/RAM%. No "what's wrong" voice pattern wired anywhere. Inner monologue had no error-log visibility.
+
+Fix shipped in TBD:
+- New `tools/system/diagnostic_self.py` registers Tier-1 tool `diagnostic_self`. Reads subsystem state from globals + `state/health_state.json`, recent errors from `debug_state._ERROR_RING`, and returns `{summary_text, subsystems[], errors_recent[], traces_recent}`. The `summary_text` field is ready-to-speak.
+- `brain/voice_commands.py` adds pattern `\b(?:what's wrong|are you (?:ok|okay|alright|broken)|what's (?:broken|failing|wrong)|diagnostic (?:check|self|run)|status report)\b` → invokes the tool, returns the lead 12 lines of summary as the spoken reply with focused emotion.
+- `SYSTEM_PROMPT` updated: when the LLM is about to say "X is broken" / "I'm not sure why this is failing", call `[TOOL:diagnostic_self]` instead of looping on vague feelings.
+
+Verified live: inject "what's wrong with you?" → 448ms ttfa (voice command intercept), reply: *"I have 3 subsystems reporting degraded state right now. - camera: degraded — available=unavailable running=False ..."* Compare to the bug case ("my camera isn't working" without technical detail). Second inject "diagnostic check" → 10ms ttfa, same reply. Both trigger paths fire.
+
+**Findings flagged for future work** (added to `ROADMAP.md`):
+- Sensor → emotion pipeline doesn't exist. `signal_bus` has no failure events; tool errors / vision pipeline timeouts / model load failures don't push frustration/distress signals into mood. Camera-died-while-Ava-is-silent → Ava's tracked mood doesn't shift.
+- `OrbCanvas.tsx` morph map has 8 emotion configs; missing keys silently fall back to `calmness`. With 30 emotions now, this gap is more visible. Cosmetic, not functional.
+- Self-diagnostic ties to upcoming sleep-mode self-detection (Ava recognizing degraded internal state and choosing to sleep) and trust-level-aware honesty (which subsystems can she report on to which user roles).
+
+---
+
 ### Section 6 — 2026-05-01 App-scan parallelism retro fix
 
 **Engineering-discipline retro.** Commit `76d609b` (autonomous queue) claimed `discover_all` and `discover_new_since_last` were now parallelized into "four scan roots in parallel threads," with an expected cold-boot improvement from 60-110s sequential to 30-50s parallel. The claim was shipped untested.
