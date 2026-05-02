@@ -4,7 +4,14 @@ Dual-brain parallel inference — Ava's split attention system.
 One Ava. Two inference streams sharing the same identity, memory, personality.
 
 Stream A — Foreground (conversational):  ava-personal:latest
-Stream B — Background (thinking):        qwen2.5:14b  /  kimi-k2.6:cloud
+Stream B — Background (thinking):        deepseek-r1:8b  /  kimi-k2.6:cloud
+
+Model preferences updated 2026-05-02 per LOCAL_MODEL_OPTIMIZATION.md.
+Both ava-gemma4 (9.6 GB) and gemma4 (9.6 GB) were dropped — they exceed the
+8 GB VRAM ceiling and forced Ollama paging on every turn. ava-personal
+(Llama 3.1 8B, 4.9 GB Q4_K_M, fine-tuned) wins foreground for naturalness
++ matched-depth replies. deepseek-r1:8b (Qwen3 8B, 5.2 GB Q4_K_M, native
+chain-of-thought) wins background for reasoning.
 
 Bootstrap: Ava decides how much she multitasks. Some people are natural
 multitaskers, some prefer focus. The queue, insight frequency, and sharing
@@ -38,16 +45,19 @@ class BrainTask:
 
 class DualBrain:
 
-    # Stream A — Ava's primary voice. Prefer the identity-baked ava-gemma4
-    # model; fall back to ava-personal:latest if it isn't installed yet.
-    FOREGROUND_MODEL_PREFERRED = "ava-gemma4"
-    FOREGROUND_MODEL_FALLBACK = "ava-personal:latest"
+    # Stream A — Ava's primary voice. ava-personal:latest is the fine-tuned
+    # Llama 3.1 8B Q4_K_M (4.9 GB) — fits cleanly in 8 GB VRAM, won the
+    # naturalness bench decisively. llama3.1:8b is the stock-base fallback.
+    FOREGROUND_MODEL_PREFERRED = "ava-personal:latest"
+    FOREGROUND_MODEL_FALLBACK = "llama3.1:8b"
 
-    # Stream B — background reasoning. Prefer raw gemma4:latest; cloud
-    # alternatives kick in when online.
-    BACKGROUND_MODEL_LOCAL = "gemma4:latest"
+    # Stream B — background reasoning. deepseek-r1:8b is the Qwen3 8B
+    # reasoning distill (5.2 GB Q4_K_M, native <think> chain) — only model
+    # in the bench that caught both transitivity AND letter-frequency
+    # tricks. Cloud alternatives kick in when online.
+    BACKGROUND_MODEL_LOCAL = "deepseek-r1:8b"
     BACKGROUND_MODEL_CLOUD = "kimi-k2.6:cloud"
-    BACKGROUND_MODEL_FALLBACK = "qwen2.5:14b"
+    BACKGROUND_MODEL_FALLBACK = "llama3.1:8b"
 
     def __init__(self, g: dict[str, Any]):
         self._g = g
@@ -161,8 +171,8 @@ class DualBrain:
         g = self._g
         if g.get("_is_online") and g.get("_ollama_cloud_reachable"):
             return self.BACKGROUND_MODEL_CLOUD
-        # Prefer raw gemma4 (matches the foreground identity model and is
-        # natively multimodal). If it isn't installed, fall back to qwen2.5:14b.
+        # Prefer deepseek-r1:8b (5.2 GB, fits cleanly, native chain-of-thought).
+        # If it isn't installed, fall back to llama3.1:8b (4.9 GB).
         installed = self._installed_models()
         if self.BACKGROUND_MODEL_LOCAL in installed:
             return self.BACKGROUND_MODEL_LOCAL

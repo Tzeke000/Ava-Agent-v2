@@ -2,7 +2,7 @@
 brain/ava_memory.py — mem0 wrapper for Ava.
 
 Uses mem0ai 2.0+ with:
-  - LLM:        Ollama (`ava-gemma4` by default — falls back to ava-personal:latest)
+  - LLM:        Ollama (`ava-personal:latest` — Llama 3.1 8B Q4_K_M, fine-tuned)
   - Embedder:   Ollama (`nomic-embed-text:latest`)
   - Vector DB:  ChromaDB at `memory/mem0_chroma/`
 
@@ -71,8 +71,9 @@ class AvaMemory:
             print(f"[ava_memory] disabled (init failed: import: {e!r}) — falling back to ChromaDB only")
             return False
 
-        # Pick the model that's actually available. ava-gemma4 is preferred;
-        # fall back to ava-personal:latest, which is always present.
+        # ava-personal:latest is the cleanest fit (4.9 GB Q4_K_M).
+        # Prefer it over the stock llama3.1:8b base for persona consistency
+        # in extracted facts.
         llm_model = self._pick_llm_model()
         chroma_path = self._base / "memory" / "mem0_chroma"
         chroma_path.mkdir(parents=True, exist_ok=True)
@@ -115,11 +116,14 @@ class AvaMemory:
 
     @staticmethod
     def _pick_llm_model() -> str:
+        # ava-gemma4 dropped 2026-05-02 — 9.6 GB doesn't fit in the 8 GB
+        # VRAM ceiling and forces Ollama paging on every mem0 extraction
+        # call. ava-personal (4.9 GB Llama 3.1 8B Q4) is the cleanest fit.
         try:
             import requests
             r = requests.get("http://localhost:11434/api/tags", timeout=2)
             names = [m.get("name", "") for m in (r.json().get("models") or [])]
-            for candidate in ("ava-gemma4", "ava-gemma4:latest", "ava-personal:latest"):
+            for candidate in ("ava-personal:latest", "ava-personal", "llama3.1:8b"):
                 if candidate in names:
                     return candidate
         except Exception:

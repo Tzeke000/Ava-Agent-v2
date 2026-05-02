@@ -352,9 +352,11 @@ def run_ava(
                     f"User just said: {user_input}\n"
                     f"Respond naturally and warmly. Don't add any tool blocks or formatting."
                 )
-                # Prefer the identity-baked ava-gemma4 model for the simple
-                # fast path; fall back to whatever _pick_fast_model_fallback
-                # finds, then to the configured LLM_MODEL.
+                # Pick the fast-path model via _pick_fast_model_fallback
+                # which prefers ava-personal:latest (Llama 3.1 8B fine-tune,
+                # 4.9 GB — fits cleanly in 8 GB VRAM). ava-gemma4 was dropped
+                # 2026-05-02 per LOCAL_MODEL_OPTIMIZATION.md — its 9.6 GB
+                # forced paging on every fast-path turn.
                 _fast_pick = _av._pick_fast_model_fallback()
                 _fast_model = _fast_pick or str(_av.LLM_MODEL or "ava-personal:latest")
                 print(f"[perf] fast pre-llm-init {_elapsed()}")
