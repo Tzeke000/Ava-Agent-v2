@@ -532,7 +532,15 @@ def build_prompt_fast(
 
     active_profile = _av.set_active_person(active_person_id, source="conversation")
     personality = _av.load_personality()
-    mood = _av.load_mood()
+    # Update mood from user input on the fast path too. Previously only
+    # build_prompt (deep path) called update_internal_emotions, so fast-path
+    # turns never reflected the user's verbal emotion in tracked state.
+    # Added 2026-05-02 alongside the dialogue→emotion pipeline fix.
+    try:
+        mood = _av.update_internal_emotions(user_input, active_profile, expression_state=expression_state)
+    except Exception as _emo_exc:
+        print(f"[prompt_builder_fast] update_internal_emotions failed: {_emo_exc!r}")
+        mood = _av.load_mood()
 
     face_status = perception.face_status
     profile_summary = {
