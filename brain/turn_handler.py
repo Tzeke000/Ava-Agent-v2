@@ -59,6 +59,9 @@ def finalize_ava_turn(
         print(f"[turn_handler] reply-emotion update failed: {_emo_exc!r}")
 
     # Persist turn to state/chat_history.jsonl so the UI can hydrate across restarts.
+    # Bug 0.2 fix (2026-05-02): also stamp source labels (zeke / claude_code /
+    # ava_response) so every entry is auditable and inner monologue can never
+    # be confused with user input.
     try:
         import json as _json
         from pathlib import Path as _Path
@@ -70,13 +73,26 @@ def finalize_ava_turn(
         except Exception:
             _emo = "neutral"
         _used_model = str(_g.get("_last_invoked_model") or _av.LLM_MODEL or "")
+        # Refuse to persist 💭-prefixed content to chat history — same
+        # isolation rule as log_chat. If somehow leaked here, drop it loud.
+        _user_safe = str(user_input or "")
+        _reply_safe = str(ai_reply or "")
+        if "💭" in _user_safe or "💭" in _reply_safe:
+            print("[chat_history] REFUSED: 💭-prefixed content blocked from chat_history (inner monologue isolation)")
+            raise RuntimeError("inner monologue text leaked into chat_history persist path")
+        # Resolve source. person_id is already populated by reply_engine's
+        # active-profile flow; "claude_code" is the dev-injection profile.
+        _user_source = _av._resolve_chat_source("user", {"person_id": person_id})
+        _ava_source = _av._resolve_chat_source("assistant", {})
         with _hist_path.open("a", encoding="utf-8") as _f:
             _f.write(_json.dumps({
-                "ts": _now, "role": "user", "content": str(user_input or ""),
+                "ts": _now, "role": "user", "source": _user_source,
+                "content": _user_safe,
                 "person_id": person_id, "person_name": active_profile.get("name", ""),
             }, ensure_ascii=False) + "\n")
             _f.write(_json.dumps({
-                "ts": _now, "role": "assistant", "content": str(ai_reply or ""),
+                "ts": _now, "role": "assistant", "source": _ava_source,
+                "content": _reply_safe,
                 "person_id": person_id, "person_name": active_profile.get("name", ""),
                 "model": _used_model, "emotion": _emo,
                 "turn_route": str(turn_route or ""),

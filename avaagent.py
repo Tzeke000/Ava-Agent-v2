@@ -5785,8 +5785,71 @@ def maybe_autonomous_initiation(history, image, recognized_person_id: str | None
 # =========================================================
 # CHAT LOG
 # =========================================================
+
+# Source-specific role labels for chatlog attribution. Bug 0.2 fix
+# (2026-05-02): replace blanket "user"/"assistant" tagging with concrete
+# source labels so the chatlog is auditable AND inner thoughts can never
+# be misread as user commands. Pattern matches the memory-attribution
+# work in commit 9eb4b03.
+_VALID_CHAT_SOURCES = {
+    "zeke",          # the human user
+    "claude_code",   # claude-code injecting via /api/v1/debug/inject_transcript
+    "ava_response",  # Ava replying conversationally
+    "ava_initiative",  # Ava reaching out proactively (camera-driven, etc.)
+    "unknown_user",  # fallback when person_id is missing or unknown
+}
+
+
+def _resolve_chat_source(role: str, meta: dict | None) -> str:
+    """Map (role, meta) to one of _VALID_CHAT_SOURCES.
+
+    Inner monologue text MUST NOT pass through here — it lives only in
+    state/inner_monologue.json. If something tries to log a 💭-prefixed
+    string we route it to the explicit "ava_internal" source which the
+    log_chat writer then refuses to persist.
+    """
+    meta = meta or {}
+    if role == "assistant":
+        if meta.get("initiative"):
+            return "ava_initiative"
+        return "ava_response"
+    person_id = str(meta.get("person_id") or "").strip().lower()
+    if person_id == "zeke":
+        return "zeke"
+    if person_id == "claude_code":
+        return "claude_code"
+    if not person_id:
+        return "unknown_user"
+    return person_id  # passthrough for registered third-party profiles
+
+
 def log_chat(role: str, content: str, meta: dict | None = None):
-    row = {"timestamp": now_iso(), "role": role, "content": content, "meta": meta or {}}
+    """Append one chatlog row.
+
+    Adds a `source` field next to `role`. Refuses to persist content that
+    looks like inner monologue (💭-prefixed) — that text belongs only on
+    state/inner_monologue.json and the snapshot's inner_life surface, never
+    in the chat history where it could be read back as user input on a
+    later turn (the self-loop risk Bug 0.2 was opened to prevent).
+    """
+    if isinstance(content, str) and "💭" in content:
+        # Hard refusal — drop the row, log a warning so the path is
+        # visible if it ever starts firing in production.
+        print("[log_chat] REFUSED: 💭-prefixed content blocked from chatlog (inner monologue isolation)")
+        try:
+            from brain.debug_state import record_error
+            record_error("chat_log_isolation", "inner monologue text was almost written to chatlog", "")
+        except Exception:
+            pass
+        return
+    source = _resolve_chat_source(role, meta)
+    row = {
+        "timestamp": now_iso(),
+        "role": role,         # back-compat: existing readers still work
+        "source": source,     # new: source-specific attribution
+        "content": content,
+        "meta": meta or {},
+    }
     try:
         with open(CHAT_LOG_PATH, "a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")

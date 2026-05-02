@@ -2269,6 +2269,17 @@ def create_app():
         if not text:
             return {"ok": False, "error": "empty text"}
 
+        # Bug 0.2 hard isolation (2026-05-02): inner monologue text MUST NOT
+        # be replayed through the user-input pipeline. The 💭 prefix is the
+        # canonical marker for inner-thought content. Refusing inject of
+        # 💭-prefixed text closes the self-loop attack surface where Ava's
+        # own thought could be re-injected and read as a user command.
+        if "💭" in text:
+            return {
+                "ok": False,
+                "error": "refused: 💭-prefixed text cannot be injected as user input (inner monologue isolation)",
+            }
+
         host = _g()
         wake_source = (str(body.get("wake_source") or "test_wake")).strip() or "test_wake"
         wait_for_audio = bool(body.get("wait_for_audio") or False)
