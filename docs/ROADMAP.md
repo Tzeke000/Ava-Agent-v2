@@ -192,6 +192,16 @@ Lightweight Python scripts (not separate AI instances) act as peripheral sensors
 
 **Connects to:** existing `brain/signal_bus.py`, Win32 zero-poll watchers, the heartbeat consume loop. The architecture already exists — this expands it from 3 watchers (clipboard / window / app-install) to a full sensor mesh.
 
+### Sensor → emotion pipeline (gap surfaced 2026-05-02)
+The 2026-05-02 emotion audit found that subsystem failures don't currently push deltas into Ava's tracked mood. When her camera dies, the vision pipeline times out, a tool fails, or a model load errors out, none of those publish a `SIGNAL_VISION_FAILED` / `SIGNAL_TOOL_FAILED` / `SIGNAL_MODEL_DEGRADED` event, and `update_internal_emotions` doesn't run on signal-bus events. Ava's mood only updates from user input or her own dialogue. The cleanest place to wire this is on top of the sub-agent / sensor signal architecture above — each subsystem that can fail gets a corresponding signal type and a handler that nudges `frustration`, `distress`, or `confusion` based on severity.
+
+**Connects to:** `brain/signal_bus.py`, `brain/health.py` (already computes per-subsystem health but doesn't publish), the new `tools/system/diagnostic_self.py` (consumer of the same data), Section 3 sleep mode self-detection.
+
+### OrbCanvas emotion morph gap (cosmetic, surfaced 2026-05-02)
+`apps/ava-control/src/components/OrbCanvas.tsx:77-79` has 8 hardcoded emotion morphs (logical, analyzing, neutral, bored2, thinking_deep, realization, scared, proud). Any other emotion silently falls back to `calmness`. With the 30-emotion taxonomy, anger / frustration / annoyance / distress / sadness / many others all render as calmness. **Not a functional bug** — the snapshot exposes the real `mood.primary_emotion` correctly — but the orb visualization doesn't differentiate. Adding morphs for the negative-affect cluster (frustration, anger, anxiety, fear) is the highest-leverage next step.
+
+**Connects to:** `apps/ava-control/src/components/OrbCanvas.tsx`, the 30-emotion taxonomy in `avaagent.py`.
+
 ### Dynamic attention allocation
 Priority interrupt levels:
 - **CRITICAL** — wake word, direct address

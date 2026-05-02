@@ -320,6 +320,41 @@ def _cmd_system_check(text, m, g):
         return "Stats not available right now.", "neutral"
 
 
+@_builtin(
+    r"\b(?:what(?:'s|s)?\s+wrong(?:\s+with\s+you)?|are\s+you\s+(?:ok|okay|alright|broken)"
+    r"|what(?:'s|s)?\s+(?:broken|failing|wrong)|diagnostic\s+(?:check|self|run)"
+    r"|status\s+report)\b"
+)
+def _cmd_diagnostic_self(text, m, g):
+    """Run the self-diagnostic introspection tool and speak the summary.
+
+    Wired 2026-05-02 to fix the "I can't articulate what's broken"
+    behavior — when Ava was asked diagnostic questions she looped on
+    vague feelings ("my camera isn't working") instead of returning
+    technical specifics. This handler invokes tools.system.diagnostic_self
+    which pulls subsystem health, recent errors, and last-good
+    timestamps and returns a ready-to-speak summary.
+    """
+    try:
+        reg = g.get("_tool_registry") or g.get("_desktop_tool_registry")
+        if reg is None:
+            return "Tool registry not available — Ava may still be booting.", "confusion"
+        result = reg.execute_tool("diagnostic_self", {}, g)
+        if isinstance(result, dict) and result.get("ok"):
+            summary = str(result.get("summary_text") or "").strip()
+            if summary:
+                # Cap spoken length — the full report can be ~30 lines.
+                # First few lines are the headline; rest goes in chat history.
+                head = summary.split("\n")
+                lead = "\n".join(head[: min(len(head), 12)])
+                if len(head) > 12:
+                    lead += f"\n(plus {len(head) - 12} more diagnostic lines in the full report)"
+                return lead, "focused"
+        return "Diagnostic ran but produced no output. Check the tool registry.", "confusion"
+    except Exception as e:
+        return f"Diagnostic failed: {type(e).__name__}: {str(e)[:120]}", "frustration"
+
+
 # ── Mute / sleep / wake ──────────────────────────────────────────────────────
 
 @_builtin(r"^\s*(?:mute|stop talking|be quiet|hush|shush)\s*$")
