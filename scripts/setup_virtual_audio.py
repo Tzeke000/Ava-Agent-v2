@@ -96,43 +96,79 @@ def verify_presence(sd) -> bool:
     return all_found
 
 
-def tone_test(sd, np_mod) -> bool:
-    """Play a 1s 440Hz tone on CABLE Input, capture from CABLE Output, verify peak.
+def _device_rate(sd, idx: int, fallback: int = 44100) -> int:
+    try:
+        rate = sd.query_devices(idx).get("default_samplerate")
+        return int(rate) if rate else fallback
+    except Exception:
+        return fallback
 
-    This is the minimum end-to-end test: bytes Claude plays into the
-    Claude->Ava cable should appear on the matching capture side.
+
+def tone_test(sd, np_mod, src_name: str = "CABLE Input", sink_name: str = "CABLE Output") -> bool:
+    """Play a 1s 440Hz tone on `src_name`, capture from `sink_name`, verify peak.
+
+    Sample rate is queried from the actual devices at runtime — hardcoding
+    48 kHz on a 44.1 kHz device caused WASAPI to emit garbage frames whose
+    raw float32 bit pattern read as 3e38 (max float).
+
+    Uses `sd.playrec` so playback and capture run on the same call —
+    avoids the race where `sd.rec` returns its buffer before the recording
+    callback has filled it, which surfaced as NaN samples on this machine.
     """
-    print("Running tone test (1s @ 440Hz, CABLE Input -> CABLE Output)...")
-    sample_rate = 48000
+    print(f"Running tone test (1s @ 440Hz, {src_name} -> {sink_name})...")
+
+    out_idx = _find_device(sd, src_name, "output")
+    in_idx = _find_device(sd, sink_name, "input")
+    if out_idx is None or in_idx is None:
+        print(f"  Cannot run tone test — {src_name}/{sink_name} not found.")
+        return False
+
+    out_rate = _device_rate(sd, out_idx)
+    in_rate = _device_rate(sd, in_idx)
+    if out_rate != in_rate:
+        # If the two cable endpoints disagree, the OS will resample for us
+        # — but only cleanly if both rates are sane. Pick the lower one so
+        # we never ask either device for samples it can't generate.
+        sample_rate = min(out_rate, in_rate)
+        print(f"  Note: device rates differ (out={out_rate} Hz, in={in_rate} Hz); using {sample_rate} Hz.")
+    else:
+        sample_rate = out_rate
+    print(f"  Sample rate: {sample_rate} Hz")
+
     duration = 1.0
     freq = 440.0
     t = np_mod.linspace(0, duration, int(sample_rate * duration), endpoint=False)
-    tone = (0.3 * np_mod.sin(2 * np_mod.pi * freq * t)).astype(np_mod.float32)
+    tone = (0.3 * np_mod.sin(2 * np_mod.pi * freq * t)).reshape(-1, 1).astype(np_mod.float32)
 
-    out_idx = _find_device(sd, "CABLE Input", "output")
-    in_idx = _find_device(sd, "CABLE Output", "input")
-    if out_idx is None or in_idx is None:
-        print("  Cannot run tone test — CABLE not found.")
+    try:
+        captured = sd.playrec(
+            tone,
+            samplerate=sample_rate,
+            channels=1,
+            dtype="float32",
+            device=(in_idx, out_idx),
+        )
+        sd.wait()
+    except Exception as e:
+        print(f"  [FAIL] playrec error: {e!r}")
         return False
 
-    # Start recording before play, capture for slightly longer than play to catch tail.
-    rec = sd.rec(
-        int(sample_rate * (duration + 0.5)),
-        samplerate=sample_rate,
-        channels=1,
-        device=in_idx,
-        dtype="float32",
-    )
-    time.sleep(0.05)  # let recorder warm up
-    sd.play(tone, samplerate=sample_rate, device=out_idx, blocking=True)
-    sd.wait()  # wait for record buffer to finish
-
-    # Analyse: peak amplitude in captured signal should be > 0.05.
-    captured = rec.flatten()
-    peak = float(np_mod.abs(captured).max()) if captured.size else 0.0
-    print(f"  Captured peak amplitude: {peak:.4f}  (expected > 0.05)")
+    flat = np_mod.asarray(captured).flatten()
+    if flat.size == 0:
+        print("  [FAIL] recording returned empty buffer.")
+        return False
+    if not np_mod.all(np_mod.isfinite(flat)):
+        nan_count = int(np_mod.isnan(flat).sum())
+        inf_count = int(np_mod.isinf(flat).sum())
+        print(f"  [FAIL] capture contains non-finite samples ({nan_count} NaN, {inf_count} inf) — driver / device-config issue.")
+        return False
+    peak = float(np_mod.abs(flat).max())
+    print(f"  Captured peak amplitude: {peak:.4f}  (expected ~0.3, sane range 0.05–1.0)")
     if peak < 0.05:
         print("  [FAIL] Tone did not reach the capture side. Check cable routing or sample rate.")
+        return False
+    if peak > 1.5:
+        print("  [FAIL] Captured peak is implausibly large — likely a sample-rate or dtype mismatch.")
         return False
     print("  [OK] Tone end-to-end loopback verified.")
     return True
@@ -150,14 +186,38 @@ def main() -> int:
     sd, np_mod = audio
 
     ok_presence = verify_presence(sd)
+    basic_present = (
+        _find_device(sd, "CABLE Input", "output") is not None
+        and _find_device(sd, "CABLE Output", "input") is not None
+    )
+    a_present = (
+        _find_device(sd, "CABLE-A Input", "output") is not None
+        and _find_device(sd, "CABLE-A Output", "input") is not None
+    )
+
+    if args.tone_test:
+        any_failed = False
+        if basic_present:
+            if not tone_test(sd, np_mod, "CABLE Input", "CABLE Output"):
+                any_failed = True
+        if a_present:
+            print()
+            if not tone_test(sd, np_mod, "CABLE-A Input", "CABLE-A Output"):
+                any_failed = True
+        if not basic_present and not a_present:
+            print("  Cannot run tone test — no CABLE devices detected.")
+            any_failed = True
+        if any_failed:
+            return 1
+        if not ok_presence:
+            print()
+            print("Note: basic CABLE verified end-to-end, but A+B pack still missing.")
+            _print_install_help()
+            return 1
+
     if not ok_presence:
         _print_install_help()
         return 1
-
-    if args.tone_test:
-        ok_tone = tone_test(sd, np_mod)
-        if not ok_tone:
-            return 1
 
     print("VB-CABLE A+B verified. Ready for the doctor harness driver.")
     print("Next: ensure Ava is running (start_ava.bat), then:")
