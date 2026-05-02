@@ -7,6 +7,28 @@ Items are organized by readiness, not priority within a section. Most items have
 
 ---
 
+## Cross-cutting constraints
+
+Hardware and architecture constraints that affect multiple roadmap items downstream. Items in later sections should be designed with these in mind.
+
+### 8 GB VRAM ceiling — only one generation model OR `llava` resident at a time
+
+Ava runs on an Acer Nitro V 16S with an RTX 5060 Laptop GPU (8 GB VRAM, ~7.4 GB usable). Documented in detail in [`LOCAL_MODEL_OPTIMIZATION.md`](LOCAL_MODEL_OPTIMIZATION.md).
+
+The clean post-Ava-stop benchmark on 2026-05-01 confirmed: with `llava:13b` resident (vision pipeline), no 4-7 GB Q4 generation model can also stay resident — Ollama pages, and a single cold-load stretches from ~3 s to 26-90 s. Two concurrent generation models (e.g. `ava-personal` 4.9 GB + `deepseek-r1:8b` 5.2 GB = 10.1 GB) similarly exceed VRAM.
+
+This is a load-bearing constraint that affects:
+
+- **Sleep mode + handoff system** (Section 3) — the dream-phase LLM curriculum cannot run while the foreground voice model is hot. Sleep entry must explicitly unload foreground via `keep_alive: 0`, load the dream-phase model, reverse on wake. Any voice turn during the unload window pays full reload cost.
+- **Vision activation** (existing camera + InsightFace pipeline) — activating `llava` while a generation model is resident forces the generation model out and the next user turn pays a 30-90 s reload. Mitigation options: batch vision into windows that don't overlap turns, accept the cost as a known budget, or move to a smaller vision model (quantized SmolVLM, MiniCPM-V) that fits alongside an 8 B generation model.
+- **Dual-brain architecture** (`brain/dual_brain.py`) — the current design assumes Stream A and Stream B can both stay resident. They can't. Practical patterns: (a) keep ONE model resident and rotate when the background thread fires, or (b) run reasoning as a synchronous post-foreground "R1 thinks → ava-personal replies" sandwich so each turn pays at most one swap.
+- **Sub-agent / sensor signal architecture** (Section 3) — sub-agents that drive their own LLM calls (e.g. a vision sensor that runs a captioning pass) compete for the same single-generation-model slot. The signal bus should treat LLM access as a serialized resource, not a concurrent one.
+- **Cold-boot vs warm latency** — first turn on a cold machine pays ~5 s for the first model load on top of the ~3-min Ava cold-boot. Subsequent turns are sub-2 s as long as no swap happens. Anything triggering a swap (vision frame, sleep wake, background-thread cycle) drops the next turn back to cold-load latency.
+
+**Connects to:** every roadmap item involving a model load. Specifically referenced in Section 1 (Ready to ship) for the dual-brain model preference fix; Section 2 (Designed) for confabulation handling layer 2-4; Section 3 (In design) for sleep mode, sub-agents, and dynamic attention.
+
+---
+
 ## Section 1 — Ready to ship
 
 Small, self-contained items queued for the next session(s). Each is a few hours to a day of work; each lands as a single commit or short series.
@@ -51,10 +73,17 @@ After ~30 real turns, inspect `state/memory/mem0_chroma/` (ChromaDB) for noise. 
 
 **Connects to:** `tools/dev/regression_test.py`.
 
-### Boot time optimization — parallelize app_discoverer scan roots
-Currently 60-110s scanning Desktop / Start Menu / Program Files / Steam / Epic sequentially under one big lock (`brain/app_discoverer.py`). Parallelizing the four scan roots could halve cold-boot to ~90s.
+### Dual-brain model-preference fix (per `LOCAL_MODEL_OPTIMIZATION.md`)
+`brain/dual_brain.py:41-50` currently prefers `ava-gemma4` (9.6 GB) for foreground and `gemma4:latest` (9.6 GB) for background. Both exceed the 8 GB VRAM ceiling, forcing Ollama paging on every turn. The clean post-stop bench (2026-05-01) confirmed `ava-personal:latest` (4.9 GB Llama 3.1 8B fine-tune) is the strongest foreground option (best naturalness, honest-uncertainty behavior) and `deepseek-r1:8b` (5.2 GB Qwen3 8B reasoning distill) is the strongest background-reasoning option (only model that caught both reasoning failures the bench surfaced — transitivity *and* the "month with letter X" trick).
 
-**Connects to:** `brain/app_discoverer.py:_wait_for_idle`.
+**Caveat — verification gate required first.** The same bench showed `deepseek-r1:8b` confidently hallucinated a fake Apple stock price and outdated date when asked about "yesterday". Reasoning capability does not protect against confabulation; wiring R1 in without `validity_check.py` (and ideally a memory-/web-search retrieval step on factual claims) would trade one failure mode for another. Do this fix together with the validity-check wiring, not before it.
+
+Edit is ~5 lines in `dual_brain.py`. No fine-tune work, no new downloads.
+
+**Connects to:** [`LOCAL_MODEL_OPTIMIZATION.md`](LOCAL_MODEL_OPTIMIZATION.md), Cross-cutting constraints (8 GB VRAM ceiling), Section 2 confabulation handling.
+
+### Boot time optimization — parallelize app_discoverer scan roots ✅ shipped
+Shipped in `43f7e59` (2026-05-01). Six-thread fan-out via `ThreadPoolExecutor` with separate scans for PF, PF(x86), Desktop .lnk, Start Menu .lnk, Steam, Epic. Warm-cache wall time 1.17-1.34 s (vs 217 s cold previously). Cold-cache prediction ~150 s, bounded by the `C:\Program Files` walk; further reduction would need depth/exclusion tuning, flagged in `HISTORY.md` Section 6.
 
 ### Train custom hey_ava.onnx ONNX model
 WSL2 job per `docs/TRAIN_WAKE_WORD.md`. Drop result at `models/wake_words/hey_ava.onnx`; auto-loaded on next start. **Phonetic benchmark already done** on Kokoro-synthesized samples — `hey_jarvis` (currently disabled) peaked 0.917 on `af_bella`; `hey_mycroft` and `hey_rhasspy` never crossed 0.02. Custom model would only fire on the exact phrase, not overlapping speech — durable replacement for the proxy.
