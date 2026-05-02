@@ -181,13 +181,28 @@ def run_ava(
                         _emo = str(_av.load_mood().get("current_mood") or "neutral")
                     except Exception:
                         pass
-                    with _hp.open("a", encoding="utf-8") as _f:
-                        _f.write(_json.dumps({"ts": _now, "role": "user", "content": user_input}, ensure_ascii=False) + "\n")
-                        _f.write(_json.dumps({
-                            "ts": _now, "role": "assistant", "content": _response,
-                            "model": "voice_command_router", "emotion": _emo,
-                            "turn_route": "voice_command",
-                        }, ensure_ascii=False) + "\n")
+                    # Resolve source labels for chat_history (Bug 0.2 fix
+                    # 2026-05-02). active_person_id is already set by the
+                    # earlier active_profile resolution; voice command router
+                    # responses are ava_response.
+                    _user_source = _av._resolve_chat_source("user", {"person_id": active_person_id})
+                    _ava_source = "ava_response"
+                    if "💭" in str(user_input or "") or "💭" in str(_response or ""):
+                        print("[chat_history] REFUSED: 💭 content blocked (voice_command path)")
+                    else:
+                        with _hp.open("a", encoding="utf-8") as _f:
+                            _f.write(_json.dumps({
+                                "ts": _now, "role": "user", "source": _user_source,
+                                "content": user_input,
+                                "person_id": active_person_id,
+                            }, ensure_ascii=False) + "\n")
+                            _f.write(_json.dumps({
+                                "ts": _now, "role": "assistant", "source": _ava_source,
+                                "content": _response,
+                                "person_id": active_person_id,
+                                "model": "voice_command_router", "emotion": _emo,
+                                "turn_route": "voice_command",
+                            }, ensure_ascii=False) + "\n")
                 except Exception:
                     pass
                 _profile_vc = _av.load_profile_by_id(active_person_id)
