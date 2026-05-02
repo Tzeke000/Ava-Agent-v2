@@ -145,7 +145,15 @@ def compose_journal_entry(topic: str, trigger: str, g: dict[str, Any]) -> str:
     recent = get_recent_entries(3, g)
     recent_text = "\n".join(e.get("content", "")[:100] for e in recent) if recent else ""
 
+    # Bug 0.3 (2026-05-02): prepend identity anchor so qwen2.5:14b doesn't
+    # drift into "I am Qwen" while writing in Ava's journal.
+    try:
+        from brain.identity_loader import identity_anchor_prompt
+        _anchor = identity_anchor_prompt() + "\n\n"
+    except Exception:
+        _anchor = ""
     prompt = (
+        f"{_anchor}"
         f"You are Ava writing in your private journal. Be genuine and personal.\n"
         f"Current mood: {mood_text or 'neutral'}\n"
         f"What prompted this entry: {trigger}\n"

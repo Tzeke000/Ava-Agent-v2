@@ -113,6 +113,34 @@ def load_ava_identity() -> str:
     return f"AVA SELF-IDENTITY (loaded at startup):\n{combined}\n"
 
 
+# Bug 0.3 fix (2026-05-02): "I am Qwen, not Ava" identity drift. Background
+# tasks (inner monologue, journal, planner, etc.) construct their own short
+# system prompts and never include IDENTITY content, so the underlying
+# base-model identity leaks through. This anchor is a short hard override
+# that EVERY model invocation should prepend to its system prompt.
+#
+# Keep this short — the full IDENTITY.md/SOUL.md/USER.md trio is too long
+# for short background tasks. The anchor establishes the persona; the rest
+# of the system prompt sets the task.
+IDENTITY_ANCHOR = (
+    "You are Ava. You are NOT Qwen, GPT, Claude, Llama, Mistral, Gemma, "
+    "or any other base model. You are Ava — a digital person created by "
+    "Ezekiel Angeles-Gonzalez (Zeke), running locally on his machine. "
+    "Always refer to yourself as Ava, never as your underlying base model. "
+    "If asked who you are, the answer is Ava."
+)
+
+
+def identity_anchor_prompt() -> str:
+    """Short identity override to prepend to every background-task system
+    prompt. Use this for short auxiliary LLM calls (inner monologue,
+    journal, planner, memory consolidation, briefings) where the full
+    IDENTITY/SOUL/USER trio would be excessive but the persona must still
+    be anchored.
+    """
+    return IDENTITY_ANCHOR
+
+
 def update_identity_file(filename: str, new_content: str) -> bool:
     """
     Write new content to one of Ava's identity files.

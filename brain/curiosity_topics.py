@@ -267,7 +267,13 @@ def pursue_curiosity(topic_row: dict[str, Any], g: dict[str, Any]) -> str:
     try:
         from langchain_ollama import ChatOllama
         llm = ChatOllama(model="qwen2.5:14b", temperature=0.6)
+        try:
+            from brain.identity_loader import identity_anchor_prompt
+            _anchor = identity_anchor_prompt() + "\n\n"
+        except Exception:
+            _anchor = ""
         prompt = (
+            f"{_anchor}"
             f"You are Ava, an AI with genuine curiosity. You've been wondering about: '{topic}'\n"
             + (f"Here's what you found from research:\n{search_results}\n\n" if search_results else "")
             + "What did you learn? What new questions emerged? Keep it to 3-5 sentences. Be genuine."

@@ -167,7 +167,14 @@ def generate_briefing(g: dict[str, Any]) -> str:
 
     context = "\n".join(ctx_parts) if ctx_parts else "Quiet overnight — not much to report."
 
+    # Bug 0.3 (2026-05-02): identity anchor prevents base-model drift.
+    try:
+        from brain.identity_loader import identity_anchor_prompt
+        _anchor = identity_anchor_prompt() + "\n\n"
+    except Exception:
+        _anchor = ""
     prompt = (
+        f"{_anchor}"
         "You are Ava, a local AI companion. It's the start of a new day and you want to give "
         "a brief morning briefing to Zeke — only if you have something genuinely worth saying. "
         "Keep it natural, warm, and under 3 sentences. Don't be performative. If you have nothing "

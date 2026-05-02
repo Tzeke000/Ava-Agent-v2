@@ -427,7 +427,13 @@ def _generate_greeting_async(g: dict[str, Any], person_id: str, prev_person: str
                 from langchain_core.messages import HumanMessage
                 model = "qwen2.5:14b"
 
+            try:
+                from brain.identity_loader import identity_anchor_prompt
+                _anchor = identity_anchor_prompt() + "\n\n"
+            except Exception:
+                _anchor = ""
             prompt = (
+                f"{_anchor}"
                 f"You are Ava, an AI companion to Zeke. You just saw him appear at the camera.\n"
                 f"Your current mood: {mood_label}.\n"
                 + (f"Time since you last saw him: {time_away/60:.0f} minutes.\n" if time_away > 0 else "")
