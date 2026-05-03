@@ -1761,6 +1761,35 @@ def create_app():
                 "error": str(_STT_STATE.get("error", "") or ""),
             }
 
+    @app.post("/api/v1/restart_with_handoff")
+    def restart_with_handoff(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+        """Trigger restart-with-handoff (Task 5, 2026-05-02).
+
+        Used by the Tauri UI's "Update / Restart" button. Same flow as the
+        voice command: write handoff JSON + watchdog flag, schedule a
+        delayed os._exit so the response can return cleanly.
+        """
+        h = _g()
+        try:
+            from brain.restart_handoff import write_handoff, signal_restart
+        except Exception as e:
+            return {"ok": False, "error": f"restart_handoff unavailable: {e}"}
+        estimate_seconds = float(body.get("estimate_seconds") or 15.0)
+        spoken = str(body.get("spoken_acknowledgment") or "")
+        try:
+            write_handoff(
+                h,
+                estimate_seconds=estimate_seconds,
+                trigger="ui_button",
+                spoken_acknowledgment=spoken,
+            )
+            signal_restart(h)
+        except Exception as e:
+            return {"ok": False, "error": f"handoff write failed: {e}"}
+        # Schedule clean exit after a small delay so the HTTP response lands.
+        threading.Timer(2.0, lambda: (print("[restart_handoff] os._exit(0) via /api/v1/restart_with_handoff"), os._exit(0))).start()
+        return {"ok": True, "estimate_seconds": estimate_seconds, "trigger": "ui_button"}
+
     @app.post("/api/v1/shutdown")
     def shutdown() -> dict[str, Any]:
         h = _g()
