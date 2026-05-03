@@ -795,6 +795,31 @@ def _run_heartbeat_tick(
         except Exception:
             pass
 
+    # B3 (2026-05-03): temporal sense fast-check tick. Runs every
+    # heartbeat (heartbeat-rate cadence). Cheap: state decay/growth +
+    # active estimate scan + self-interrupt enqueue. Performance budget
+    # ≤50ms — no LLM calls, no blocking I/O. See docs/TEMPORAL_SENSE.md
+    # §2 / §8.
+    try:
+        from brain.temporal_sense import run_fast_check_tick
+        run_fast_check_tick(g, now=now)
+    except Exception as _ts_exc:
+        print(f"[heartbeat] temporal_sense fast-check error: {_ts_exc!r}")
+
+    # B3 (2026-05-03): temporal metabolism slow-cycle. Runs every
+    # ~10 min default (config/temporal_sense.json slow_cycle.
+    # interval_seconds). Yields to voice loop (defers if
+    # _conversation_active or _turn_in_progress). See
+    # docs/TEMPORAL_SENSE.md §7.
+    try:
+        from brain.temporal_metabolism import run_metabolism_cycle
+        _meta_summary = run_metabolism_cycle(g, now=now)
+        if _meta_summary and not _meta_summary.get("skipped"):
+            _triage_n = (_meta_summary.get("triage") or {}).get("count_total", 0)
+            print(f"[heartbeat] metabolism cycle ran: triage_count={_triage_n}")
+    except Exception as _tm_exc:
+        print(f"[heartbeat] temporal_metabolism cycle error: {_tm_exc!r}")
+
     st.last_wallclock = now
 
     carry = HeartbeatCarryoverState(
