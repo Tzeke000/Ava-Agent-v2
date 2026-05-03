@@ -267,6 +267,20 @@ def run_startup(g: dict[str, Any]) -> None:
     g["_AVA_IDENTITY_BLOCK"] = load_ava_identity()
     g["ensure_emotion_reference_file"]()
     g["_write_ava_pid_file"]()
+
+    # Task 5 (2026-05-02): if a restart handoff is pending from a previous
+    # voice-command-triggered restart, replay it now. read_handoff_on_boot
+    # computes time_offline, surfaces a thought into inner monologue, and
+    # deletes the file (read-once). Best-effort — no-op if no handoff.
+    try:
+        from brain.restart_handoff import read_handoff_on_boot
+        handoff = read_handoff_on_boot(g)
+        if handoff is not None:
+            secs = float(handoff.get("time_offline_seconds") or 0.0)
+            print(f"[startup] restart handoff replayed: time_offline={secs:.1f}s over_run={handoff.get('over_run')}")
+            g["_last_restart_handoff"] = handoff
+    except Exception as _rh_exc:
+        print(f"[startup] restart handoff replay error: {_rh_exc!r}")
     # Defer selftest until after vectorstore init (which runs in background)
     # so vector_memory check passes correctly
     def _delayed_selftest():

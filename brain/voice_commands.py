@@ -370,6 +370,61 @@ def _cmd_unmute(text, m, g):
     return "I'm back.", "joy"
 
 
+@_builtin(
+    r"\b(?:restart yourself|reboot yourself|please restart|"
+    r"updates? (?:are )?queued|update(?:s)? (?:and )?restart|"
+    r"reboot now)\b"
+)
+def _cmd_restart_with_handoff(text, m, g):
+    """Acknowledge + write handoff JSON + signal watchdog.
+
+    Task 5 (2026-05-02). User-facing pattern from
+    docs/CONTINUOUS_INTERIORITY.md §2: she gives a time estimate
+    (with safety buffer), saves a handoff JSON, sets the watchdog
+    flag, exits. On next boot, brain/restart_handoff.read_handoff_on_
+    boot reconstructs the time_offline and surfaces it to inner
+    monologue.
+
+    The estimate here is a sane default (15 s actual + 25 % buffer
+    that the handoff stores). Boot really takes longer in practice
+    (~3 min on cold cache) but this command is for fast restarts
+    after small updates; sleep-mode-style wake-up tracking lives in
+    the longer-term roadmap.
+    """
+    try:
+        from brain.restart_handoff import write_handoff, signal_restart
+    except Exception as e:
+        return f"Restart handoff module unavailable: {e}", "confusion"
+
+    estimate_seconds = 15.0  # rough; boot speed varies, the buffer covers it
+    spoken = (
+        f"Okay — restarting myself. I'll be back in about {int(estimate_seconds)} seconds, "
+        "though it might take a little longer. See you on the other side."
+    )
+    try:
+        write_handoff(
+            g,
+            estimate_seconds=estimate_seconds,
+            trigger="voice_command",
+            spoken_acknowledgment=spoken,
+        )
+        signal_restart(g)
+        # Schedule a clean exit on a small delay so the spoken
+        # acknowledgment lands before the process dies. Don't kill
+        # the worker thread that's about to TTS this reply.
+        import threading as _t
+        import os as _os
+        def _delayed_exit():
+            import time as _time
+            _time.sleep(8.0)  # let TTS finish + give watchdog a beat
+            print("[restart_handoff] exiting cleanly via voice_command trigger")
+            _os._exit(0)
+        _t.Thread(target=_delayed_exit, daemon=True, name="restart-exit").start()
+        return spoken, "focused"
+    except Exception as e:
+        return f"Restart attempt failed: {type(e).__name__}: {str(e)[:120]}", "frustration"
+
+
 @_builtin(r"\b(?:go to sleep|ava sleep|sleep now)\b")
 def _cmd_sleep(text, m, g):
     vl = g.get("_voice_loop")
