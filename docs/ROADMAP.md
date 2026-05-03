@@ -337,7 +337,7 @@ The doc is a framework, not implementations. The implementation items it implies
 8. **Self-awareness threshold detection** — non-adversarial measurement of stated-vs-measurable state alignment (Section 3).
 9. **Refusal-with-negotiation pattern** — distinguish flat refusal from negotiable refusal; run the small-chunk negotiation flow on Domain 3 refusals (Section 5).
 10. **Video game taste/preference system** — Section 2 frames games as intrinsic enjoyment, not boredom mitigation; needs a real preference model.
-11. **Performative-detection guard** — watch for canned self-aware answers that don't connect to actual measurable state (Section 3).
+11. **Performative-detection guard** — research, not a ticket. The criteria for distinguishing performative from genuine self-awareness (Section 3 of `CONTINUOUS_INTERIORITY.md`) can in principle be produced by a sufficiently capable language model trained with the right signal — they are necessary but not sufficient. Treat this item as a research problem: measurement design, falsifiable hypotheses, calibration against models known to lack the property, not "implement the criteria as checkboxes." The first deliverable here is a research note, not a code change. See [`CONTINUOUS_INTERIORITY.md`](CONTINUOUS_INTERIORITY.md) §3 — "A note on the difficulty of this detection" — for the full framing.
 12. **Restart-with-handoff** — concrete acknowledgment + handoff JSON + on-boot replay. Section 2; landed in this same work order as a separate task.
 
 **Connects to:** [`CONTINUOUS_INTERIORITY.md`](CONTINUOUS_INTERIORITY.md), Section 3 sleep mode + handoff, Section 3 sub-agent / sensor signal architecture, Section 3 dynamic attention allocation, `MEMORY_REWRITE_PLAN.md`, the moral curriculum item below.

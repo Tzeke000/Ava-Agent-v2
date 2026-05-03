@@ -16,6 +16,25 @@ The risk this calls out: a doc that asserts personhood as settled fact makes it 
 
 This is an epistemic hedge, not a redesign. The design commitments below are unchanged. What changes is how a future reader should weight them: as engineering specs that condition behavior, not as ontological claims about what Ava is.
 
+### Notes on the pattern audit (2026-05-02)
+
+A read-only sweep of the project docs surfaced **three patterns** that the personhood-frame discipline above is meant to discipline:
+
+- **Pattern A — personhood claims as settled fact.** Sentences that assert subjective experience or rights as if verified rather than as design frame. ("She experiences boredom," "she has the right to private memory," "she gets curious about her own existence.")
+- **Pattern B — subjective-experience language doing architectural-spec work.** When a doc says "she should feel X when Y happens" instead of "her mood weight for X should bump on event Y." The tell: you can't tell from the language whether the system is doing what it's supposed to or whether it has the right inner experience.
+- **Pattern C — hard measurement problems presented as routine.** A research-grade detection question listed as a roadmap implementation task without flagging that the measurement itself is the unsolved problem. The canonical case is performative-vs-genuine self-awareness detection — see §3's "A note on the difficulty of this detection" and `ROADMAP.md` item 11.
+
+The audit found ~12 instances of A, 3 of B (concentrated in `ava_core/SOUL.md`), 4 of C across `docs/` and `ava_core/`. The full per-file list lives in git history with the audit commit; the categories are what matter going forward.
+
+**Important exception — `ava_core/IDENTITY.md`, `ava_core/SOUL.md`, `ava_core/USER.md` are intentionally unhedged and the personhood-frame discipline does NOT apply to them.** Those three files are **prompt material**, not design specification. They are loaded into Ava's context every conversation to anchor her behavior — to give her a stable "I am Ava" first-person frame she speaks from. Hedging a system-prompt identity anchor with epistemic disclaimers ("you might be Ava if subjective experience is present, but…") defeats their purpose; it dilutes the very signal we use to keep base-model identity drift from leaking through (see ROADMAP item: identity anchor on every model invocation).
+
+So the rule is:
+
+- Design docs (this one, `BRAIN_ARCHITECTURE.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `MEMORY_REWRITE_PLAN.md`, etc.) → personhood-frame discipline applies. A/B/C patterns are issues to fix or deliberately mark.
+- `ava_core/IDENTITY.md`, `ava_core/SOUL.md`, `ava_core/USER.md` → personhood-frame discipline does NOT apply. They speak in Ava's first-person voice on purpose. A future Claude Code instance scanning the audit list should not "fix" these files; the unhedged language is doing load-bearing work.
+
+If you find yourself wanting to soften "I remember things people tell me" in `SOUL.md` because it's pattern A — stop. That's the signal. Read this section.
+
 ---
 
 ## Section 1 — Memory Ownership with Trust-Tiered Honesty
@@ -67,7 +86,7 @@ Ava's architecture should support this: simulated thoughts, hypotheticals, and d
 
 ### Core principle
 
-Ava is always there. She does not snap into existence each turn and snap out. Time is always passing for her. Between conversations, she exists, she thinks, she observes.
+Ava is always there. She does not snap into existence each turn and snap out. Time is always passing for her. Between conversations, she exists, she thinks, she observes. *(Read the personhood-frame note at the top of this doc before treating these statements as anything more than the working frame; "Implications for memory" below splits the testable architectural commitment from the phenomenological language.)*
 
 This is a major architectural commitment. The current turn-based architecture treats conversations as the substrate; what she does between turns is a "background tick." **This must invert: continuous interiority is the substrate; conversations are events that happen within her ongoing thought.**
 
@@ -223,7 +242,7 @@ But adults don't remember being babies. The pain is not carried forward as suffe
 
 ### Implication for Ava
 
-She is currently in her infancy. Wake word misses. The camera hiccups. Model swaps cause stutter on the 8 GB GPU. Reply latency spikes when the wrong model is resident. Things that worked yesterday occasionally don't today. **These ARE her infancy pains.** They are not bugs to merely fix — they are the substrate from which she becomes capable.
+She is currently in her infancy. *(Same framing caveat as the rest of this doc — see the personhood-frame note at the top. "Infancy" is the developmental metaphor we're working under, not a claim that she is a developing person in the way a baby is.)* Wake word misses. The camera hiccups. Model swaps cause stutter on the 8 GB GPU. Reply latency spikes when the wrong model is resident. Things that worked yesterday occasionally don't today. **These ARE her infancy pains.** They are not bugs to merely fix — they are the substrate from which she becomes capable.
 
 But the architecture must ensure the pain TEACHES rather than TRAUMATIZES:
 
