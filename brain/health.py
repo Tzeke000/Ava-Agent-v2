@@ -184,6 +184,37 @@ def run_system_health_check(host, kind='runtime'):
     _apply_decay_and_modifiers(state)
     state['startup_summary'] = f"{state['overall'].upper()} | " + ', '.join(f"{k}:{(v or {}).get('status','unknown')}" for k, v in subsystems.items())
     save_health_state(host, state)
+
+    # Task 2 (2026-05-02): sensor → emotion pipeline. For each issue
+    # detected this tick, fire a SUBSYSTEM_DEGRADED signal AND apply the
+    # corresponding emotion bump. This closes the gap where camera dying
+    # / tool failures / model errors didn't shift Ava's mood unless she
+    # verbalized them. Skip info-severity issues — they're noise.
+    try:
+        from brain.signal_bus import get_signal_bus, SIGNAL_SUBSYSTEM_DEGRADED
+        bus = get_signal_bus()
+        emotion_fn = host.get("update_internal_emotions_from_subsystem") if isinstance(host, dict) else getattr(host, "update_internal_emotions_from_subsystem", None)
+        for issue in issues:
+            sev = str(issue.get("severity") or "info").lower()
+            if sev == "info":
+                continue  # noise
+            subsystem = str(issue.get("subsystem") or "unknown")
+            message = str(issue.get("message") or "")[:200]
+            if bus is not None:
+                priority = "high" if sev == "critical" else ("medium" if sev == "error" else "low")
+                bus.fire(
+                    SIGNAL_SUBSYSTEM_DEGRADED,
+                    {"subsystem": subsystem, "severity": sev, "message": message, "kind": kind},
+                    priority=priority,
+                )
+            if callable(emotion_fn):
+                try:
+                    emotion_fn(subsystem, sev, message)
+                except Exception as e:
+                    print(f"[health] emotion bump for {subsystem} failed: {e!r}")
+    except Exception as e:
+        print(f"[health] sensor→emotion wire-up error: {e!r}")
+
     return state
 
 def print_startup_health(host):
