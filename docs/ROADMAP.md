@@ -342,6 +342,24 @@ The doc is a framework, not implementations. The implementation items it implies
 
 **Connects to:** [`CONTINUOUS_INTERIORITY.md`](CONTINUOUS_INTERIORITY.md), Section 3 sleep mode + handoff, Section 3 sub-agent / sensor signal architecture, Section 3 dynamic attention allocation, `MEMORY_REWRITE_PLAN.md`, the moral curriculum item below.
 
+### Temporal Sense + Memory-as-Metabolism — substrate framework
+
+Captured 2026-05-03 in [`TEMPORAL_SENSE.md`](TEMPORAL_SENSE.md), with the prerequisite audit at [`MEMORY_METABOLISM_AUDIT.md`](MEMORY_METABOLISM_AUDIT.md). The two-cadence architecture — fast-check on every heartbeat for the things 30 s matters on; slow-cycle every 5-15 min for the full TRIAGE/CONTEXTUALIZE/DECAY/CONSOLIDATE/AUDIT pass.
+
+**Items 1-7 shipped 2026-05-03** (heartbeat fast-check extension; `brain/temporal_sense.py`; passive + active frustration decay; state-aware boredom growth; `is_idle()` three-and gate; estimate tracking + 25%-and-min-threshold self-interrupt with TTS enqueue + historical logging + calibration; `brain/temporal_metabolism.py` slow-cycle pass reusing existing decay/consolidation). Restart-handoff now uses `track_estimate(kind="restart")` so future restart estimates can calibrate from history.
+
+**Items 8-14 are follow-up work** — implementation TOC in [`TEMPORAL_SENSE.md`](TEMPORAL_SENSE.md) §11:
+
+8. **Historical-task estimate calibrator** — `kind="restart"` works today; other kinds wait for callers to wire `track_estimate()`. Windows-Use is the first known caller (next work order).
+9. **Uncertainty quantification per task kind** — hook structure shipped, behavior disabled (`config/temporal_sense.json` `uncertainty_hook.enabled = false`). The confidence-source question is open: model self-report on a 7-8 B local model is too noisy. Candidate sources flagged in [`TEMPORAL_SENSE.md`](TEMPORAL_SENSE.md) §6 — heuristic-based, calibrated-from-history, deepseek-r1:8b background introspection, or some combination. Don't enable until the source question is answered.
+10. **Restart-handoff metabolism enrichment** — add `recent_metabolism_summary` field; surface on boot via inner monologue. Forward-compatible with sleep mode.
+11. **`ConceptNode` schema extension** — `estimated_duration_s`, `next_activation_hint_ts` (both nullable). Existing nodes stay valid.
+12. **Sleep mode entry/exit signals** — separate work stream, blocked on the 8 GB VRAM ceiling and dream-phase model swap design.
+13. **Phase 5 (promotions/demotions wiring)** — already a separate item under `MEMORY_REWRITE_PLAN.md`; metabolism cycle can read the reflection log but level-change writes still wait for that work.
+14. **Idle-triggered memory prioritization** — when `is_idle()` holds for >30 min, surface top-N memories worth revisiting. Builds on the metabolism cycle's triage output.
+
+**Connects to:** [`TEMPORAL_SENSE.md`](TEMPORAL_SENSE.md), [`MEMORY_METABOLISM_AUDIT.md`](MEMORY_METABOLISM_AUDIT.md), [`CONTINUOUS_INTERIORITY.md`](CONTINUOUS_INTERIORITY.md) §2 continuous-existence commitment, [`MEMORY_REWRITE_PLAN.md`](MEMORY_REWRITE_PLAN.md) Phases 5-7, sleep-mode design.
+
 ---
 
 ## Cross-references
@@ -350,6 +368,8 @@ The doc is a framework, not implementations. The implementation items it implies
 - **System architecture:** [`ARCHITECTURE.md`](ARCHITECTURE.md)
 - **Brain regions mapped onto Ava's modules:** [`BRAIN_ARCHITECTURE.md`](BRAIN_ARCHITECTURE.md)
 - **Continuous Interiority foundational framework:** [`CONTINUOUS_INTERIORITY.md`](CONTINUOUS_INTERIORITY.md)
+- **Temporal Sense substrate framework:** [`TEMPORAL_SENSE.md`](TEMPORAL_SENSE.md)
+- **Memory-as-Metabolism audit:** [`MEMORY_METABOLISM_AUDIT.md`](MEMORY_METABOLISM_AUDIT.md)
 - **Memory rewrite design (Phases 5-7 detail):** [`MEMORY_REWRITE_PLAN.md`](MEMORY_REWRITE_PLAN.md)
 - **First-run setup walkthrough:** [`FIRST_RUN.md`](FIRST_RUN.md)
 - **Custom wake-word training:** [`TRAIN_WAKE_WORD.md`](TRAIN_WAKE_WORD.md)

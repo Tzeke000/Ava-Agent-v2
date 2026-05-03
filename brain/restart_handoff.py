@@ -90,16 +90,41 @@ def write_handoff(
     raw estimate AND the buffered version so the boot-side check can
     detect over-runs ("she said 60 s, came back at 105 s" is a signal
     something went wrong).
+
+    B3 (2026-05-03): also registers the estimate with temporal_sense so
+    historical lookup gets calibrated over time. Future restart
+    estimates can read median actual_seconds from
+    state/task_history_log.jsonl rather than guessing 15s every time.
     """
     state = _state_dir(g)
     path = state / _HANDOFF_FILENAME
+    initiated_at = time.time()
+
+    # B3 hook: register with temporal_sense's estimate tracker. Best-
+    # effort; if temporal_sense isn't importable for any reason, the
+    # handoff still works as before.
+    history_calibration: dict[str, Any] | None = None
+    try:
+        from brain.temporal_sense import track_estimate, calibrate_from_history
+        history_calibration = calibrate_from_history(g, kind="restart")
+        track_estimate(
+            g,
+            task_id=f"restart_{int(initiated_at)}",
+            estimate_seconds=estimate_seconds,
+            kind="restart",
+            context=trigger,
+        )
+    except Exception as _ts_exc:
+        print(f"[restart_handoff] temporal_sense register skipped: {_ts_exc!r}")
+
     payload = {
         "version": 1,
-        "restart_initiated_at": time.time(),
+        "restart_initiated_at": initiated_at,
         "trigger": trigger,
         "spoken_acknowledgment": spoken_acknowledgment,
         "restart_estimate_seconds": float(estimate_seconds),
         "restart_estimate_seconds_buffered": float(estimate_seconds * _DEFAULT_BUFFER),
+        "history_calibration_at_create": history_calibration,
         "current_emotional_state": _safe_load_mood(g),
         "current_activity": str(g.get("_inner_state_line") or ""),
         "in_progress_thoughts": _safe_inner_monologue_thought(g),
@@ -154,6 +179,19 @@ def read_handoff_on_boot(g: dict[str, Any]) -> dict[str, Any] | None:
     time_offline = max(0.0, now - initiated)
     estimate = float(data.get("restart_estimate_seconds_buffered") or data.get("restart_estimate_seconds") or 0.0)
     over_run = (estimate > 0) and (time_offline > estimate * 1.5)
+
+    # B3 (2026-05-03): resolve the estimate that was tracked at write_handoff
+    # time. Appends actual_seconds to task_history_log.jsonl so future
+    # restart estimates can calibrate from history.
+    try:
+        from brain.temporal_sense import resolve_estimate
+        task_id = f"restart_{int(initiated)}"
+        resolved = resolve_estimate(g, task_id, actual_seconds=time_offline)
+        if resolved is not None:
+            print(f"[restart_handoff] estimate resolved: kind=restart est={resolved['estimate_seconds']:.1f}s actual={resolved['actual_seconds']:.1f}s")
+    except Exception as _ts_exc:
+        print(f"[restart_handoff] estimate resolve skipped: {_ts_exc!r}")
+
     summary = {
         "time_offline_seconds": time_offline,
         "estimate_seconds": float(data.get("restart_estimate_seconds") or 0.0),
