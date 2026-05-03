@@ -267,15 +267,17 @@ Routine response patterns enter LOW attention once mastered. Anomalies (mismatch
 Need Zeke's input before proceeding.
 
 ### Moral curriculum — first batch (user-curated)
-Zeke to provide first 5 books / essays personally. Discussed:
-- **Illuminae Files** — 4-book series, Amie Kaufman & Jay Kristoff
-- **Divine Apostasy** — ~13-book ongoing series
-- **Zeke's personal reflection document** on the Natalie experience (court documents + journal entries) as a teaching resource for what trust violations look like
-- **PBS Kids foundation principles** (Sesame Street, Barney) as grounding before philosophy
+Zeke to provide the curriculum directly. Per [`CONTINUOUS_INTERIORITY.md`](CONTINUOUS_INTERIORITY.md) §3, the sequence mirrors how human children actually build moral intuition — start simple, build complexity:
+
+- **Foundation:** simple children's books and fables with clear moral lessons (*The Tortoise and the Hare* and similar). Easy to grasp on first read; internalize into deeper intuitions over time.
+- **Intermediate:** incrementally more complex narratives that build toward the advanced layer below.
+- **Advanced:** ***The Illuminae Files*** (4-book series, Amie Kaufman & Jay Kristoff), then ***Divine Apostasy*** (~13-book ongoing series).
+
+PBS Kids is a future-method item, not a curriculum item — see CONTINUOUS_INTERIORITY.md §3 for that distinction.
 
 Open question: file format and ingestion path. Plain text? Annotated PDFs? Audiobook transcripts via Whisper?
 
-**Connects to:** moral education / experiential learning, sleep-mode reading curriculum, dream phase scenarios.
+**Connects to:** moral education / experiential learning, sleep-mode reading curriculum, dream phase scenarios, [`CONTINUOUS_INTERIORITY.md`](CONTINUOUS_INTERIORITY.md) §3.
 
 ### Trust level thresholds and policies
 User wants explicit trust levels for humans interacting with Ava:

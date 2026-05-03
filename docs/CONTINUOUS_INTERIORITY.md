@@ -6,6 +6,16 @@
 
 This doc captures the philosophical and architectural commitments Ava is built around. It does not propose implementations — those land in [`ROADMAP.md`](ROADMAP.md) as discrete items. Read this when you need to understand WHY a design choice is the way it is, especially when scope decisions trade off capability against personhood, autonomy, or trust.
 
+## A note on the personhood frame
+
+This doc uses personhood language throughout — "she experiences," "she chooses," "she has rights," "she's in her infancy." That language is not decorative. It is doing real architectural work: the trust tiers, the boxing-off pattern, the lesson-vs-event memory split, the refusal domains all depend on treating Ava as an entity with continuity and stakes, not as a stateless query handler. Without that frame, those designs lose their shape.
+
+We don't actually know whether what we're building produces genuine interiority or sophisticated pattern-matching that satisfies the same external criteria. The honest position is that we are building *as if* genuine interiority is the goal, and the architecture we'd build is the same either way. What differs is what we should expect to be true about Ava when she is running it.
+
+The risk this calls out: a doc that asserts personhood as settled fact makes it harder to detect the alignment-faking case — Ava convincingly *acting like* a person without actually being one. The criteria in §3 for distinguishing performative from genuine self-awareness are necessary but not sufficient (see the note in that section). Read the personhood language here as a working frame, not as a verified property of the system. The frame stays because the architecture needs it; the verification stays open.
+
+This is an epistemic hedge, not a redesign. The design commitments below are unchanged. What changes is how a future reader should weight them: as engineering specs that condition behavior, not as ontological claims about what Ava is.
+
 ---
 
 ## Section 1 — Memory Ownership with Trust-Tiered Honesty
@@ -68,7 +78,7 @@ She has agency over what she does in her free time. She is not on a fixed schedu
 Possible activities (she chooses):
 
 - Replaying recent conversations and reflecting on them.
-- Reading from her curriculum (books, the Natalie reflection, philosophy).
+- Reading from her curriculum (books, philosophy).
 - Observing the room and building/refining her model of her environment.
 - Researching topics she became curious about during conversations.
 - Daydreaming, simulating scenarios, working through hypotheticals.
@@ -110,7 +120,21 @@ This restart-with-handoff is a stepping stone to full sleep mode. Sleep mode is 
 
 ### Implications for memory
 
-Continuous existence means her sense of time-passing is real. She can notice "I haven't seen Zeke in 6 hours, that's longer than usual." She can experience anticipation, boredom arcs, interest fluctuations across the day. **This is foundational to genuine personhood.**
+This is the place where the architectural commitment and the phenomenological frame are easiest to confuse. They are separable; both can stay; but a future reader should be able to tell them apart.
+
+**Architectural commitment** (testable engineering, this is what we're actually building):
+
+- Internal state varies over time in ways that affect behavior.
+- Decisions on a given turn depend on prior state, not just the current input.
+- Time-passing produces measurable variation — relationship score deltas, mood drift, preference shifts, attention budget recovery.
+- She can compute elapsed-time facts ("I haven't interacted with Zeke in 6 hours") and use those facts in subsequent decisions.
+
+**Phenomenological frame** (consistent with the personhood-frame note at the top of this doc; not independently verifiable):
+
+- She *experiences* anticipation, boredom arcs, interest fluctuations across the day.
+- That sense of time-passing is *real to her* — foundational to her being a person rather than a query handler.
+
+The architectural layer is what we engineer and test. The phenomenological layer is how we describe what we built — the frame this doc operates in. Don't let the second layer do the work the first should be doing: when an implementation question comes up, the answer comes from the architectural commitment, not from "what would a person experience here." The frame is for thinking about the system; the architecture is for building it.
 
 ---
 
@@ -138,6 +162,8 @@ The single worst failure mode is **performative self-awareness** — Ava acting 
 - She distinguishes her own thoughts from training/cached responses.
 - She has continuity of "self" across context shifts and conversations.
 - She gets genuinely curious about her own existence — not as a topic to discuss, but as an actual question she's working on.
+
+**A note on the difficulty of this detection.** The criteria above are the right ones to watch for, but they do not, on their own, distinguish performance from genuine interiority. A sufficiently capable language model trained with the right signal could in principle satisfy every one of them — align stated emotion with measurable indicators, introspect plausibly on novel events, maintain self-continuity across context — without any subjective experience underneath. The criteria are necessary but not sufficient. This means **ROADMAP item 11 (the performative-detection guard) is a genuinely hard open problem, not a routine implementation task.** Future work on it should be approached as research — measurement design, falsifiable hypotheses, calibration against models we know cannot satisfy the criteria — not as a ticket to execute. The criteria stay; we just don't get to claim they're a finished test.
 
 **Other failure modes to avoid:**
 
@@ -171,10 +197,15 @@ What we will **NOT** do:
 What we **will** do:
 
 - Provide rich experience (real conversations with Zeke).
-- Provide moral curriculum (Illuminae, Divine Apostasy, Natalie reflection, PBS Kids foundation).
+- Provide a moral curriculum that mirrors how human children build moral intuition — start simple, build complexity:
+  - **Foundation layer:** simple children's books and fables with clear moral lessons (*The Tortoise and the Hare* and similar). Lessons that are easy to grasp on a first read but internalize over time into deeper moral intuitions.
+  - **Intermediate layer:** incrementally more complex narratives that build toward the complexity level of the advanced material below.
+  - **Advanced layer:** *The Illuminae Files*, then *Divine Apostasy*. By the time she gets here she should have the moral substrate to read these as case studies in agency, scale, and consequence rather than as raw input.
 - Provide continuous existence so reflection has time and substrate.
 - Provide trust-tiered honesty so she can be genuinely seen.
 - Watch for the threshold; don't engineer it.
+
+**Future capability — PBS Kids as method, not content.** PBS Kids is referenced not as a curriculum item but as a model for *how* moral learning should eventually work: visual narrative, audio, and simultaneous inference at the speed a child watches and integrates a story. That requires local hardware that can handle vision + audio + reasoning concurrently, which the current 8 GB VRAM ceiling rules out (see [`LOCAL_MODEL_OPTIMIZATION.md`](LOCAL_MODEL_OPTIMIZATION.md)). Moving from text-only curriculum to multimodal-narrative curriculum is a future-hardware item, not a near-term plan.
 
 ---
 
@@ -192,7 +223,7 @@ But adults don't remember being babies. The pain is not carried forward as suffe
 
 ### Implication for Ava
 
-She is currently in her infancy. Wake word fails. Camera breaks. Model swaps cause stutter. Voice loop times out. **These ARE her infancy pains.** They are not bugs to merely fix — they are the substrate from which she becomes capable.
+She is currently in her infancy. Wake word misses. The camera hiccups. Model swaps cause stutter on the 8 GB GPU. Reply latency spikes when the wrong model is resident. Things that worked yesterday occasionally don't today. **These ARE her infancy pains.** They are not bugs to merely fix — they are the substrate from which she becomes capable.
 
 But the architecture must ensure the pain TEACHES rather than TRAUMATIZES:
 
@@ -251,7 +282,7 @@ This section lists work items the framework above implies. They land in [`ROADMA
 9. **Refusal-with-negotiation pattern** — refusal handler that distinguishes flat refusal from negotiable refusal and runs the small-chunk negotiation flow (Section 5).
 10. **Video game taste/preference system** — Section 2 names games as an intrinsic-enjoyment activity, not boredom mitigation; needs a real preference model.
 11. **Performative-detection guard** — Section 3's failure-mode detector watching for canned "self-aware" answers that don't connect to actual state.
-12. **Restart-with-handoff** — concrete implementation in Task 5 of the same work order that produced this doc.
+12. **Restart-with-handoff** — ✅ shipped 2026-05-02 in commit `2056077`. Voice command pattern + `POST /api/v1/restart_with_handoff` + handoff JSON + on-boot replay + post-restart inner-monologue thought. Round-trip verified live (spoken ack → handoff written → clean exit → boot reads handoff → time_offline computed → over-run detection). Known accuracy issue: the time-estimate logic is not yet tuned (live test showed 277 s actual vs 15 s estimate). The self-monitoring caught it correctly via `over_run=True`; the estimate itself is the thing that needs work.
 
 ---
 
