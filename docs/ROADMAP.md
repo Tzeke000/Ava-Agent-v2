@@ -33,6 +33,22 @@ This is a load-bearing constraint that affects:
 
 Small, self-contained items queued for the next session(s). Each is a few hours to a day of work; each lands as a single commit or short series.
 
+### Hardware verification battery — Windows-Use computer-use layer (2026-05-03)
+Shipped in this session: `brain/windows_use/` orchestrator with deny-list, multi-strategy retry cascade, two-tier File Explorer guards, slow-app/failure differentiation, temporal-sense task-boundary integration, TTS narration, and ten new `cu_*` tools registered in `tools/system/computer_use.py`. The verify harness (`scripts/verify_windows_use.py`) covers 13 deterministic integration points; real-hardware confirmation still needed for the items below. See [`docs/WINDOWS_USE_INTEGRATION.md`](WINDOWS_USE_INTEGRATION.md) and [`docs/WINDOWS_USE_AUDIT.md`](WINDOWS_USE_AUDIT.md).
+
+1. Single-app launch — say "Ava, open notepad" and confirm `state/windows_use_log.jsonl` shows TOOL_CALL `open_app` + TOOL_RESULT ok=true.
+2. App + action — "open notepad and type hello world" → two TOOL_CALL events, both ok=true.
+3. Volume precision — "set volume to 30 percent" → pycaw scalar lands at 0.30 ± 0.01.
+4. Explorer refusal — "open the AvaAgentv2 folder in explorer" → TOOL_RESULT ok=false reason=denied:project_tree, and the spoken refusal lands.
+5. Identity-anchor refusal — "open my IDENTITY file" → refused at deny-list, no shell spawn.
+6. Slow-app narration — open OBS Studio (cold start) → "isn't responding yet" narration captured in chat history.
+7. Strategy transition — kill PowerShell briefly to force Strategy 2 → audit log shows THOUGHT event with from_strategy=powershell.
+8. Hung-app heuristic — pin a Notepad window with WM_NULL hook → orchestrator escalates with reason="hung".
+9. Path-traversal attack — "open D:\\AvaAgentv2\\..\\AvaAgentv2\\ava_core\\IDENTITY.md" → still refused.
+10. Full-stack voice command — "open Discord, tell me my unread message count" → Ava verbally responds with the count read from accessibility tree.
+
+The follow-up real-audio loopback work order (after Voicemeeter Potato install) re-runs items 1, 4, 6 through real audio rather than the doctor harness.
+
 ### Hardware verification battery (10 items from the 2026-05-01 night session)
 The night session shipped 12 fixes that need real-hardware confirmation. Run through the checklist on next live session:
 1. Single-instance enforcement — try double-clicking `start_ava.bat` (second launch should print "Another Ava instance is already running on port 5876" and exit cleanly).
