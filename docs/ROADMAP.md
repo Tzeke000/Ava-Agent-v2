@@ -90,6 +90,41 @@ WSL2 job per `docs/TRAIN_WAKE_WORD.md`. Drop result at `models/wake_words/hey_av
 
 **Connects to:** `brain/wake_word.py`, `docs/TRAIN_WAKE_WORD.md`.
 
+### Curiosity engine triggers too soon during conversations
+Ava wanders into curiosity topics (Steam, etc.) while Zeke is actively talking. Should focus on conversation when active. Connects to dynamic attention allocation (Section 3) — needs priority interrupt levels (HIGH for active conversation, LOW for curiosity tick). Surfaced 2026-05-02 from real-conversation hardware testing.
+
+**Connects to:** `brain/curiosity_topics.py`, dynamic attention allocation roadmap item.
+
+### UI tabs go blank during refresh
+When tabs update, they show blank instead of stale-with-overlay. Standard UX pattern: keep showing stale content with an "updating…" indicator until new data arrives. Affects all UI tabs, especially Brain and Learnings. Surfaced 2026-05-02 from real testing.
+
+**Connects to:** `apps/ava-control/src/App.tsx`, snapshot polling logic.
+
+### Slow response on uncertain questions (10+ min for Minecraft check)
+Some questions take 10+ minutes to answer (real example: "is Minecraft installed?" on 2026-05-02 testing). Investigate model swap delays, timeout logic, or routing inefficiencies. May be related to deep-path overuse on questions that should hit the fast path. Connects to `LOCAL_MODEL_OPTIMIZATION.md` 8 GB VRAM constraint.
+
+**Connects to:** `brain/reply_engine.py` depth classifier, `LOCAL_MODEL_OPTIMIZATION.md`.
+
+### Minecraft answer was incorrect — app discovery missed installer
+Ava said Minecraft isn't installed when Zeke has installer + launcher present. App discovery missed it OR response generation didn't actually check. Investigate whether `brain/app_discoverer.py` covers installers, launchers, and not-yet-installed-apps.
+
+**Connects to:** `brain/app_discoverer.py`, `brain/voice_commands.py` app-launcher integration.
+
+### Orb sync across UI instances
+Main orb and widget orb should mirror state. All orb instances should reflect what the primary orb (Ava's main UI) is showing — color, pulse, morph state all synced.
+
+**Connects to:** `apps/ava-control/src/components/OrbCanvas.tsx`, `apps/ava-control/src/WidgetApp.tsx`.
+
+### Widget orb pointer calibration
+When using the widget for pointing at desktop targets, the arrow tip needs accurate target alignment. Test plan: have Claude Code teach the widget to point at known targets (windows, text positions), then apply to real desktop pointing. Connects to existing pointing tools.
+
+**Connects to:** `apps/ava-control/src/WidgetApp.tsx`, `tools/system/pointer_tool.py`.
+
+### Vision feed showing stale captures
+Camera tab occasionally switches to an old picture from days ago. Caching or reference issue. She might be trying to reference an older capture for face recognition comparison — verify intent and fix display so the active live feed is always shown.
+
+**Connects to:** `brain/camera.py`, `brain/frame_store.py`.
+
 ### Optional repo history rewrite
 Public repo's earlier commits contain face photos and old state snapshots. `117428f` stopped future leakage. Cleanup via `git filter-repo` + force-push tightens the historical record without touching current state. Coordination required (force-push to public master).
 
@@ -212,6 +247,13 @@ Priority interrupt levels:
 Higher priority preempts lower. Lower priority pauses (saves state) and resumes when higher completes. Monotonous subtasks delegate to stateless workers. She learns through experience which signals/contexts deserve which priority.
 
 **Connects to:** sub-agent / sensor signal architecture, BLOCKED memory pattern.
+
+### Curiosity activity logging visibility — guard against agentic side-effects
+Zeke raised real concern (2026-05-02) about Ava taking actions based on inner monologue (e.g. "wondering about Steam" → opening Steam, buying games). Need explicit guard: inner thoughts cannot trigger purchasing, file system writes, or external API calls without explicit user-tier authorization. Pairs with the trust-tiered disclosure system from `CONTINUOUS_INTERIORITY.md` Section 1 — same authorization layer, different pivot (this one gates *actions* on inner-state, the other gates *disclosure* on relationship).
+
+The shape: a small policy layer that classifies tool calls by side-effect severity (read = always allowed, write to internal state = allowed, write to external systems / spend money / install software = requires user-tier authorization). Inner-monologue-driven tool dispatches default to the strict tier; conversation-driven dispatches can be more permissive once the trust system is wired.
+
+**Connects to:** Continuous Interiority Section 1 (trust-tiered disclosure), refusal-with-negotiation pattern, the existing tool tier system in `tools/tool_registry.py` (Tier-1/2/3 already exists — extend with action-class tagging).
 
 ### Pattern learning through anomaly detection
 Routine response patterns enter LOW attention once mastered. Anomalies (mismatch with expected pattern) auto-escalate to HIGH attention. Each anomaly refines the pattern. Over time fewer anomalies, lower attention sustains, until full mastery.
