@@ -56,6 +56,20 @@ SIGNAL_BATTERY_LOW = "battery_low"
 SIGNAL_NETWORK_CHANGED = "network_changed"
 SIGNAL_USB_CONNECTED = "usb_connected"
 
+# Subsystem health — Task 2 (2026-05-02). Fired when a subsystem
+# (camera, mem0, models, mood, initiative, tts, stt, etc.) reports a
+# degraded/error/critical state. Consumed by the emotion pipeline so
+# Ava's tracked mood reflects the situation when something is failing
+# even if she hasn't verbalized it.
+#
+# data shape: {
+#     "subsystem": "camera",
+#     "severity":  "warning" | "error" | "critical",  # health.py severity scale
+#     "message":   "VideoCapture(0) failed or not opened",
+#     "kind":      "runtime" | "startup" | "light",   # which check triggered it
+# }
+SIGNAL_SUBSYSTEM_DEGRADED = "subsystem_degraded"
+
 
 PRIORITIES = ("low", "medium", "high", "urgent")
 

@@ -1316,6 +1316,59 @@ def rich_emotion_prompt_text(mood: dict) -> str:
     return f"Tracked richer emotions: {tracked_text}. Speakable now: {speak_text}. If uncertain but important, ask rather than assume. Askable emotions now: {ask_text}. Current operating goal: {active_goal}."
 
 
+def update_internal_emotions_from_subsystem(subsystem: str, severity: str, message: str = "") -> dict | None:
+    """Reflect a degraded subsystem into Ava's tracked mood.
+
+    Task 2 of the 2026-05-02 work order — sensor → emotion pipeline.
+    Closes the gap where Ava's mood only updated from dialogue: now if
+    her camera dies or a tool errors out, frustration / distress shift
+    proportional to severity even before she verbalizes anything.
+
+    Severity → emotion mapping (matches health.py's _severity_rank scale):
+      info     (0) — no bump (treated as noise; not worth flagging emotion)
+      warning  (1) — mild:     frustration +0.05, annoyance +0.02
+      error    (2) — degraded: frustration +0.10, annoyance +0.05,
+                                 distress +0.02
+      critical (3) — high:     frustration +0.20, distress +0.10
+
+    Decay is handled by the existing load_mood() decay loop: if the
+    subsystem stays degraded the next health-check tick will re-bump,
+    sustaining the emotion. If it recovers, weights drift back to
+    baseline naturally.
+
+    Returns the updated mood dict on success, None if no bump was
+    applied (info severity, unknown severity, or save failure).
+    """
+    sev = str(severity or "info").strip().lower()
+    bumps: dict[str, float] = {}
+    if sev == "warning":
+        bumps = {"frustration": 0.05, "annoyance": 0.02}
+    elif sev == "error":
+        bumps = {"frustration": 0.10, "annoyance": 0.05, "distress": 0.02}
+    elif sev == "critical":
+        bumps = {"frustration": 0.20, "distress": 0.10}
+    else:
+        return None  # info or unknown — skip
+
+    try:
+        mood = load_mood()
+        weights = normalize_emotions(mood.get("emotion_weights", DEFAULT_EMOTIONS.copy()))
+        for name, delta in bumps.items():
+            weights[name] = weights.get(name, 0.0) + delta
+        weights = normalize_emotions(weights)
+        mood["emotion_weights"] = weights
+        mood["primary_emotions"] = top_two_emotions(weights)
+        mood["current_mood"] = mood["primary_emotions"][0]["name"]
+        mood["last_updated"] = now_iso()
+        mood["reason"] = f"subsystem_degraded: {subsystem}={sev} {trim_for_prompt(message, limit=40)}"
+        mood = enrich_mood_state(mood)
+        save_mood(mood)
+        return mood
+    except Exception as e:
+        print(f"[emotion] subsystem-bump save error: {e!r}")
+        return None
+
+
 def update_internal_emotions_from_reply(ai_reply: str) -> dict | None:
     """Reflect Ava's own verbalized emotion back into her tracked mood state.
 
