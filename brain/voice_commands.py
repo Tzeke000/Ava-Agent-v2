@@ -813,6 +813,43 @@ def _cmd_signal_recap(text, m, g):
     return "I noticed " + ", ".join(parts) + ".", "curiosity"
 
 
+# ── Sleep mode commands ──────────────────────────────────────────────────────
+
+@_builtin(r"\bgo to sleep\b|\bgood ?night\b|\btake a nap\b|\bsleep for\b|\bsleep until\b")
+def _cmd_sleep(text, m, g):
+    """Sleep voice trigger. Parses duration; if absent, asks back."""
+    try:
+        from brain.sleep_mode import parse_sleep_voice_command, request_sleep
+    except Exception as e:
+        return f"Sleep mode unavailable: {e!r}", "calmness"
+    parsed = parse_sleep_voice_command(text)
+    if not parsed.get("sleep_intent"):
+        # The regex matched but parse said no — defensive guard
+        return "I heard you but I'm not sure if you want me to sleep. Want me to go to sleep?", "calmness"
+    if parsed.get("ask_back"):
+        # Stash a pending sleep state so the next user reply can be parsed as duration.
+        g["_sleep_awaiting_duration_since"] = time.time()
+        return "How long do you want me to sleep for?", "calmness"
+    duration_s = float(parsed["duration_s"])
+    request_sleep(g, duration_s=duration_s, trigger="voice", trigger_summary={"command_text": text})
+    minutes = duration_s / 60.0
+    label = f"{int(minutes)} minutes" if minutes >= 1 else f"{int(duration_s)} seconds"
+    return f"Going to sleep for {label}. See you on the other side.", "calmness"
+
+
+@_builtin(r"\bwake up\b|\bare you (?:awake|there)\b|\bcome back\b")
+def _cmd_wake(text, m, g):
+    """External wake provocation — only acts if currently sleeping."""
+    try:
+        from brain.sleep_mode import get_state, request_wake, STATE_AWAKE
+    except Exception as e:
+        return None, None  # let other handlers route the message
+    if get_state(g) == STATE_AWAKE:
+        return None, None  # not sleeping; let normal pipeline handle the greeting
+    request_wake(g, reason="voice_provocation")
+    return "I see you. Let me wake up.", "calmness"
+
+
 # ── Custom commands loaded at runtime ────────────────────────────────────────
 
 class _CustomCommand:
