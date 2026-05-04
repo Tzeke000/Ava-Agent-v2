@@ -6,6 +6,28 @@ Ava is a local adaptive AI companion running on Python 3.11 and a Tauri desktop 
 
 ---
 
+## Claude Code's External Memory
+
+Claude Code maintains an external memory vault at `D:\ClaudeCodeMemory\`. Separate from Ava's memory — this is for Claude Code's use across sessions, capturing the *why* behind decisions that ROADMAP/HISTORY only record as *what*.
+
+**Read on session start:**
+1. `D:\ClaudeCodeMemory\hot.md` — most recent session summary (entry point).
+2. Relevant `sessions/`, `decisions/`, `bugs/`, or `people/zeke.md` notes for the task at hand.
+3. **Code orientation:** query `D:\ClaudeCodeMemory\graphify\ava-agent-v2\` (tree-sitter knowledge graph) rather than re-reading every source file. Only re-read individual files when graph metadata isn't sufficient.
+
+**Write at session end:**
+1. Update `hot.md` with a summary of what happened this session (overwrite, not append).
+2. Add a `sessions/<date>-<slug>.md` note for the work order.
+3. Add `decisions/<slug>.md` notes for any architectural choices made.
+4. Add `bugs/<slug>.md` notes for any bugs found and fixed.
+5. Update `people/zeke.md` if something non-obvious about Zeke's working style emerged.
+
+**The vault does NOT replace ROADMAP.md or HISTORY.md.** Those remain operational source of truth (current state, rules, procedures). The vault captures the *reasoning* behind what those files record. Don't duplicate.
+
+Templates and conventions live in `D:\ClaudeCodeMemory\CLAUDE.md` (vault-internal instructions).
+
+---
+
 ## Key rules
 
 - **NEVER edit `ava_core/IDENTITY.md`, `ava_core/SOUL.md`, or `ava_core/USER.md`**

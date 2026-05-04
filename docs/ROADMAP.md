@@ -33,6 +33,14 @@ This is a load-bearing constraint that affects:
 
 Small, self-contained items queued for the next session(s). Each is a few hours to a day of work; each lands as a single commit or short series.
 
+### Claude Code external memory infrastructure (2026-05-04 ✅ Phases A + B shipped, C deferred)
+
+Set up of Claude Code's own external memory at `D:\ClaudeCodeMemory\` (separate filesystem from the Ava repo, never symlinked into it). Captures the **why** behind decisions across sessions. Repo `CLAUDE.md` updated with session-start / session-end protocols.
+
+- ✅ **Phase A — Obsidian vault.** Folder structure (sessions/decisions/bugs/designs/people/graphify), templates, `hot.md` hot-context pattern. Backfilled from the past week: 8 decisions notes, 5 bugs notes, 5 sessions notes, 1 people note. Obsidian app installed via winget.
+- ✅ **Phase B — Graphify (`graphifyy` v0.7.5).** `graphify update D:\AvaAgentv2` extracts AST from 283 files → 4,248 nodes + 8,248 edges. Output mirrored from `D:\AvaAgentv2\graphify-out\` (gitignored) to vault at `D:\ClaudeCodeMemory\graphify\ava-agent-v2\`. Manual updater at `scripts\update_graphify.bat`. **Token reduction measured: 119.7x avg vs naive corpus reading** (per-question 86-192x range).
+- ⏸️ **Phase C — mem0 / Qdrant / Neo4j.** Deferred. Hardware baseline: VRAM at 91.5% utilization with llava:13b resident, only 354 MiB free. mem0's reuse of `nomic-embed-text` would force Ollama to page out `ava-personal:latest` on every memory write/query, landing 30-90 s latency cost in the next voice turn. Cost/benefit wrong vs Phase A+B's already-shipped value. Full reasoning in `D:\ClaudeCodeMemory\decisions\mem0-deferred.md`. Revisit when (a) hardware ceiling raises, (b) a Qdrant-only mem0 MCP without Neo4j or external embedding swaps emerges, or (c) the vault grows past ~500 notes and grep-over-markdown stops being sufficient.
+
 ### Voice end-to-end bug-fix work order (2026-05-04 ✅ shipped)
 
 Spawned by [`AVA_FEATURE_ADDITIONS_2026-05_VOICE_E2E.md`](AVA_FEATURE_ADDITIONS_2026-05_VOICE_E2E.md), closed by [`AVA_FEATURE_ADDITIONS_2026-05_VOICE_E2E_BUGFIXES.md`](AVA_FEATURE_ADDITIONS_2026-05_VOICE_E2E_BUGFIXES.md).

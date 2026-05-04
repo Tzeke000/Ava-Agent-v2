@@ -642,6 +642,61 @@ Wall time was therefore bounded by `150 + 67 = 217s` — the bottleneck thread, 
 
 ---
 
+### Section 11 — 2026-05-04 Claude Code external memory setup (Obsidian vault + Graphify)
+
+Sets up Claude Code's *own* external memory infrastructure — distinct from Ava's brain, memory, concept graph, or any of her subsystems. Ava's memory is hers. This vault captures the *why* behind decisions across Claude Code sessions, complementing (not replacing) `ROADMAP.md` and `HISTORY.md` which remain operational source of truth.
+
+#### Phase A — Obsidian vault at `D:\ClaudeCodeMemory\`
+
+Folder structure: `sessions/`, `decisions/`, `bugs/`, `designs/`, `people/`, `graphify/`. Plus `hot.md` (entry point — most recent session summary, read first on session start) and `CLAUDE.md` (vault-internal templates + protocols + anti-patterns).
+
+Obsidian app installed via `winget install Obsidian.Obsidian` (no telemetry, no sync, local-only).
+
+Repo's `D:\AvaAgentv2\CLAUDE.md` gained a "Claude Code's External Memory" section pointing to vault + session-start / session-end protocols.
+
+Backfilled from the past week:
+- **8 decisions notes**: `sleep-mode-3-phase`, `temporal-sense-cadence`, `windows-use-library-choice` (rejecting the protobuf-7-incompatible `windows-use` PyPI package), `voicemeeter-potato-over-vbcable-ab`, `personhood-frame-discipline` (the architectural-vs-phenomenological frame applies to design docs, NOT to identity anchors), `vaio3-test-harness-timing` (the silent-capture diagnosis), `pydantic-fastapi-forwardref-trap` (Pydantic v2 + locally-scoped class), `graphify-adoption`.
+- **5 bugs notes**: `build-prompt-fallback-path` (the 600 s → 6.9 s turn fix), `kokoro-loaded-flag-publish`, `heartbeat-tick-budget-bloat` (197 ms → 12.2 ms), `whisper-poll-bypass-missing`, `voice-loop-restart-hang` (non-reproducing).
+- **5 sessions notes**: temporal substrate, windows-use shipped, four-feature work order, voice e2e verification, voice e2e bug fixes.
+- **1 people note** (`zeke.md`) capturing communication style, work patterns, decision style, trauma-material guardrails (Natalie removal — engineering shouldn't process real-life material), Ava-as-companion-not-assistant rules, past inflection points.
+
+#### Phase B — Graphify codebase indexing
+
+`graphifyy` Python package v0.7.5, AST extraction via tree-sitter (no LLM API key needed — semantic enrichment via Kimi/Anthropic deferred until orientation queries actually feel insufficient).
+
+`graphify update D:\AvaAgentv2`: 283 files → **4,248 nodes, 8,248 edges, 257 communities**. Output at `D:\AvaAgentv2\graphify-out\` (gitignored — `.gitignore` updated) and mirrored to `D:\ClaudeCodeMemory\graphify\ava-agent-v2\` for the vault's query path.
+
+`scripts\update_graphify.bat` for manual re-run after significant code changes. Future `graphify hook install` would automate via git post-commit; deferred until manual workflow proves limiting.
+
+**Token reduction measured: 119.7x avg** vs naive corpus reading (`graphify benchmark`). Per-query: 86-192x range across 5 representative orientation questions. In real terms: a session that previously needed ~280k tokens for orientation now needs ~12k via graph queries. Massive context-window headroom for actual work.
+
+#### Phase C — mem0 deferred (hardware constraint)
+
+Hardware baseline taken with Ava running normally:
+- VRAM: 7,457 / 8,151 MiB used (91.5%) — only 354 MiB free with llava:13b resident.
+- RAM: 22.1 / 31.3 GB used — 9.2 GB free.
+- CPU: 27% baseline.
+- Disk: 782 GB free.
+
+The work order's spec'd `n3rdh4ck3r/claude-code-mem0-mcp` repo 404s on GitHub. Closest current alternative `elvismdev/mem0-mcp-selfhosted` adds **Neo4j** to the stack (Qdrant + Neo4j + Ollama), making the cost-benefit even worse than the spec'd version.
+
+The binding constraint is **VRAM at 91.5%**. mem0 itself doesn't add a new GPU model — it reuses Ollama's existing `nomic-embed-text` for embeddings. But each mem0 write/query forces Ollama to page out `ava-personal:latest` (4.9 GB) to load `nomic-embed-text`, costing 30-90 s. That latency lands in the next voice turn. Voice loop is the production interface; making it slower for a marginal Claude Code orientation improvement is the wrong trade.
+
+Phase B's Graphify already gives the bulk of the orientation value (119.7x reduction). Phase C's mem0 would add semantic search of past markdown notes — currently 14 notes, grep is sufficient.
+
+**Decision: defer cleanly.** Full reasoning + revisit conditions in `D:\ClaudeCodeMemory\decisions\mem0-deferred.md`.
+
+#### Files modified / new
+
+- `D:\AvaAgentv2\CLAUDE.md` — "Claude Code's External Memory" section added.
+- `D:\AvaAgentv2\.gitignore` — `graphify-out/` excluded.
+- `D:\AvaAgentv2\scripts\update_graphify.bat` (new) — manual graph updater.
+- `D:\AvaAgentv2\docs\ROADMAP.md` — Section 1 entry for the external-memory work order.
+- `D:\AvaAgentv2\docs\HISTORY.md` — this Section 11.
+- `D:\ClaudeCodeMemory\` (entire vault, separate filesystem, not in Ava git history).
+
+---
+
 ### Section 10 — 2026-05-04 Voice E2E bug-fix work order
 
 Closeout of the five follow-ups filed by Section 9's voice E2E verification. All five resolved in this session.
