@@ -33,6 +33,20 @@ This is a load-bearing constraint that affects:
 
 Small, self-contained items queued for the next session(s). Each is a few hours to a day of work; each lands as a single commit or short series.
 
+### Voice end-to-end follow-ups (2026-05-04 — discovered during F8/F12 routing verification)
+
+Spawned by [`AVA_FEATURE_ADDITIONS_2026-05_VOICE_E2E.md`](AVA_FEATURE_ADDITIONS_2026-05_VOICE_E2E.md). Routing was set up successfully (CABLE Output as default mic, VAIO3→B3 enabled, Ava TTS publishes to VAIO3), one wake-source bug fixed and committed, but two new bugs uncovered:
+
+1. **Voicemeeter VAIO3 silent capture during Kokoro TTS playback.** Strip 7 routes A1+B1+B3, B3 confirmed working with controlled signal at all sample rates 24k/22k/44k/48k (peak 0.4) — but Ava's tts_worker streams to VAIO3 don't appear at B3 in concurrent capture. Likely a channel-count or session-mode mismatch in how Kokoro opens its sd.OutputStream. Worth checking `vm.strip[7].levels` live during a Kokoro playback to see if the audio reaches strip 7 at all. Affects automated voice-out verification.
+
+2. **voice_loop hangs after `run_ava.return` on Ava restart.** The first voice command after a fresh restart returns from run_ava (`re.run_ava.return path=fast ms=80201`) but `voice_loop.py:478`'s `_trace("vl.run_ava_returned ...")` never fires. State stays `thinking` indefinitely. No exception, no print, no progress. Reproducible on this hardware. Add a wallclock watchdog inside `voice_loop._tick()` that prints stack trace if 60s elapses past run_ava call without state change — that should localize whether it's a silent thread exception, a deadlock in finalize / model-routing post-processing, or stdout buffering.
+
+3. **`AVA_DEBUG=1` should be in `start_ava_dev.bat`.** Without it, `/api/v1/debug/inject_transcript` and `/api/v1/debug/tool_call` return `{"ok":false,"error":"disabled"}`. They're useful for non-audio test paths and harness drivers. Either default it on for dev mode or expose a `/debug/enable` endpoint that flips the flag at runtime with a token.
+
+4. **`/api/v1/tts/speak` body parsing rejects valid JSON with 422 `loc:[query,body]`.** FastAPI is parsing the `body: TTSSpeakIn` parameter as a query argument instead of body. Probably needs `body: TTSSpeakIn = Body()` or model_config tweak. Blocks programmatic TTS triggering for tests.
+
+5. **OpenWakeWord re-enable on Piper voices.** Current `hey_jarvis_v0.1.onnx` benchmark on Kokoro voices was good but Piper en_US-amy-medium synth doesn't trigger reliably at the same threshold. Either retrain `hey_ava.onnx` or lower the threshold for Piper-synthetic test paths via env override. Affects test harness reliability — whisper_poll fallback works but has 3-5s wake latency vs OWW's <500ms.
+
 ### Sleep mode + Clipboard + Curriculum + Onboarding — four-feature work order (2026-05-04 ✅ shipped)
 
 Lands the framework + implementation for four features in one work order. Design is in [`docs/AVA_FEATURE_ADDITIONS_2026-05.md`](AVA_FEATURE_ADDITIONS_2026-05.md); implementation results in [`docs/AVA_FEATURE_ADDITIONS_2026-05_RESULTS.md`](AVA_FEATURE_ADDITIONS_2026-05_RESULTS.md).
