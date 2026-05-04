@@ -193,3 +193,29 @@ synthetic batch.
 That's the gold-standard path. 50 real recordings + 5000 Kokoro samples
 typically gives a model that's significantly better than `hey_jarvis`
 on Zeke's specific voice.
+
+---
+
+## 2026-05-04: Piper en_US-amy-medium does NOT reliably trigger hey_jarvis
+
+The voice E2E verification work order used Piper's `en_US-amy-medium` voice
+to synthesize test "Hey Ava" prompts. `hey_jarvis_v0.1.onnx` proxy at
+default threshold (0.5) catches Kokoro's `af_bella` voice reliably (peak
+0.917 per the 2026-04-29 bench above) but FAILED to fire even once on
+Piper-synthesized "Hey Ava" across multiple test runs. The verification
+fell back to `whisper_poll` which works at higher latency (~3-5s vs
+~200ms) and does fire on Piper voices.
+
+This means automated voice-loop testing using Piper as the driver-side TTS
+needs either:
+- (a) a custom-trained `hey_ava.onnx` that's robust across voice characteristics, OR
+- (b) a Piper-specific OWW threshold override (e.g. `AVA_OWW_THRESHOLD=0.3` for test mode), OR
+- (c) acceptance of the whisper_poll fallback's higher wake latency for the test path.
+
+Preferred long-term path is (a) since a custom model also reduces false
+positives in production. Training data should explicitly include both Zeke's
+real voice AND multiple synthesized voices (Piper + Kokoro) to keep
+test-driver compatibility intact.
+
+This is captured as a ROADMAP item — see "OpenWakeWord retrain for Piper
+voice compatibility" in `docs/ROADMAP.md` Section 1.
