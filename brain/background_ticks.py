@@ -84,8 +84,16 @@ def _video_frame_capture_thread(g: dict[str, Any]) -> None:
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("[video_capture] camera not available")
+        cm = g.get("camera_manager")
+        if cm is not None:
+            cm.running = False
         return
     print("[video_capture] camera opened, streaming at 15fps")
+    # Publish capture-running flag so subsystem_health.camera.running reflects
+    # actual streaming state. Reader: operator_server.py:1087.
+    cm = g.get("camera_manager")
+    if cm is not None:
+        cm.running = True
 
     _frame_idx = 0
     _insight_every_n = 3  # ~5fps face detection at 15fps capture
