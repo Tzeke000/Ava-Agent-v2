@@ -4,7 +4,7 @@ source: Project Gutenberg, The Aesop for Children (1919, Milo Winter ed.)
 source_url: https://www.gutenberg.org/ebooks/19994
 themes: focus, purpose, distraction
 moral: Do not let anything turn you from your purpose
-reading_status: unread
+reading_status: reading
 lessons_extracted: []
 ---
 
