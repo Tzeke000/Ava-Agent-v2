@@ -1555,7 +1555,25 @@ export default function App() {
   // See brain/thinking_tier.py and docs/CONVERSATIONAL_DESIGN.md.
   const thinkingTier = Number((snap as Record<string, unknown> | null)?.thinking_tier ?? 0);
   const tierForcesThinking = thinkingTier >= 3;
-  const orbPulseMode = backendShutdownDetected || !online
+  // Sleep state (from /api/v1/debug/full subsystem_health.sleep). When SLEEPING
+  // or WAKING, override the orb's normal pulse mode with the sleep visual state.
+  const sleepInfo = (snap as Record<string, unknown> | null)?.subsystem_health
+    ? ((snap as Record<string, unknown>).subsystem_health as Record<string, unknown>)?.sleep
+    : null;
+  const sleepState = String((sleepInfo as Record<string, unknown> | null)?.state || "AWAKE");
+  const sleepProgress = Number((sleepInfo as Record<string, unknown> | null)?.progress || 0);
+  const sleepRemainingSeconds = Number((sleepInfo as Record<string, unknown> | null)?.remaining_seconds || 0);
+  const wakeStartedTs = Number((sleepInfo as Record<string, unknown> | null)?.wake_started_ts || 0);
+  const wakeEstimateS = Number((sleepInfo as Record<string, unknown> | null)?.wake_estimate_s || 5);
+  const wakeProgress = wakeStartedTs > 0
+    ? Math.max(0, Math.min(1, (Date.now() / 1000 - wakeStartedTs) / Math.max(0.5, wakeEstimateS)))
+    : 0;
+  const isSleepingOrWaking = sleepState === "SLEEPING" || sleepState === "WAKING";
+  const orbPulseMode = sleepState === "SLEEPING"
+    ? "sleeping"
+    : sleepState === "WAKING"
+      ? "waking"
+    : backendShutdownDetected || !online
     ? "offline"
     : avaThinking
       ? "thinking"  // Ava is processing a chat turn — fast blue pulse
@@ -2192,6 +2210,9 @@ export default function App() {
               energy={moodEnergy}
               recenterTrigger={orbRecenterCounter}
               cubeMorphEnabled={PRESENCE_V2_CUBE_MORPH_ENABLED}
+              sleepProgress={sleepProgress}
+              sleepRemainingSeconds={sleepRemainingSeconds}
+              wakeProgress={wakeProgress}
             />
             {/* Offline overlay text */}
             {connOffline && (
@@ -2449,6 +2470,9 @@ export default function App() {
                         size={120}
                         amplitude={ttsAmplitude}
                         energy={moodEnergy}
+                        sleepProgress={sleepProgress}
+                        sleepRemainingSeconds={sleepRemainingSeconds}
+                        wakeProgress={wakeProgress}
                       />
                     </div>
                     <div className="chat-orb-label">{primaryEmotion}</div>
@@ -2912,6 +2936,9 @@ export default function App() {
                   size={220}
                   amplitude={ttsAmplitude}
                   energy={moodEnergy}
+                  sleepProgress={sleepProgress}
+                  sleepRemainingSeconds={sleepRemainingSeconds}
+                  wakeProgress={wakeProgress}
                 />
               </div>
               <Section title="What Ava sees">

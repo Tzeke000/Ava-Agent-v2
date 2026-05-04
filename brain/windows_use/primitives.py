@@ -372,3 +372,244 @@ def back_out_explorer_window(target_path: str) -> bool:
             except Exception:
                 pass
     return found
+
+
+# ── Clipboard primitives ──────────────────────────────────────────────
+
+
+def set_clipboard(text: str) -> bool:
+    """Write `text` to the Windows clipboard via pywin32. Returns True on
+    success. Used by cu_clipboard_write and as the first half of the
+    atomic-paste alternative to per-character keystroke typing.
+    """
+    if text is None:
+        return False
+    try:
+        import win32clipboard  # type: ignore
+        import win32con  # type: ignore
+    except ImportError:
+        # Fallback: shell out to clip.exe (built-in on Windows since Vista).
+        try:
+            proc = subprocess.run(
+                ["clip.exe"], input=str(text), text=True, encoding="utf-16le",
+                timeout=2.0, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            return proc.returncode == 0
+        except Exception:
+            return False
+    try:
+        win32clipboard.OpenClipboard()
+        try:
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, str(text))
+        finally:
+            win32clipboard.CloseClipboard()
+        return True
+    except Exception:
+        return False
+
+
+def paste_into_window(window_title_substring: str) -> bool:
+    """Bring the matching window to foreground, then send Ctrl+V. Returns
+    True if the window was found and the keystroke was sent (does not
+    verify the paste actually landed — caller can re-read the window if
+    needed).
+    """
+    auto = _ui_auto()
+    win = find_window_by_title_substring(window_title_substring, timeout=1.5)
+    if win is None:
+        return False
+    try:
+        win.SetActive()
+    except Exception:
+        pass
+    try:
+        time.sleep(0.05)  # tiny settle so SetActive completes
+        auto.SendKeys("^v")
+        return True
+    except Exception:
+        return False
+
+
+def type_text_via_clipboard(window_title_substring: str, text: str) -> bool:
+    """Atomic alternative to per-character keystroke typing. Set clipboard,
+    focus window, send Ctrl+V. Restores prior clipboard content best-effort.
+    """
+    if text is None:
+        return False
+    # Save prior clipboard content so we can restore it after the paste.
+    prior: str | None = None
+    try:
+        import win32clipboard  # type: ignore
+        import win32con  # type: ignore
+        try:
+            win32clipboard.OpenClipboard()
+            try:
+                if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+                    prior = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
+            finally:
+                win32clipboard.CloseClipboard()
+        except Exception:
+            pass
+    except ImportError:
+        pass
+
+    if not set_clipboard(text):
+        return False
+    ok = paste_into_window(window_title_substring)
+    # Best-effort restore.
+    if prior is not None:
+        try:
+            time.sleep(0.05)
+            set_clipboard(prior)
+        except Exception:
+            pass
+    return ok
+
+
+# ── Window candidates / close primitives ──────────────────────────────
+
+
+# Browser executable names — used when "close X" might be a tab in a browser
+# rather than a desktop app.
+BROWSER_PROCESS_NAMES = ("chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "vivaldi.exe")
+
+
+def find_window_candidates(name: str) -> list[dict[str, Any]]:
+    """Return all visible top-level windows whose title contains `name`
+    (case-insensitive). Each entry: {title, handle, process_name, kind}.
+    `kind` is "desktop" if the owning process is not a browser, "browser_tab"
+    if the matching window's title is in a browser process (likely the active
+    tab). Used by close_app and similar disambiguating operations.
+    """
+    if not name:
+        return []
+    needle = name.lower()
+    candidates: list[dict[str, Any]] = []
+    try:
+        proc_names_by_pid = _process_names_snapshot()
+    except Exception:
+        proc_names_by_pid = {}
+    for w in list_visible_windows():
+        if needle not in w["title"].lower():
+            continue
+        hwnd = int(w.get("handle") or 0)
+        pid = _hwnd_pid(hwnd)
+        proc_name = proc_names_by_pid.get(pid, "")
+        kind = "browser_tab" if proc_name.lower() in BROWSER_PROCESS_NAMES else "desktop"
+        candidates.append({
+            "title": w["title"],
+            "handle": hwnd,
+            "pid": pid,
+            "process_name": proc_name,
+            "kind": kind,
+        })
+    return candidates
+
+
+def _process_names_snapshot() -> dict[int, str]:
+    """Map pid → process exe name. One snapshot per call (cheap, ~5–20ms)."""
+    out: dict[int, str] = {}
+    try:
+        import psutil  # type: ignore
+    except ImportError:
+        return out
+    try:
+        for p in psutil.process_iter(["pid", "name"]):
+            try:
+                out[int(p.info["pid"])] = str(p.info["name"] or "")
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return out
+
+
+def _hwnd_pid(hwnd: int) -> int:
+    """GetWindowThreadProcessId → return the pid for an HWND."""
+    if not hwnd:
+        return 0
+    try:
+        user32 = ctypes.windll.user32
+        pid = ctypes.c_ulong(0)
+        user32.GetWindowThreadProcessId(ctypes.c_void_p(hwnd), ctypes.byref(pid))
+        return int(pid.value)
+    except Exception:
+        return 0
+
+
+def close_window_by_handle(hwnd: int) -> bool:
+    """Send WM_CLOSE to the window. Returns True if the message was sent
+    (does not verify the window actually closed — caller can re-list).
+    Uses PostMessage so an unresponsive app doesn't block this primitive.
+    """
+    if not hwnd:
+        return False
+    try:
+        user32 = ctypes.windll.user32
+        WM_CLOSE = 0x0010
+        return bool(user32.PostMessageW(ctypes.c_void_p(hwnd), WM_CLOSE, 0, 0))
+    except Exception:
+        return False
+
+
+def close_app_by_pid(pid: int, force: bool = False) -> bool:
+    """Close all windows of a process by pid, or force-terminate.
+    `force=False`: post WM_CLOSE to all the process's windows (graceful).
+    `force=True`: TerminateProcess via psutil (last-resort).
+    """
+    if not pid:
+        return False
+    if force:
+        try:
+            import psutil  # type: ignore
+            p = psutil.Process(pid)
+            p.terminate()
+            try:
+                p.wait(timeout=2.0)
+            except Exception:
+                p.kill()
+            return True
+        except Exception:
+            return False
+    # Graceful: WM_CLOSE to every top-level window of the pid.
+    closed_any = False
+    for w in list_visible_windows():
+        if _hwnd_pid(int(w.get("handle") or 0)) == pid:
+            if close_window_by_handle(int(w["handle"])):
+                closed_any = True
+    return closed_any
+
+
+def close_browser_tab_by_title(needle: str, last_n: int | None = None) -> int:
+    """Close browser tabs whose title contains `needle`. Sends Ctrl+W to
+    the focused tab once it's been brought forward. Returns count of tabs
+    closed.
+
+    `last_n`: if set, close at most this many of the matching tabs. Useful
+    for "close my last 3 google tabs" — the caller has filtered to the
+    candidate set already; this closes up to last_n of them in MRU order.
+    """
+    auto = _ui_auto()
+    needle_l = (needle or "").lower()
+    candidates = [w for w in list_visible_windows()
+                  if needle_l in w["title"].lower()
+                  and _process_names_snapshot().get(_hwnd_pid(int(w.get("handle") or 0)), "").lower() in BROWSER_PROCESS_NAMES]
+    # MRU = list_visible_windows order (Windows returns top-of-Z first); newest first
+    if last_n is not None:
+        candidates = candidates[:max(0, int(last_n))]
+    closed = 0
+    user32 = ctypes.windll.user32
+    for cand in candidates:
+        hwnd = int(cand.get("handle") or 0)
+        if not hwnd:
+            continue
+        try:
+            user32.SetForegroundWindow(hwnd)
+            time.sleep(0.05)
+            auto.SendKeys("^w")
+            closed += 1
+            time.sleep(0.05)
+        except Exception:
+            continue
+    return closed

@@ -38,6 +38,11 @@ class WindowsUseResult:
     reason: str | None = None
     estimate_id: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    # Disambiguation: when a tool finds multiple matches it returns ok=False
+    # reason="ambiguous" and populates `candidates` with the structured options.
+    # The agent's caller (Ava's reply pipeline) reads this and asks the user
+    # which one. See docs/AVA_FEATURE_ADDITIONS_2026-05.md §5.
+    candidates: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -280,3 +285,147 @@ class WindowsUseAgent:
 
     def list_running_apps(self) -> list[dict[str, Any]]:
         return primitives.list_visible_windows()
+
+    # ── Clipboard operations (atomic alternative to per-char keystroke typing) ──
+
+    def clipboard_write(self, text: str, *, context: str = "") -> WindowsUseResult:
+        op = "clipboard_write"
+        started = time.time()
+        event_subscriber.emit(self.g, "TOOL_CALL", op, {
+            "text_len": len(text or ""), "context": context,
+        })
+        ok = primitives.set_clipboard(text)
+        result = WindowsUseResult(
+            ok=ok, operation=op, target="<clipboard>",
+            duration_seconds=time.time() - started, attempts=1,
+            reason=None if ok else "set_clipboard_failed",
+        )
+        event_subscriber.emit(self.g, "TOOL_RESULT" if ok else "ERROR", op, result.as_dict())
+        return result
+
+    def clipboard_paste(self, window_title: str, *, context: str = "") -> WindowsUseResult:
+        op = "clipboard_paste"
+        started = time.time()
+        event_subscriber.emit(self.g, "TOOL_CALL", op, {
+            "window_title": window_title, "context": context,
+        })
+        ok = primitives.paste_into_window(window_title)
+        result = WindowsUseResult(
+            ok=ok, operation=op, target=window_title,
+            duration_seconds=time.time() - started, attempts=1,
+            reason=None if ok else "paste_failed",
+        )
+        event_subscriber.emit(self.g, "TOOL_RESULT" if ok else "ERROR", op, result.as_dict())
+        return result
+
+    def type_via_clipboard(self, window_title: str, text: str, *, context: str = "") -> WindowsUseResult:
+        """Atomic alternative to `type_text` for text >10 chars. Sets clipboard,
+        focuses window, sends Ctrl+V, restores prior clipboard. ~50 ms regardless
+        of text length, vs ~50 ms / char for keystroke typing."""
+        op = "type_via_clipboard"
+        tid, started, est = temporal_integration.begin(self.g, kind="type_text", context=window_title)
+        event_subscriber.emit(self.g, "TOOL_CALL", op, {
+            "window_title": window_title, "text_len": len(text or ""), "context": context, "estimate_id": tid,
+        })
+        ok = primitives.type_text_via_clipboard(window_title, text or "")
+        temporal_integration.end(self.g, tid, started)
+        result = WindowsUseResult(
+            ok=ok, operation=op, target=window_title,
+            duration_seconds=time.time() - started, attempts=1,
+            reason=None if ok else "type_clipboard_failed", estimate_id=tid,
+        )
+        event_subscriber.emit(self.g, "TOOL_RESULT" if ok else "ERROR", op, result.as_dict())
+        return result
+
+    # ── Close operations (with disambiguation) ──
+
+    def close_app(self, name: str, *, target: str | None = None,
+                  force: bool = False, last_n: int | None = None,
+                  context: str = "") -> WindowsUseResult:
+        """Close app(s) by name.
+
+        target: None (auto-disambiguate), "desktop", "browser_tab", "all", or
+                a specific window-handle int (passed as string).
+        force:  if True, TerminateProcess via psutil instead of WM_CLOSE.
+        last_n: for browser tabs, close only the last N matching (MRU).
+
+        Returns ok=False reason="not_found" if zero candidates,
+        ok=False reason="ambiguous" with candidates= populated if multiple
+        and target is None.
+        """
+        op = "close_app"
+        started = time.time()
+        event_subscriber.emit(self.g, "TOOL_CALL", op, {
+            "name": name, "target": target, "force": force, "last_n": last_n, "context": context,
+        })
+        candidates = primitives.find_window_candidates(name)
+        if not candidates:
+            result = WindowsUseResult(
+                ok=False, operation=op, target=name,
+                duration_seconds=time.time() - started, attempts=0,
+                reason="not_found",
+            )
+            event_subscriber.emit(self.g, "ERROR", op, result.as_dict())
+            return result
+
+        # Auto-disambiguation logic
+        if target is None and len(candidates) > 1:
+            # Check if all candidates are same kind/process — if so, no ambiguity needed
+            kinds = {c["kind"] for c in candidates}
+            pids = {c["pid"] for c in candidates}
+            if len(kinds) > 1 or (len(kinds) == 1 and "browser_tab" in kinds and len(candidates) > 1 and last_n is None):
+                # Ambiguous: mixed desktop+browser, or multiple browser tabs without last_n
+                result = WindowsUseResult(
+                    ok=False, operation=op, target=name,
+                    duration_seconds=time.time() - started,
+                    reason="ambiguous", candidates=candidates,
+                )
+                event_subscriber.emit(self.g, "ERROR", op, result.as_dict())
+                return result
+
+        # Filter candidates by target selector
+        selected = candidates
+        if target == "desktop":
+            selected = [c for c in candidates if c["kind"] == "desktop"]
+        elif target == "browser_tab":
+            selected = [c for c in candidates if c["kind"] == "browser_tab"]
+        elif target == "all":
+            selected = candidates
+        elif target and target.isdigit():
+            handle_filter = int(target)
+            selected = [c for c in candidates if int(c.get("handle") or 0) == handle_filter]
+
+        # Execute close
+        closed_count = 0
+        if any(c["kind"] == "browser_tab" for c in selected) and last_n is not None:
+            # Close as tabs (Ctrl+W)
+            closed_count += primitives.close_browser_tab_by_title(name, last_n=last_n)
+        else:
+            # WM_CLOSE per window, or force-terminate per pid
+            seen_pids: set[int] = set()
+            for c in selected:
+                if c["kind"] == "browser_tab":
+                    primitives.close_browser_tab_by_title(name, last_n=1)
+                    closed_count += 1
+                    continue
+                pid = int(c.get("pid") or 0)
+                if pid and pid in seen_pids:
+                    continue
+                if force:
+                    if primitives.close_app_by_pid(pid, force=True):
+                        closed_count += 1
+                        seen_pids.add(pid)
+                else:
+                    if primitives.close_window_by_handle(int(c.get("handle") or 0)):
+                        closed_count += 1
+                seen_pids.add(pid)
+
+        ok = closed_count > 0
+        result = WindowsUseResult(
+            ok=ok, operation=op, target=name,
+            duration_seconds=time.time() - started, attempts=1,
+            reason=None if ok else "close_failed",
+            extra={"closed_count": closed_count, "candidate_count": len(candidates)},
+        )
+        event_subscriber.emit(self.g, "TOOL_RESULT" if ok else "ERROR", op, result.as_dict())
+        return result

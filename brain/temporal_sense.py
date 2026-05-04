@@ -212,6 +212,16 @@ def apply_state_decay_growth(g: dict[str, Any], dt_seconds: float) -> dict[str, 
 
     changed = False
 
+    # Sleep-mode decay multiplier (frustration / boredom / stress / joy decay
+    # accelerates ~5x during SLEEPING). Applied as a scalar against the
+    # passive_decay_per_second rate. See brain/sleep_mode.py for the
+    # state machine.
+    try:
+        from brain.sleep_mode import get_emotion_decay_multiplier as _sleep_decay_mult
+        _decay_mult = float(_sleep_decay_mult(g))
+    except Exception:
+        _decay_mult = 1.0
+
     # ── Frustration decay ──────────────────────────────────────────
     frustration = float(weights.get("frustration") or 0.0)
     if frustration > 0.001:
@@ -237,7 +247,8 @@ def apply_state_decay_growth(g: dict[str, Any], dt_seconds: float) -> dict[str, 
             # decays slower in absolute terms but at the same proportional
             # rate. With rate=0.0004/s and dt=300s, factor = 1 - 0.12 = 0.88,
             # so 0.20 -> 0.176 after 5 min (12% loss).
-            rate = float(_cfg("frustration", "passive_decay_per_second", default=0.0004))
+            # Sleep multiplier (1.0 awake, ~5.0 sleeping) accelerates decay.
+            rate = float(_cfg("frustration", "passive_decay_per_second", default=0.0004)) * _decay_mult
             factor = max(0.0, 1.0 - rate * dt_seconds)
             new_val = max(0.0, frustration * factor)
             if new_val != frustration:
@@ -245,9 +256,18 @@ def apply_state_decay_growth(g: dict[str, Any], dt_seconds: float) -> dict[str, 
                 changed = True
                 summary["frustration_passive_decay"] = round(frustration - new_val, 5)
 
-    # ── Boredom growth ─────────────────────────────────────────────
-    if is_idle(g):
-        boredom = float(weights.get("boredom") or 0.0)
+    # ── Boredom growth (awake) / decay (sleeping) ─────────────────
+    boredom = float(weights.get("boredom") or 0.0)
+    if _decay_mult > 1.0 and boredom > 0.001:
+        # SLEEPING / ENTERING_SLEEP / WAKING — boredom decays alongside frustration.
+        rate = float(_cfg("frustration", "passive_decay_per_second", default=0.0004)) * _decay_mult
+        factor = max(0.0, 1.0 - rate * dt_seconds)
+        new_val = max(0.0, boredom * factor)
+        if new_val != boredom:
+            weights["boredom"] = new_val
+            changed = True
+            summary["boredom_sleep_decay"] = round(boredom - new_val, 5)
+    elif is_idle(g):
         cap = float(_cfg("boredom", "cap", default=1.0))
         if boredom < cap:
             rate = float(_cfg("boredom", "growth_per_second", default=0.0001))

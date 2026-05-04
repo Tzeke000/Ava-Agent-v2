@@ -1108,6 +1108,12 @@ def build_debug_full(host: dict[str, Any]) -> dict[str, Any]:
         }
         health["stt_engine"] = {"available": bool(g.get("_stt_ready"))}
         health["kokoro_loaded"] = bool(g.get("_kokoro_ready"))
+        # Sleep mode state — surfaced for OrbCanvas + diagnostic.
+        try:
+            from brain.sleep_mode import get_snapshot as _sleep_snapshot
+            health["sleep"] = _sleep_snapshot(g)
+        except Exception as _sm_exc:
+            health["sleep"] = {"state": "AWAKE", "error": str(_sm_exc)[:100]}
         health["ollama_reachable"] = {
             "last_ok": bool(g.get("_ollama_last_ok", True)),
             "last_check_ts": float(g.get("_ollama_last_check_ts") or 0.0),

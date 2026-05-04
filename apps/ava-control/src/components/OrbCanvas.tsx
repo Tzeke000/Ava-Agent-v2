@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef } from "react";
 import * as THREE from "three";
 
-type OrbState = "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "offline" | "listening" | "attentive";
+type OrbState = "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "offline" | "listening" | "attentive" | "sleeping" | "waking";
 
 interface OrbProps {
   emotion: string;
@@ -21,6 +21,12 @@ interface OrbProps {
    *  is pinned at 0 so the orb never reshapes. Used by the PRESENCE_V2 flag
    *  to keep the orb on its baseline behavior while drift is being debugged. */
   cubeMorphEnabled?: boolean;
+  /** Sleep cycle progress 0-1 (read from snap.subsystem_health.sleep.progress). */
+  sleepProgress?: number;
+  /** Seconds remaining in current sleep cycle. Used by the timer-label overlay. */
+  sleepRemainingSeconds?: number;
+  /** Wake transition progress 0-1 (computed from elapsed/estimate during WAKING). */
+  wakeProgress?: number;
 }
 
 const EMOTION_CONFIG: Record<string, {
@@ -148,9 +154,11 @@ const STATE_TINT = {
   speaking: new THREE.Color("#ffb060"),  // warm amber
   attentive: new THREE.Color("#00ffcc"), // cyan — alert, ready
   offline: new THREE.Color("#404858"),
+  sleeping: new THREE.Color("#0a1530"),  // deep midnight blue — emotion-agnostic during sleep
+  waking: new THREE.Color("#5a7ad0"),    // dawn blue — brightening pulse during wake transition
 };
 
-function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude = 0, energy = 0.5, recenterTrigger, cubeMorphEnabled = true }: OrbProps) {
+function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude = 0, energy = 0.5, recenterTrigger, cubeMorphEnabled = true, sleepProgress = 0, sleepRemainingSeconds = 0, wakeProgress = 0 }: OrbProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const disposeRef = useRef<()=>void>(()=>{});
 
@@ -170,6 +178,10 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
   // through React effects (which would tear down/rebuild the scene).
   const recenterTriggerRef = useRef<number | undefined>(recenterTrigger);
   const cubeMorphEnabledRef = useRef<boolean>(cubeMorphEnabled);
+  // Sleep state refs — driven by parent snapshot polling.
+  const sleepProgressRef = useRef<number>(sleepProgress);
+  const sleepRemainingRef = useRef<number>(sleepRemainingSeconds);
+  const wakeProgressRef = useRef<number>(wakeProgress);
   stateRef.current = state;
   amplitudeRef.current = amplitude;
   emotionRef.current = emotion;
@@ -177,6 +189,9 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
   energyRef.current = energy;
   recenterTriggerRef.current = recenterTrigger;
   cubeMorphEnabledRef.current = cubeMorphEnabled;
+  sleepProgressRef.current = sleepProgress;
+  sleepRemainingRef.current = sleepRemainingSeconds;
+  wakeProgressRef.current = wakeProgress;
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -408,8 +423,73 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
     }
 
     function spd(s: OrbState) {
-      return ({thinking:2.5,deep:5.0,speaking:1.8,bored:0.3,excited:7.0,offline:0.1,idle:1.0,listening:0.8,attentive:1.2} as Record<string, number>)[s] || 1.0;
+      return ({thinking:2.5,deep:5.0,speaking:1.8,bored:0.3,excited:7.0,offline:0.1,idle:1.0,listening:0.8,attentive:1.2,sleeping:0.3,waking:1.5} as Record<string, number>)[s] || 1.0;
     }
+
+    // ── Sleep visuals (initially hidden; toggle on state) ────────────────
+    // 4-6 floating "z" sprites orbiting the orb during SLEEPING.
+    function buildZTexture(): THREE.CanvasTexture {
+      const cnv = document.createElement("canvas");
+      cnv.width = 64; cnv.height = 64;
+      const ctx = cnv.getContext("2d")!;
+      ctx.fillStyle = "rgba(0,0,0,0)";
+      ctx.fillRect(0, 0, 64, 64);
+      ctx.font = "bold 48px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "rgba(180, 200, 240, 0.85)";
+      ctx.fillText("z", 32, 32);
+      return new THREE.CanvasTexture(cnv);
+    }
+    const zTexture = buildZTexture();
+    const zSprites: THREE.Sprite[] = [];
+    const Z_COUNT = 5;
+    for (let i = 0; i < Z_COUNT; i++) {
+      const mat = new THREE.SpriteMaterial({
+        map: zTexture,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const sp = new THREE.Sprite(mat);
+      const phase = (i / Z_COUNT) * Math.PI * 2;
+      sp.position.set(Math.cos(phase) * 0.9, 0.3 + (i % 2) * 0.2, Math.sin(phase) * 0.9);
+      sp.scale.set(0.18, 0.18, 1);
+      sp.visible = false;
+      scene.add(sp);
+      zSprites.push(sp);
+    }
+
+    // Progress ring around the orb showing sleep cycle progression 0→1.
+    const ringGeo = new THREE.RingGeometry(1.05, 1.15, 64, 1, 0, Math.PI * 2);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xffd060,  // muted gold
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const progressRing = new THREE.Mesh(ringGeo, ringMat);
+    progressRing.rotation.x = -Math.PI / 2;
+    progressRing.visible = false;
+    scene.add(progressRing);
+
+    // Wake glow ring — expands and fades during WAKING.
+    const wakeRingGeo = new THREE.RingGeometry(1.0, 1.05, 64, 1);
+    const wakeRingMat = new THREE.MeshBasicMaterial({
+      color: 0xa0c0ff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    const wakeRing = new THREE.Mesh(wakeRingGeo, wakeRingMat);
+    wakeRing.rotation.x = -Math.PI / 2;
+    wakeRing.visible = false;
+    scene.add(wakeRing);
 
     function animate(){
       fid=requestAnimationFrame(animate);
@@ -540,6 +620,64 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
         _coreScratch.lerp(STATE_TINT.offline, 0.6);
         _glowScratch.lerp(STATE_TINT.offline, 0.6);
         _lightScratch.lerp(STATE_TINT.offline, 0.6);
+      } else if (liveState === "sleeping") {
+        // Sleep: emotion-agnostic deep midnight blue; dim, slow pulse handled below.
+        _coreScratch.lerp(STATE_TINT.sleeping, 0.85);
+        _glowScratch.lerp(STATE_TINT.sleeping, 0.80);
+        _lightScratch.lerp(STATE_TINT.sleeping, 0.75);
+      } else if (liveState === "waking") {
+        // Wake: blend toward dawn-blue, intensifying with wakeProgress.
+        const wp = Math.max(0, Math.min(1, wakeProgressRef.current));
+        _coreScratch.lerp(STATE_TINT.waking, 0.5 + wp * 0.3);
+        _glowScratch.lerp(STATE_TINT.waking, 0.4 + wp * 0.3);
+        _lightScratch.lerp(STATE_TINT.waking, 0.4 + wp * 0.3);
+      }
+
+      // ── Sleep / wake visuals ─────────────────────────────────────────────
+      const isSleeping = liveState === "sleeping";
+      const isWaking = liveState === "waking";
+
+      // Z-sprites: visible during SLEEPING, fade out during WAKING, hidden otherwise.
+      let zTargetOpacity = 0;
+      if (isSleeping) zTargetOpacity = 0.85;
+      else if (isWaking) zTargetOpacity = Math.max(0, 0.85 - wakeProgressRef.current * 0.85);
+      for (let i = 0; i < zSprites.length; i++) {
+        const sp = zSprites[i];
+        sp.visible = isSleeping || isWaking;
+        const mat = sp.material as THREE.SpriteMaterial;
+        // Ease toward target opacity at ~0.05 per frame.
+        mat.opacity += (zTargetOpacity - mat.opacity) * 0.05;
+        if (sp.visible) {
+          // Slow orbit + gentle vertical drift.
+          const phase = (i / zSprites.length) * Math.PI * 2 + t * 0.15;
+          sp.position.x = Math.cos(phase) * (0.9 + Math.sin(t * 0.2 + i) * 0.05);
+          sp.position.z = Math.sin(phase) * (0.9 + Math.sin(t * 0.2 + i) * 0.05);
+          sp.position.y = 0.3 + Math.sin(t * 0.4 + i) * 0.15;
+        }
+      }
+
+      // Progress ring: shows during SLEEPING. Fills clockwise based on sleepProgress.
+      progressRing.visible = isSleeping;
+      if (isSleeping) {
+        const sp = Math.max(0, Math.min(1, sleepProgressRef.current));
+        // Re-build ring geometry to reflect partial fill.
+        // (This is cheap — RingGeometry creates a small index/buffer.)
+        progressRing.geometry.dispose();
+        progressRing.geometry = new THREE.RingGeometry(1.05, 1.15, 64, 1, -Math.PI / 2, Math.PI * 2 * sp);
+        ringMat.opacity = 0.55;
+      } else {
+        ringMat.opacity = Math.max(0, ringMat.opacity - 0.02);
+      }
+
+      // Wake ring: brief expanding-glow during WAKING.
+      wakeRing.visible = isWaking;
+      if (isWaking) {
+        const wp = Math.max(0, Math.min(1, wakeProgressRef.current));
+        const ringScale = 1 + wp * 1.5;
+        wakeRing.scale.set(ringScale, ringScale, 1);
+        wakeRingMat.opacity = (1 - wp) * 0.7;
+      } else {
+        wakeRingMat.opacity = Math.max(0, wakeRingMat.opacity - 0.05);
       }
 
       coreMat.color.copy(_coreScratch);
@@ -576,6 +714,18 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
       [coreMat,igMat,shellMat,pMat,haloMat].forEach(m=>m.dispose());
       streams.forEach(l=>{ l.geometry.dispose(); (l.material as THREE.Material).dispose(); });
       haloTex.dispose();
+      // Sleep visuals.
+      zSprites.forEach(sp => {
+        scene.remove(sp);
+        (sp.material as THREE.SpriteMaterial).dispose();
+      });
+      zTexture.dispose();
+      scene.remove(progressRing);
+      progressRing.geometry.dispose();
+      ringMat.dispose();
+      scene.remove(wakeRing);
+      wakeRing.geometry.dispose();
+      wakeRingMat.dispose();
       if(container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
     };
 
@@ -584,8 +734,49 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
     // update live without remounting the scene.
   }, [emotion, size]);
 
+  // Format remaining-seconds for the sleep timer label.
+  const showTimer = state === "sleeping" || state === "waking";
+  const timerLabel = (() => {
+    if (state === "waking") {
+      // During WAKING, show "waking…" with rough remaining estimate.
+      // wakeProgress reaches 1.0 at the estimate boundary; remaining = (1-wp)*est is unknown
+      // here, so just show "waking..." without a hard countdown.
+      return "waking…";
+    }
+    const s = Math.max(0, Math.round(sleepRemainingSeconds));
+    if (s <= 0) return "";
+    if (s < 60) return `${s}s remaining`;
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    if (m < 60) return `${m}m ${sec}s remaining`;
+    const h = Math.floor(m / 60);
+    const min = m % 60;
+    return `${h}h ${min}m remaining`;
+  })();
+
   return (
-    <div ref={mountRef} style={{ width:size, height:size, display:"flex", alignItems:"center", justifyContent:"center", background:"transparent", overflow:"visible", flexShrink:0 }} />
+    <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+      <div ref={mountRef} style={{ width:size, height:size, display:"flex", alignItems:"center", justifyContent:"center", background:"transparent", overflow:"visible" }} />
+      {showTimer && timerLabel && (
+        <div
+          style={{
+            position: "absolute",
+            top: -28,
+            left: 0,
+            right: 0,
+            textAlign: "center",
+            color: "rgba(180, 200, 240, 0.85)",
+            fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+            fontSize: 13,
+            letterSpacing: "0.05em",
+            pointerEvents: "none",
+            textShadow: "0 1px 2px rgba(0,0,0,0.5)",
+          }}
+        >
+          {timerLabel}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -603,7 +794,12 @@ const OrbCanvas = memo(OrbCanvasInner, (prev, next) => (
   Math.abs((prev.amplitude ?? 0) - (next.amplitude ?? 0)) < 0.03 &&
   Math.abs((prev.energy ?? 0.5) - (next.energy ?? 0.5)) < 0.05 &&
   prev.recenterTrigger === next.recenterTrigger &&
-  (prev.cubeMorphEnabled ?? true) === (next.cubeMorphEnabled ?? true)
+  (prev.cubeMorphEnabled ?? true) === (next.cubeMorphEnabled ?? true) &&
+  // Sleep state — re-render on every change so the orb reflects new
+  // timer / progress / wake-progress promptly. Tolerance kept tight.
+  Math.abs((prev.sleepProgress ?? 0) - (next.sleepProgress ?? 0)) < 0.01 &&
+  Math.abs((prev.sleepRemainingSeconds ?? 0) - (next.sleepRemainingSeconds ?? 0)) < 1.0 &&
+  Math.abs((prev.wakeProgress ?? 0) - (next.wakeProgress ?? 0)) < 0.05
 ));
 
 export default OrbCanvas;

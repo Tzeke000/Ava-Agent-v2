@@ -806,6 +806,18 @@ def _run_heartbeat_tick(
     except Exception as _ts_exc:
         print(f"[heartbeat] temporal_sense fast-check error: {_ts_exc!r}")
 
+    # 2026-05-04: sleep-mode state-machine tick. Idempotent; honors pending
+    # sleep/wake requests, runs phase work when SLEEPING, manages on-time
+    # wake discipline. Per-tick cost varies: AWAKE → microseconds (just
+    # checks triggers). SLEEPING in Phase 2 → up to phase2.tick_budget_seconds
+    # of paced work. Phase 1/3 → one LLM call (60-120s, blocking) — that's a
+    # one-shot cost at state transitions, not every tick.
+    try:
+        from brain.sleep_mode import tick as _sleep_tick
+        _sleep_tick(g)
+    except Exception as _sm_exc:
+        print(f"[heartbeat] sleep_mode tick error: {_sm_exc!r}")
+
     # B3 (2026-05-03): temporal metabolism slow-cycle. Runs every
     # ~10 min default (config/temporal_sense.json slow_cycle.
     # interval_seconds). Yields to voice loop (defers if
