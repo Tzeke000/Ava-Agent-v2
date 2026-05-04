@@ -1114,6 +1114,12 @@ def build_debug_full(host: dict[str, Any]) -> dict[str, Any]:
             health["sleep"] = _sleep_snapshot(g)
         except Exception as _sm_exc:
             health["sleep"] = {"state": "AWAKE", "error": str(_sm_exc)[:100]}
+        # Face tracking — temporal filter state (current person, persistence).
+        try:
+            from brain.face_tracking import get_current_person as _ft_snap
+            health["face_tracking"] = _ft_snap(g)
+        except Exception as _ft_exc:
+            health["face_tracking"] = {"error": str(_ft_exc)[:100]}
         health["ollama_reachable"] = {
             "last_ok": bool(g.get("_ollama_last_ok", True)),
             "last_check_ts": float(g.get("_ollama_last_check_ts") or 0.0),

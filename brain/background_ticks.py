@@ -169,6 +169,20 @@ def _video_frame_capture_thread(g: dict[str, Any]) -> None:
                                 _last_seen_pid = None
                                 g["_recognized_person_id"] = "unknown"
                                 g["_recognized_confidence"] = 0.0
+
+                            # ── Temporal filter (2026-05-04) — promotes
+                            # persistent unknown faces to "new person detected"
+                            # only after 12s of continuous unknown visibility.
+                            # Filters out brief look-aways and recognition jitter.
+                            try:
+                                from brain import face_tracking
+                                _ft_pid = g.get("_recognized_person_id") or None
+                                _ft_pid = None if _ft_pid in ("", "unknown") else _ft_pid
+                                face_tracking.update(g, recognized_person_id=_ft_pid,
+                                                     similarity=g.get("_recognized_confidence"))
+                            except Exception as _fte:
+                                # Don't let face_tracking break the camera loop.
+                                pass
                         except Exception as _ie:
                             print(f"[video_capture] insight analyze error: {_ie}")
 
