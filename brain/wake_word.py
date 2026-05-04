@@ -342,7 +342,14 @@ class WakeWordDetector:
                 result = stt_engine._transcribe_array(audio, sample_rate=16000)
                 text = str((result or {}).get("text") or "").lower()
                 if any(kw in text for kw in self._keywords):
-                    self._trigger_wake(source="whisper_poll")
+                    # Use the transcript_wake prefix so voice_loop.py treats
+                    # this as an explicit direct-address signal — the next
+                    # listening transcript is the command and does NOT need
+                    # to repeat "ava". Without this, voice_loop's wake-
+                    # classifier rejects the follow-up command with
+                    # reason="no_ava_token" (functional regression after
+                    # openWakeWord was disabled in 2026-04-29 bench).
+                    self._trigger_wake(source="transcript_wake:whisper_poll")
             except Exception:
                 pass
             time.sleep(3.0)
