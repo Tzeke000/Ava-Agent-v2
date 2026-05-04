@@ -33,6 +33,18 @@ This is a load-bearing constraint that affects:
 
 Small, self-contained items queued for the next session(s). Each is a few hours to a day of work; each lands as a single commit or short series.
 
+### Sleep mode + Clipboard + Curriculum + Onboarding — four-feature work order (2026-05-04 ✅ shipped)
+
+Lands the framework + implementation for four features in one work order. Design is in [`docs/AVA_FEATURE_ADDITIONS_2026-05.md`](AVA_FEATURE_ADDITIONS_2026-05.md); implementation results in [`docs/AVA_FEATURE_ADDITIONS_2026-05_RESULTS.md`](AVA_FEATURE_ADDITIONS_2026-05_RESULTS.md).
+
+- **Sleep mode** — `brain/sleep_mode.py` 5-state machine (AWAKE → ENTERING_SLEEP → SLEEPING → WAKING → AWAKE), 3 trigger paths (composite session-fullness, voice command, schedule + context-aware deferral), 3-phase consolidation (awake handoff, learning processing via curriculum, sleep handoff), on-time wake discipline, sleep-state-aware decay multiplier (5× during SLEEPING). OrbCanvas inline-extended with sleeping/waking visuals (z-particles, progress ring, wake glow ring, timer label).
+- **Clipboard tool** — `cu_clipboard_write` / `cu_clipboard_paste` / `cu_type_clipboard` — atomic alternative to per-character keystroke typing. Threshold: prefer clipboard for text >10 chars.
+- **Close-app + disambiguation** — `cu_close_app(name, target=)` with disambiguation pattern: when multiple matches (e.g. Spotify desktop + Spotify browser tab), returns `ok=False reason="ambiguous"` with `candidates=[…]` so Ava asks "which one?" rather than guessing. Pattern is general for all `cu_*` tools.
+- **Curriculum** — 25 fables from Project Gutenberg #19994 in `curriculum/foundation/*.txt`. `brain/curriculum.py` API: `list_curriculum`, `read_curriculum_entry`, `mark_read`, `consolidation_hook`. Sleep mode Phase 2 calls the hook to read slowly during sleep.
+- **New person onboarding** — `brain/face_tracking.py` temporal filter (12s persistence default) for unknown-face promotion + Trust 1 default. `brain/person_onboarding.py` extended with age + gender + trust_assignment stages. `parse_onboarding_command` handles "this is my friend, give them trust 3" / "introduce yourself" / "set their trust to 4". `reply_engine` uses the combined detector so the trigger lands trust + relationship in one shot.
+
+Verified: 8/14 Phase F tests PASS (synthetic + tool dispatch + inject_transcript). Deferred: F3/F4/F5/F7 (clock-time bound), F6 (visual), F8/F12 (full voice loop). Test driver: `scripts/verify_phase_f_features.py`.
+
 ### Hardware verification battery — Windows-Use computer-use layer (2026-05-03 → 2026-05-04 verified)
 Shipped in this session: `brain/windows_use/` orchestrator with deny-list, multi-strategy retry cascade, two-tier File Explorer guards, slow-app/failure differentiation, temporal-sense task-boundary integration, TTS narration, and ten new `cu_*` tools registered in `tools/system/computer_use.py`. The verify harness (`scripts/verify_windows_use.py`) covers 13 deterministic integration points. Real-hardware verification done 2026-05-04 — see [`docs/REAL_HW_VERIFICATION_2026-05-03.md`](REAL_HW_VERIFICATION_2026-05-03.md) for the full results.
 

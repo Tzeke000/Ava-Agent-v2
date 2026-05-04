@@ -425,19 +425,20 @@ def _cmd_restart_with_handoff(text, m, g):
         return f"Restart attempt failed: {type(e).__name__}: {str(e)[:120]}", "frustration"
 
 
-@_builtin(r"\b(?:go to sleep|ava sleep|sleep now)\b")
-def _cmd_sleep(text, m, g):
-    vl = g.get("_voice_loop")
-    if vl is not None:
-        try:
-            vl._set_state("passive")  # type: ignore[attr-defined]
-        except Exception:
-            pass
-    return "Going to sleep.", "calm"
+# 2026-05-04: previous _cmd_sleep / _cmd_wake handlers (voice-loop dim/un-dim)
+# were superseded by the proper sleep-mode state machine. The new handlers
+# live further down (search "Sleep mode commands") and dispatch to
+# brain.sleep_mode.{request_sleep,request_wake} so the orb visuals,
+# emotion-decay multiplier, and on-time-wake discipline all engage. The
+# old handlers simply set voice_loop._state, which doesn't engage any of
+# that. Kept the wake-related fallback below for the "ava wake up" wording
+# the older handler responded to — that maps to sleep_mode.request_wake too.
 
 
-@_builtin(r"\b(?:wake up|ava wake up|are you awake)\b")
-def _cmd_wake(text, m, g):
+@_builtin(r"\b(?:ava wake up|are you awake)\b")
+def _cmd_wake_legacy(text, m, g):
+    """Legacy wake-loop trigger. The richer 'wake up'/'come back' phrasings
+    are handled by _cmd_wake further down (sleep-mode-aware)."""
     vl = g.get("_voice_loop")
     if vl is not None:
         try:

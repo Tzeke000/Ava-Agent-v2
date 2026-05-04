@@ -626,13 +626,33 @@ def _tick_impl(g: dict[str, Any]) -> dict[str, Any]:
         return {"state": STATE_AWAKE}
 
     if state == STATE_ENTERING_SLEEP:
-        # Run Phase 1 (blocking but bounded).
-        result = _run_phase1_awake_handoff(g)
-        g["_sleep_phase1_result"] = result
+        # Run Phase 1 in a background thread so the heartbeat tick doesn't
+        # block for the LLM call (which can be 30-120s on this hardware).
+        # First tick launches; subsequent ticks check completion.
+        if g.get("_sleep_phase1_thread") is None:
+            def _do_phase1():
+                try:
+                    result = _run_phase1_awake_handoff(g)
+                    g["_sleep_phase1_result"] = result
+                except Exception as _ex:
+                    g["_sleep_phase1_result"] = {"error": repr(_ex)}
+                finally:
+                    g["_sleep_phase1_done"] = True
+            t = threading.Thread(target=_do_phase1, daemon=True, name="ava-sleep-phase1")
+            t.start()
+            g["_sleep_phase1_thread"] = t
+            g["_sleep_phase1_done"] = False
+            return {"transition": "ENTERING_SLEEP → phase1_started"}
+        if not g.get("_sleep_phase1_done"):
+            return {"state": STATE_ENTERING_SLEEP, "phase": "awake_handoff_in_progress"}
+        # Phase 1 complete — transition to SLEEPING.
         g["_sleep_state"] = STATE_SLEEPING
         g["_sleep_phase"] = "learning"
         g["_sleep_phase_started_ts"] = time.time()
-        return {"transition": "ENTERING_SLEEP → SLEEPING", "phase1": result}
+        # Clear thread refs so next sleep cycle starts clean.
+        g.pop("_sleep_phase1_thread", None)
+        g.pop("_sleep_phase1_done", None)
+        return {"transition": "ENTERING_SLEEP → SLEEPING", "phase1": g.get("_sleep_phase1_result")}
 
     if state == STATE_SLEEPING:
         # Honor wake requests.
@@ -664,11 +684,28 @@ def _tick_impl(g: dict[str, Any]) -> dict[str, Any]:
             return {"state": STATE_SLEEPING, "phase": "learning", "result": r}
 
         if g.get("_sleep_phase") == "sleep_handoff":
-            # Run phase 3, then transition to WAKING.
-            result = _run_phase3_sleep_handoff(g)
-            g["_sleep_phase3_result"] = result
+            # Same threading pattern as Phase 1 — don't block the heartbeat tick.
+            if g.get("_sleep_phase3_thread") is None:
+                def _do_phase3():
+                    try:
+                        result = _run_phase3_sleep_handoff(g)
+                        g["_sleep_phase3_result"] = result
+                    except Exception as _ex:
+                        g["_sleep_phase3_result"] = {"error": repr(_ex)}
+                    finally:
+                        g["_sleep_phase3_done"] = True
+                t = threading.Thread(target=_do_phase3, daemon=True, name="ava-sleep-phase3")
+                t.start()
+                g["_sleep_phase3_thread"] = t
+                g["_sleep_phase3_done"] = False
+                return {"phase3_started": True}
+            if not g.get("_sleep_phase3_done"):
+                return {"state": STATE_SLEEPING, "phase": "sleep_handoff_in_progress"}
+            # Phase 3 complete — transition to WAKING.
+            g.pop("_sleep_phase3_thread", None)
+            g.pop("_sleep_phase3_done", None)
             _enter_waking(g, reason="phase3_complete")
-            return {"transition": "SLEEPING → WAKING", "phase3": result}
+            return {"transition": "SLEEPING → WAKING", "phase3": g.get("_sleep_phase3_result")}
 
         return {"state": STATE_SLEEPING, "phase": g.get("_sleep_phase")}
 

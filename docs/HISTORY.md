@@ -642,6 +642,98 @@ Wall time was therefore bounded by `150 + 67 = 217s` — the bottleneck thread, 
 
 ---
 
+### Section 9 — 2026-05-04 Four-feature work order: Sleep mode + Clipboard + Curriculum + New Person Onboarding
+
+One large work order that landed four features in a single overnight session, with a design framework doc preceding the implementation.
+
+#### Phase A — Design framework (`docs/AVA_FEATURE_ADDITIONS_2026-05.md`)
+
+Single consolidated framework doc covering all four features. Architectural-vs-phenomenological discipline applied per `CONTINUOUS_INTERIORITY.md` §2 — every behavior described both as testable mechanism and as the framing language we use to describe what we built. §7 is the implementation TOC, §8 is performance budgets, §9 is failure modes to watch for.
+
+#### Phase B — Sleep mode
+
+5-state machine in `brain/sleep_mode.py`: AWAKE → ENTERING_SLEEP → SLEEPING → WAKING → AWAKE. Three trigger paths:
+
+1. **Session fullness** — composite score weighted across Ollama context fill (placeholder until wired), conversation turns since last sleep, and memory layer fill (concept_graph + mem0). Crosses default 0.70 → autonomous sleep. Configurable in `config/sleep_mode.json`.
+2. **Voice command** — regex matches "go to sleep" / "goodnight" / "take a nap" / "sleep for N minutes" / "sleep until …". Duration parser handles seconds/minutes/hours. Voice handler in `brain/voice_commands.py` asks back "How long do you want me to sleep for?" when duration absent; otherwise sets `_sleep_pending_request` and returns "Going to sleep for X. See you on the other side." The next heartbeat tick honors the request.
+3. **Schedule + context** — default 23:00–05:00 window, defers on `_conversation_active` / `_turn_in_progress`, defers within first 10 min of process start, suppresses re-trigger within 1 hour.
+
+Three-phase consolidation:
+
+- **Phase 1 (awake-session handoff)** — LLM call summarizing the just-ended awake session (texture + significance + what to remember + what to let decay). Writes `state/sleep_handoffs/awake_session_<ts>.md`.
+- **Phase 2 (learning processing)** — paced LLM calls over recent conversations + `brain/curriculum.consolidation_hook(g)` to read curriculum entries slowly. Yields cleanly when `wake_target - wind_down_duration` reached.
+- **Phase 3 (sleep-session handoff)** — brief summary of Phase 2's lessons. Writes `state/sleep_handoffs/sleep_session_<ts>.md`.
+
+Phase 1 and Phase 3 LLM calls run on background threads so the heartbeat tick (which calls `sleep_mode.tick(g)` every 30 s) doesn't block on the 30–120 s LLM latency.
+
+Sleep-state-aware decay: `temporal_sense.apply_state_decay_growth` reads `sleep_mode.get_emotion_decay_multiplier(g)` — 1.0 awake, 5.0 sleeping (configurable). Boredom decays during sleep instead of growing. Knowledge persists normally.
+
+OrbCanvas inline-extended with `sleeping` / `waking` states. New visual elements: 5 z-particle sprites orbiting (sin/cos), progress ring (`THREE.RingGeometry`, fills clockwise based on `sleepProgress`), wake glow ring (expanding fade during WAKING), HTML timer label overlay. ~150 new lines of TSX. `App.tsx` reads `subsystem_health.sleep` and forwards `sleepProgress` / `sleepRemainingSeconds` / `wakeProgress` to all 3 OrbCanvas instances.
+
+On-time wake discipline: Phase 2 yields at `wake_target - wind_down_duration`. Wind-down default 5 min, calibrates from `temporal_sense.calibrate_from_history(kind="sleep_phase3")` after 3+ samples. Self-interrupt narration on Phase 3 overrun.
+
+Wake-announcement: TTS line on entering WAKING — "I see you. I'm starting to wake up. Give me about N seconds." (path-dependent text). On full AWAKE: brief "I'm awake. I slept for X minutes." if Zeke is the recognized person.
+
+#### Phase C — Clipboard + close-app + disambiguation
+
+`brain/windows_use/primitives.py`: `set_clipboard`, `paste_into_window`, `type_text_via_clipboard` (with prior-clipboard preservation), `find_window_candidates` (returns desktop vs browser_tab kind), `close_window_by_handle`, `close_app_by_pid`, `close_browser_tab_by_title`.
+
+`brain/windows_use/agent.py`: `clipboard_write`, `clipboard_paste`, `type_via_clipboard`, `close_app(name, target=, force=, last_n=)`. `WindowsUseResult` gains `candidates` field. `close_app` returns `ok=False reason="ambiguous"` with structured `candidates` when desktop + browser tab + multiple processes match — Ava asks "which one?" rather than guessing.
+
+`tools/system/computer_use.py`: registers `cu_clipboard_write`, `cu_clipboard_paste`, `cu_type_clipboard`, `cu_close_app`. Threshold heuristic for clipboard: text >10 chars uses paste; ≤10 chars uses keystroke `cu_type`.
+
+The disambiguation pattern is general — applies to any `cu_*` tool that finds multiple matches. Pattern documented in `docs/AVA_FEATURE_ADDITIONS_2026-05.md` §5.
+
+#### Phase D — Curriculum
+
+`scripts/_parse_aesop.py` (one-shot) downloads The Aesop for Children (PG #19994), splits 25 fables on title boundaries, strips `[Illustration]` markers, extracts morals from `_..._` italic markers, writes per-fable `.txt` files with YAML metadata header (title, source, source_url, themes, moral, reading_status, lessons_extracted). Also generates `_index.json`.
+
+`brain/curriculum.py`:
+- `list_curriculum(g)` — sorted unread → reading → read.
+- `read_curriculum_entry(g, title=|slug=)` — body text.
+- `mark_read(g, title=|slug=, lessons_extracted=…)` — promotes status, persists lessons to `state/learning/lessons.jsonl` and the entry's metadata header.
+- `consolidation_hook(g, time_budget_seconds)` — sleep mode Phase 2 entry point. Picks next unread (or in-flight `reading` entry first), paces through paragraphs at ~10 s each, generates lesson notes (currently a stub from the moral; LLM wiring is a follow-up), marks read. Yields cleanly mid-entry — partial state persists as `reading_status: reading`.
+
+`curriculum/README.md` is Ava's framing for what the curriculum is — read at boot via `brain.curriculum.get_readme_content()` so identity awareness comes from the README, not from editing `IDENTITY.md` (which is verboten per CLAUDE.md).
+
+#### Phase E — New person onboarding
+
+`brain/face_tracking.py` (new): per-frame temporal filter on the InsightFace recognition result. Tracks "current person" with 12 s persistence window (configurable). Promotes unknown face → "new person detected" only after sustained continuous unknown visibility — filters look-away jitter, lighting changes, shadow / reflection states. Promotion fires:
+
+- Inner-monologue note: *"There's an unknown person here. I'm not initiating — staying reserved."*
+- `SIGNAL_NEW_PERSON_DETECTED` signal-bus publish.
+- Default Trust 0.30 (stranger band) registered in `trust_system`.
+- Audit row in `state/face_tracking_log.jsonl`.
+
+`parse_onboarding_command(text)` handles 4 phrasing patterns: "this is my friend / family / colleague / partner", "give them trust N" / "set their trust to N", "meet my X", "introduce yourself".
+
+`brain/person_onboarding.py` extended:
+- Stage list: `favorite_color` / `one_thing` → `age_capture` / `gender_capture` + new `trust_assignment` stage. Backward-compat handlers for in-flight legacy sessions.
+- `OnboardingFlow.__init__` accepts `trust_score`, `relationship`, `introduced_by` so triggered flows land the trust band immediately.
+- `_save_final_profile` writes `age`, `gender`, `trust_score`, `trust_label`, `introduced_by`, `introduced_at`, `face_embeddings_count`, `face_embeddings_dir`.
+- `detect_onboarding_trigger_with_trust` — combined detector pulling the legacy trigger and the new richer parser into one call.
+
+`brain/reply_engine.py`: onboarding-trigger check uses the combined detector so `"hey ava, this is my friend, give them trust 3"` lands `trust_score=0.50` + `relationship="friend"` immediately.
+
+`brain/background_ticks.py`: video_capture loop calls `face_tracking.update()` on every InsightFace result.
+
+#### Phase F — Voice-first verification
+
+8/14 tests PASS (F1, F2, F9, F9b, F10, F11, F13, disambig). Test paths used: `inject_transcript` for voice-command flows (audio loopback not yet routed end-to-end), `tool_call` for direct cu_* dispatch, `synthetic` for unit-style behavior. 6 deferred for clock-time / visual / Voicemeeter-routing reasons (F3 fullness simulation, F4 schedule timing, F5 emotion decay, F6 visuals, F7 on-time wake clock, F8 voice provocation, F12 voice onboarding, F14 integration spot).
+
+#### Standing rules + supporting changes
+
+- `config/sleep_mode.json` — fullness thresholds, schedule window, decay multipliers, phase budgets, wake estimates.
+- `config/curriculum.json` — paragraph pacing, lesson-extraction budget.
+- `config/onboarding.json` — temporal-filter persistence, photos-per-pose, verification similarity threshold.
+- `brain/operator_server.py` — surfaces `subsystem_health.sleep` and `subsystem_health.face_tracking` for OrbCanvas + diagnostics.
+
+#### Files modified / new
+
+`brain/sleep_mode.py`, `brain/curriculum.py`, `brain/face_tracking.py` (new). `brain/temporal_sense.py`, `brain/heartbeat.py`, `brain/voice_commands.py`, `brain/operator_server.py`, `brain/reply_engine.py`, `brain/background_ticks.py`, `brain/person_onboarding.py`, `brain/windows_use/primitives.py`, `brain/windows_use/agent.py`, `tools/system/computer_use.py`, `apps/ava-control/src/components/OrbCanvas.tsx`, `apps/ava-control/src/App.tsx`, `.gitignore`. New configs: `config/sleep_mode.json`, `config/curriculum.json`, `config/onboarding.json`. New docs: `docs/AVA_FEATURE_ADDITIONS_2026-05.md`, `docs/AVA_FEATURE_ADDITIONS_2026-05_RESULTS.md`. New scripts: `scripts/_parse_aesop.py`, `scripts/verify_phase_f_features.py`. Curriculum: `curriculum/README.md`, `curriculum/foundation/README.md`, `curriculum/foundation/*.txt` (25), `curriculum/foundation/_index.json`.
+
+---
+
 ### Section 8 — 2026-05-03 → 2026-05-04 Real-hardware verification + temporal-sense hot path fix
 
 Two work orders chained back-to-back. First did real-hardware verification of the Windows-Use orchestrator, the temporal-sense substrate, and the audio loopback. Second fixed the substrate issues the first surfaced and resumed verification.
