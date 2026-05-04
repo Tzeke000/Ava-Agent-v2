@@ -741,8 +741,17 @@ def run_ava(
         )
         _trace(f"re.prompt_built ms={int((time.time()-_prompt_t0)*1000)}")  # TRACE-PHASE1
         if _prompt_result is None:
-            # Prompt build timed out — fall back to minimal prompt
-            print("[run_ava] step: prompt build timed out, using minimal fallback")
+            # Prompt build timed out — fall back to minimal prompt AND force
+            # fast path. The fallback prompt is essentially the fast-path
+            # template (SystemMessage + HumanMessage), so routing it to the
+            # deep model (deepseek-r1) would be wasteful and trigger a 30–90 s
+            # model swap (ava-personal evicts) on the 8 GB VRAM ceiling. Fast
+            # path uses the already-warm ava-personal:latest, so the turn
+            # completes in seconds instead of minutes. See
+            # docs/REAL_HW_VERIFICATION_2026-05-03.md "Phase C — model swap
+            # thrashing root cause" for the trace evidence (turns went from
+            # 600 s back to ~3 s after this fix landed).
+            print("[run_ava] step: prompt build timed out, using minimal fallback (forcing fast path to avoid model swap)")
             from langchain_core.messages import HumanMessage, SystemMessage
             messages = [
                 SystemMessage(content=str(_av.SYSTEM_PROMPT or "")),
@@ -750,6 +759,10 @@ def run_ava(
             ]
             visual = {}
             active_profile = _av.load_profile_by_id(active_person_id)
+            use_fast_path = True
+            _g["reply_path_selected"] = "fast"
+            _g["reply_path_reason"] = "build_prompt_timeout_fallback_fast"
+            _trace("re.build_prompt_timeout_force_fast_path")  # TRACE-PHASE1
         else:
             messages, visual, active_profile = _prompt_result
 

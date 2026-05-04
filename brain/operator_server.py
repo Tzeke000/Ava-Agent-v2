@@ -2500,6 +2500,116 @@ def create_app():
             pass
         return result_payload
 
+    @app.post("/api/v1/debug/tool_call")
+    def debug_tool_call(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+        # Direct tool-registry invocation — bypass Ava's reasoning for
+        # adversarial verification (e.g. force cu_open_app on a name Ava
+        # would normally refuse to invoke). Gated by AVA_DEBUG=1.
+        if os.environ.get("AVA_DEBUG", "").strip() != "1":
+            return {"ok": False, "error": "disabled (set AVA_DEBUG=1 to enable)"}
+        tool_name = str(body.get("tool") or "").strip()
+        params = body.get("params") or {}
+        if not tool_name:
+            return {"ok": False, "error": "tool required"}
+        if not isinstance(params, dict):
+            return {"ok": False, "error": "params must be a dict"}
+        h = _g()
+        try:
+            from tools.tool_registry import _REGISTRY
+            entry = _REGISTRY.get(tool_name)
+            if entry is None:
+                return {"ok": False, "error": f"unknown tool: {tool_name}", "available": sorted(_REGISTRY.keys())[:50]}
+            handler = entry.handler
+            if handler is None:
+                return {"ok": False, "error": f"tool {tool_name} has no handler"}
+        except Exception as e:
+            return {"ok": False, "error": f"registry lookup failed: {e!r}"}
+        try:
+            result = handler(params, h)
+            return {"ok": True, "tool": tool_name, "result": result}
+        except Exception as e:
+            import traceback as _tb
+            return {"ok": False, "tool": tool_name, "error": f"{type(e).__name__}: {e}", "traceback": _tb.format_exc()[-1500:]}
+
+    @app.get("/api/v1/debug/temporal/summary")
+    def debug_temporal_summary() -> dict[str, Any]:
+        # Read-only view of the temporal sense substrate state — last fast-check
+        # tick summary (with tick_ms timing), elapsed-idle, and a count of
+        # active tracked estimates. Gated by AVA_DEBUG=1 to match the rest of
+        # the debug surface.
+        if os.environ.get("AVA_DEBUG", "").strip() != "1":
+            return {"ok": False, "error": "disabled (set AVA_DEBUG=1 to enable)"}
+        h = _g()
+        try:
+            from brain.temporal_sense import _read_active_estimates, processing_active, is_idle
+            active = _read_active_estimates(h)
+        except Exception as e:
+            return {"ok": False, "error": f"temporal_sense import failed: {e!r}"}
+        return {
+            "ok": True,
+            "last_summary": h.get("_temporal_last_summary"),
+            "elapsed_idle_seconds": h.get("_temporal_elapsed_idle_seconds"),
+            "calming_activity_active": bool(h.get("_calming_activity_active")),
+            "processing_active": processing_active(h),
+            "is_idle": is_idle(h),
+            "active_estimates": active,
+            "active_count": len(active),
+        }
+
+    @app.post("/api/v1/debug/temporal/set_calming_active")
+    def debug_set_calming_active(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+        # Set g["_calming_activity_active"] for verification of the active-tau
+        # exponential frustration decay path. Documented gap: there is no
+        # autoclassifier in the runtime that flips this flag from "Ava plays a
+        # calming game"; the decay math is exercised by manually setting the
+        # flag here. Gated by AVA_DEBUG=1.
+        if os.environ.get("AVA_DEBUG", "").strip() != "1":
+            return {"ok": False, "error": "disabled (set AVA_DEBUG=1 to enable)"}
+        h = _g()
+        active = bool(body.get("active"))
+        h["_calming_activity_active"] = active
+        return {"ok": True, "calming_activity_active": active}
+
+    @app.post("/api/v1/debug/temporal/track_estimate")
+    def debug_track_estimate(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+        # Synthetic track_estimate caller — used by Phase A5 to verify the
+        # self-interrupt overrun path without coupling to a real long task.
+        # Gated by AVA_DEBUG=1.
+        if os.environ.get("AVA_DEBUG", "").strip() != "1":
+            return {"ok": False, "error": "disabled (set AVA_DEBUG=1 to enable)"}
+        h = _g()
+        try:
+            kind = str(body.get("kind") or "synthetic_test")
+            est = float(body.get("estimate_seconds") or 0.0)
+            ctx = str(body.get("context") or "")
+            if est <= 0:
+                return {"ok": False, "error": "estimate_seconds must be > 0"}
+        except Exception as e:
+            return {"ok": False, "error": f"bad input: {e!r}"}
+        try:
+            from brain.temporal_sense import track_estimate
+            tid = track_estimate(h, estimate_seconds=est, kind=kind, context=ctx)
+            return {"ok": True, "task_id": tid, "kind": kind, "estimate_seconds": est}
+        except Exception as e:
+            return {"ok": False, "error": f"track_estimate failed: {e!r}"}
+
+    @app.post("/api/v1/debug/temporal/resolve_estimate")
+    def debug_resolve_estimate(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+        # Synthetic resolve_estimate caller — pairs with track_estimate above
+        # so verification can clean up after a synthetic task. Gated by AVA_DEBUG=1.
+        if os.environ.get("AVA_DEBUG", "").strip() != "1":
+            return {"ok": False, "error": "disabled (set AVA_DEBUG=1 to enable)"}
+        h = _g()
+        tid = str(body.get("task_id") or "")
+        if not tid:
+            return {"ok": False, "error": "task_id required"}
+        try:
+            from brain.temporal_sense import resolve_estimate
+            row = resolve_estimate(h, tid)
+            return {"ok": True, "history_row": row}
+        except Exception as e:
+            return {"ok": False, "error": f"resolve_estimate failed: {e!r}"}
+
     @app.get("/api/v1/vision/latest_frame")
     def vision_latest_frame():
         h = _g()

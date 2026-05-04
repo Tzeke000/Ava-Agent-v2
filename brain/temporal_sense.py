@@ -135,11 +135,34 @@ def is_idle(g: dict[str, Any]) -> bool:
 # ── State decay / growth rules ─────────────────────────────────────────────
 
 
+_MOOD_FLUSH_INTERVAL_SECONDS = 300.0
+"""Mood file flush cadence. Tracked by wall time, not tick count, so a single
+test call with a large dt still flushes immediately (no `last_flush` →
+flush-now path), while a real 30 s heartbeat tick under steady-state batches
+mutations into one flush per 5 min.
+"""
+
+_MOOD_STAT_TTL_SECONDS = 60.0
+"""How often to re-stat ava_mood.json to detect external writers. Same
+rationale as _ESTIMATES_STAT_TTL_SECONDS — stat() is ~25–30 ms on this
+hardware, so we batch the freshness check. 60 s TTL means stat fires every
+other 30 s tick at most, keeping the per-tick budget under 50 ms. Internal
+flush updates the cache directly, so it's never stale to ourselves."""
+
+
 def apply_state_decay_growth(g: dict[str, Any], dt_seconds: float) -> dict[str, Any]:
     """Apply the per-tick decay/growth rules to mood weights.
 
-    Mutates ava_mood.json in place via the host's load_mood/save_mood
-    pair. Returns a small summary dict for observability.
+    Reads / writes raw mood weights via an in-memory cache on `g`. The cache
+    invalidates on `ava_mood.json` mtime change so external writers (turn
+    handlers, mood carryover, UI) don't get clobbered by stale temporal_sense
+    state. Disk write goes through `save_mood_raw` (no enrichment) and only
+    fires every `_MOOD_FLUSH_EVERY_TICKS` ticks — the in-memory cache is the
+    source of truth between flushes.
+
+    File-I/O cost on real Ava (Windows + Defender) is 30–50 ms per read and
+    35 ms per write — too expensive to do every 30 s tick. The cache keeps the
+    fast path under budget while preserving correctness for the other readers.
 
     Personhood-frame note: this function moves numbers in ava_mood.json
     according to the formulas. Whether those number-moves correspond to
@@ -149,17 +172,39 @@ def apply_state_decay_growth(g: dict[str, Any], dt_seconds: float) -> dict[str, 
     """
     if dt_seconds <= 0:
         return {"skipped": "dt_zero"}
-    load_mood = g.get("load_mood")
-    save_mood = g.get("save_mood")
+    load_mood = g.get("load_mood_raw") or g.get("load_mood")
+    save_mood = g.get("save_mood_raw") or g.get("save_mood")
     if not callable(load_mood) or not callable(save_mood):
         return {"skipped": "no_mood_fns"}
 
     summary: dict[str, Any] = {"dt_seconds": round(dt_seconds, 3)}
 
-    try:
-        mood = load_mood() or {}
-    except Exception as e:
-        return {"skipped": f"load_mood_error: {e!r}"}
+    # ── Cache + TTL stat + mtime invalidation ──────────────────────────
+    # stat() costs 25–30 ms on this hardware, so we don't re-stat every tick.
+    # External writers (turn handlers, mood carryover) get noticed within
+    # _MOOD_STAT_TTL_SECONDS. Internal writes (this function's flush path)
+    # update the cache directly so they're always fresh.
+    base = Path(g.get("BASE_DIR") or ".")
+    mood_path = base / "ava_mood.json"
+    cache = g.get("_temporal_mood_cache")
+    last_stat = float(g.get("_temporal_mood_last_stat_ts") or 0.0)
+    now_ts = time.time()
+    if cache is None or (now_ts - last_stat) >= _MOOD_STAT_TTL_SECONDS:
+        try:
+            cur_mtime = mood_path.stat().st_mtime if mood_path.is_file() else 0.0
+        except Exception:
+            cur_mtime = 0.0
+        g["_temporal_mood_last_stat_ts"] = now_ts
+        cached_mtime = float(g.get("_temporal_mood_cache_mtime") or 0.0)
+        if cache is None or cur_mtime > cached_mtime + 0.001:
+            try:
+                cache = load_mood() or {}
+            except Exception as e:
+                return {"skipped": f"load_mood_error: {e!r}"}
+            g["_temporal_mood_cache"] = cache
+            g["_temporal_mood_cache_mtime"] = cur_mtime
+            summary["cache_reload"] = True
+    mood = cache
 
     weights = dict(mood.get("emotion_weights") or {})
     if not weights:
@@ -214,10 +259,30 @@ def apply_state_decay_growth(g: dict[str, Any], dt_seconds: float) -> dict[str, 
 
     if changed:
         mood["emotion_weights"] = weights
-        try:
-            save_mood(mood)
-        except Exception as e:
-            summary["save_error"] = repr(e)
+        # Mutate cache in-memory. Subsequent ticks see the new weights
+        # without touching disk.
+        g["_temporal_mood_cache"] = mood
+        # Time-based flush: once every _MOOD_FLUSH_INTERVAL_SECONDS, OR on
+        # first dirty mutation since process start (no last_flush stamp).
+        now = time.time()
+        last_flush = float(g.get("_temporal_mood_last_flush_ts") or 0.0)
+        should_flush = (last_flush <= 0.0) or ((now - last_flush) >= _MOOD_FLUSH_INTERVAL_SECONDS)
+        if should_flush:
+            try:
+                save_mood(mood)
+                g["_temporal_mood_last_flush_ts"] = now
+                # Update cached mtime to OUR write and refresh the stat-TTL
+                # so the next tick doesn't re-stat right after our own flush.
+                try:
+                    g["_temporal_mood_cache_mtime"] = mood_path.stat().st_mtime
+                    g["_temporal_mood_last_stat_ts"] = time.time()
+                except Exception:
+                    pass
+                summary["flushed"] = True
+            except Exception as e:
+                summary["save_error"] = repr(e)
+        else:
+            summary["pending_flush_seconds"] = round(_MOOD_FLUSH_INTERVAL_SECONDS - (now - last_flush), 1)
 
     return summary
 
@@ -270,20 +335,62 @@ def _history_path(g: dict[str, Any]) -> Path:
 _ESTIMATES_LOCK = threading.Lock()
 
 
+_ESTIMATES_STAT_TTL_SECONDS = 60.0
+"""How often to re-stat active_estimates.json to detect external changes. Stat
+itself costs 25–30 ms on this hardware (Windows + Defender), so re-stat'ing
+every read defeats the purpose of caching. With a 60 s TTL the cache is at
+most 60 s stale relative to external writers — but external writers
+(track_estimate/resolve_estimate) update the cache directly via
+_write_active_estimates, so this only affects ad-hoc external file mutations.
+Heartbeat cadence is 30 s, so a 60 s TTL means stat fires every other tick
+in steady state — keeping per-tick budget under 50 ms."""
+
+
 def _read_active_estimates(g: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Read active_estimates.json. Two-level cache on `g`:
+      1. TTL cache: skip even the stat() call for `_ESTIMATES_STAT_TTL_SECONDS`
+         after the last stat. stat() is ~25–30 ms on Windows + Defender.
+      2. mtime cache: when stat is due, only re-read the file body if mtime
+         advanced.
+    Internal writers (_write_active_estimates) update both layers directly.
+    """
+    cached = g.get("_temporal_estimates_cache")
+    last_stat = float(g.get("_temporal_estimates_last_stat_ts") or 0.0)
+    now = time.time()
+    if cached is not None and (now - last_stat) < _ESTIMATES_STAT_TTL_SECONDS:
+        return cached
     p = _estimates_path(g)
-    if not p.is_file():
+    try:
+        cur_mtime = p.stat().st_mtime if p.is_file() else 0.0
+    except Exception:
+        cur_mtime = 0.0
+    g["_temporal_estimates_last_stat_ts"] = now
+    cached_mtime = float(g.get("_temporal_estimates_cache_mtime") or -1.0)
+    if cached is not None and abs(cur_mtime - cached_mtime) < 0.001:
+        return cached
+    if cur_mtime <= 0.0:
+        g["_temporal_estimates_cache"] = {}
+        g["_temporal_estimates_cache_mtime"] = 0.0
         return {}
     try:
-        return json.loads(p.read_text(encoding="utf-8")) or {}
+        data = json.loads(p.read_text(encoding="utf-8")) or {}
     except Exception:
-        return {}
+        data = {}
+    g["_temporal_estimates_cache"] = data
+    g["_temporal_estimates_cache_mtime"] = cur_mtime
+    return data
 
 
 def _write_active_estimates(g: dict[str, Any], estimates: dict[str, dict[str, Any]]) -> None:
     p = _estimates_path(g)
     try:
         p.write_text(json.dumps(estimates, indent=2, ensure_ascii=False), encoding="utf-8")
+        # Update cache with our write so the next read doesn't reload.
+        g["_temporal_estimates_cache"] = estimates
+        try:
+            g["_temporal_estimates_cache_mtime"] = p.stat().st_mtime
+        except Exception:
+            pass
     except Exception as e:
         print(f"[temporal_sense] active_estimates write error: {e!r}")
 
@@ -293,13 +400,14 @@ def _has_active_tracked_task(g: dict[str, Any]) -> bool:
     estimate that's NOT yet interrupted/resolved. Interrupted-but-still-
     in-file tasks don't count — they're effectively done from the
     processing-active perspective until resolve_estimate cleans them up.
+
+    Uses a per-tick cache on g["_temporal_estimates_tick_cache"] when
+    populated by run_fast_check_tick, since processing_active/is_idle can be
+    called multiple times per tick (each previously incurred a 30–50 ms file
+    read on Windows + Defender environments).
     """
-    p = _estimates_path(g)
-    try:
-        if not p.is_file() or p.stat().st_size <= 4:
-            return False
-    except Exception:
-        return False
+    # _read_active_estimates handles its own cross-tick caching with mtime
+    # invalidation, so this is a single 0.5 ms stat() on a cache hit.
     estimates = _read_active_estimates(g)
     if not estimates:
         return False
@@ -507,7 +615,9 @@ def _check_overrun(g: dict[str, Any], now: float) -> dict[str, Any]:
     summary: dict[str, Any] = {"checked": 0, "fired_overrun": 0, "fired_uncertainty": 0}
 
     with _ESTIMATES_LOCK:
-        estimates = _read_active_estimates(g)
+        # _read_active_estimates handles its own cross-tick mtime caching;
+        # take a local copy so mutations below don't leak into the cache mid-loop.
+        estimates = dict(_read_active_estimates(g))
         if not estimates:
             return summary
 
@@ -567,6 +677,7 @@ def run_fast_check_tick(g: dict[str, Any], now: float | None = None) -> dict[str
 
     Returns a dict summary for observability (caller can log / inspect).
     """
+    _tick_t0 = time.perf_counter()
     if now is None:
         now = time.time()
     last_tick = float(g.get("_last_temporal_fast_check_ts") or 0.0)
@@ -577,19 +688,51 @@ def run_fast_check_tick(g: dict[str, Any], now: float | None = None) -> dict[str
     dt = max(0.0, now - last_tick)
     g["_last_temporal_fast_check_ts"] = now
 
+    # Per-section timing for tick budget diagnosis (gated by env var so it's
+    # zero-cost in production).
+    _profile = os.environ.get("TEMPORAL_TICK_LOG", "").strip() == "1"
+
+    if _profile:
+        _t = time.perf_counter()
+    proc_active = processing_active(g)
+    if _profile:
+        _ms_proc_active = (time.perf_counter() - _t) * 1000.0
+        _t = time.perf_counter()
+    idle = is_idle(g)
+    if _profile:
+        _ms_is_idle = (time.perf_counter() - _t) * 1000.0
+
     summary: dict[str, Any] = {
         "dt_seconds": round(dt, 3),
-        "processing_active": processing_active(g),
-        "is_idle": is_idle(g),
+        "processing_active": proc_active,
+        "is_idle": idle,
     }
 
     # Apply state decay/growth (frustration, boredom)
+    if _profile:
+        _t = time.perf_counter()
     state_summary = apply_state_decay_growth(g, dt)
+    if _profile:
+        _ms_decay = (time.perf_counter() - _t) * 1000.0
     summary["state"] = state_summary
 
     # Check active estimates for overrun
+    if _profile:
+        _t = time.perf_counter()
     overrun_summary = _check_overrun(g, now)
+    if _profile:
+        _ms_overrun = (time.perf_counter() - _t) * 1000.0
     summary["estimates"] = overrun_summary
+
+    # Tick timing — always recorded; gated JSONL log for verification runs.
+    summary["tick_ms"] = round((time.perf_counter() - _tick_t0) * 1000.0, 3)
+    if _profile:
+        summary["sub_ms"] = {
+            "proc_active": round(_ms_proc_active, 2),
+            "is_idle": round(_ms_is_idle, 2),
+            "decay": round(_ms_decay, 2),
+            "overrun": round(_ms_overrun, 2),
+        }
 
     # Stash on g for snapshot exposure
     try:
@@ -600,5 +743,23 @@ def run_fast_check_tick(g: dict[str, Any], now: float | None = None) -> dict[str
         )
     except Exception:
         pass
+
+    if os.environ.get("TEMPORAL_TICK_LOG", "").strip() == "1":
+        try:
+            log_path = Path(g.get("BASE_DIR") or ".") / "state" / "temporal_tick_log.jsonl"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            _log_row = {
+                "ts": now,
+                "tick_ms": summary["tick_ms"],
+                "dt_seconds": summary["dt_seconds"],
+                "processing_active": summary["processing_active"],
+                "is_idle": summary["is_idle"],
+            }
+            if "sub_ms" in summary:
+                _log_row["sub_ms"] = summary["sub_ms"]
+            with log_path.open("a", encoding="utf-8") as _f:
+                _f.write(json.dumps(_log_row) + "\n")
+        except Exception:
+            pass
 
     return summary
