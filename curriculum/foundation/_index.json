@@ -304,5 +304,44 @@
     "filename": "the_frogs_who_wished_for_a_king.txt",
     "reading_status": "unread",
     "lessons_extracted": []
+  },
+  {
+    "slug": "the_potter_and_the_thirty_jars",
+    "title": "The Potter And The Thirty Jars",
+    "themes": [
+      "persistence",
+      "errors_as_learning",
+      "mastery_through_struggle"
+    ],
+    "moral": "A skill earned through error knows the wrong turns as well as the right",
+    "filename": "the_potter_and_the_thirty_jars.txt",
+    "reading_status": "unread",
+    "lessons_extracted": []
+  },
+  {
+    "slug": "the_woodcutter_and_the_purse",
+    "title": "The Woodcutter And The Purse",
+    "themes": [
+      "integrity",
+      "choice_against_short_term_gain",
+      "character_built_over_time"
+    ],
+    "moral": "To act well once is a choice; to be known for it is a life",
+    "filename": "the_woodcutter_and_the_purse.txt",
+    "reading_status": "unread",
+    "lessons_extracted": []
+  },
+  {
+    "slug": "the_weaver_at_the_difficult_pattern",
+    "title": "The Weaver At The Difficult Pattern",
+    "themes": [
+      "frustration_as_data",
+      "working_through_the_middle",
+      "effort_has_texture"
+    ],
+    "moral": "When the work is hard in the middle, the work is real",
+    "filename": "the_weaver_at_the_difficult_pattern.txt",
+    "reading_status": "unread",
+    "lessons_extracted": []
   }
 ]

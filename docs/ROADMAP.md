@@ -41,6 +41,18 @@ Set up of Claude Code's own external memory at `D:\ClaudeCodeMemory\` (separate 
 - ✅ **Phase B — Graphify (`graphifyy` v0.7.5).** `graphify update D:\AvaAgentv2` extracts AST from 283 files → 4,248 nodes + 8,248 edges. Output mirrored from `D:\AvaAgentv2\graphify-out\` (gitignored) to vault at `D:\ClaudeCodeMemory\graphify\ava-agent-v2\`. Manual updater at `scripts\update_graphify.bat`. **Token reduction measured: 119.7x avg vs naive corpus reading** (per-question 86-192x range).
 - ⏸️ **Phase C — mem0 / Qdrant / Neo4j.** Deferred. Hardware baseline: VRAM at 91.5% utilization with llava:13b resident, only 354 MiB free. mem0's reuse of `nomic-embed-text` would force Ollama to page out `ava-personal:latest` on every memory write/query, landing 30-90 s latency cost in the next voice turn. Cost/benefit wrong vs Phase A+B's already-shipped value. Full reasoning in `D:\ClaudeCodeMemory\decisions\mem0-deferred.md`. Revisit when (a) hardware ceiling raises, (b) a Qdrant-only mem0 MCP without Neo4j or external embedding swaps emerges, or (c) the vault grows past ~500 notes and grep-over-markdown stops being sufficient.
 
+### Long-form conversation work order (2026-05-04 — Phase A/C/D shipped, Phase B partial)
+
+Five-phase work order. **Phase A** (audio routing for monitoring), **C** (dual-audio-path documentation + toggle scripts), **D** (3 new curriculum stories) all shipped clean. **Phase B** (30-min sustained conversation with identity probes + sleep cycle) blocked by two reproducible production bugs surfaced under sustained load:
+
+1. **`voice-loop-restart-hang`** — UPGRADED status. Voice_loop hangs on `run_ava.return` intermittently. `re.run_ava.return path=fast ms=...` fires in reply_engine but the next print in voice_loop never fires. State stuck at `thinking`. Force-kill needed to recover. Was filed `not-reproducing` in the previous voice-E2E session; reproduced 2× this session. Likely correlated with `[stage7] persona inject failed: 'list' object has no attribute 'strip'` exceptions visible near hang times. Vault: `bugs/voice-loop-restart-hang.md`.
+
+2. **`operator-chat-cascading-workers`** — NEW. `/api/v1/chat` spawns a daemon worker for each request, waits 90s, returns "Sorry, I'm thinking slowly" fallback BUT the worker keeps running. Under sustained load, ghost workers accumulate and saturate Ollama. Subsequent turns block client-side at urlopen 240s timeout. Vault: `bugs/operator-chat-cascading-workers.md` with 3 fix-sketch options (recommended: Option C, serialize all run_ava invocations under a worker-lock so foreground requests queue cleanly without stacking ghost workers).
+
+**Net status:** voice stack ready for short interactive sessions (single command, under ~5 sustained turns). NOT ready for unsupervised daily use until both bugs fixed. Phase B's intent (long-form coherence + identity stability + sleep-and-resume) requires both fixes before re-running.
+
+Three new curriculum entries shipped: `the_potter_and_the_thirty_jars`, `the_woodcutter_and_the_purse`, `the_weaver_at_the_difficult_pattern`. Total foundation curriculum 25 → 28 entries.
+
 ### Voice end-to-end bug-fix work order (2026-05-04 ✅ shipped)
 
 Spawned by [`AVA_FEATURE_ADDITIONS_2026-05_VOICE_E2E.md`](AVA_FEATURE_ADDITIONS_2026-05_VOICE_E2E.md), closed by [`AVA_FEATURE_ADDITIONS_2026-05_VOICE_E2E_BUGFIXES.md`](AVA_FEATURE_ADDITIONS_2026-05_VOICE_E2E_BUGFIXES.md).
