@@ -136,6 +136,12 @@ class InsightFaceEngine:
         self._provider = actual_provider
         self._load_faces(faces_dir)
         self._available = True
+        # Snapshot reader (operator_server.py:1099) checks `getattr(ife, "ready", False)`
+        # — without `self.ready = True` here, subsystem_health.insightface.available
+        # stays False forever even when the engine is fully loaded and running.
+        # Same pattern as the kokoro_loaded flag fix from commit e8e3dce.
+        self.ready = True
+        self.providers = [self._provider] if self._provider else []
         print(f"[insight_face] ready provider={self._provider} known_people={len(self._known)}")
         return True
 

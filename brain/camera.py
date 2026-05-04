@@ -77,6 +77,12 @@ class CameraManager:
         self._last_ui_wall_ts = 0.0
         self._last_stable_person_id: str | None = None
         self._last_stable_wall_ts: float = 0.0
+        # `running` is read by operator_server.py:1087 for subsystem_health.
+        # Set to True by background_ticks._video_frame_capture_thread once
+        # cv2.VideoCapture(0) opens successfully. Without this default,
+        # getattr(cam, "running", False) returns False and the snapshot
+        # reports the camera offline even when the capture thread is live.
+        self.running: bool = False
 
     def note_trusted_identity(self, person_id: str | None) -> None:
         """Call when a frame is visually trusted and recognition yields a known person."""

@@ -1093,8 +1093,15 @@ def build_debug_full(host: dict[str, Any]) -> dict[str, Any]:
             "available": bool(getattr(mem, "available", False)) if mem is not None else False,
             "init_error": str(getattr(mem, "_init_error", None) or "") if mem is not None else "",
         }
-        # InsightFace — same pattern.
-        ife = g.get("_insight_face_engine") or g.get("insight_face_engine")
+        # InsightFace — same pattern. Storage key in startup.py:bootstrap_insight_face
+        # is `_insight_face`. Earlier code expected `_insight_face_engine` /
+        # `insight_face_engine` — kept as fallbacks for any path that wires it
+        # under those alternate keys, but the canonical key is `_insight_face`.
+        ife = (
+            g.get("_insight_face")
+            or g.get("_insight_face_engine")
+            or g.get("insight_face_engine")
+        )
         health["insightface"] = {
             "available": ife is not None and bool(getattr(ife, "ready", False)),
             "providers": list(getattr(ife, "providers", []) or []) if ife is not None else [],

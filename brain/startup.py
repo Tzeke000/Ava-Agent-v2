@@ -553,12 +553,15 @@ def run_startup(g: dict[str, Any]) -> None:
         _stt = STTEngine()
         if _stt.is_available():
             g["stt_engine"] = _stt
+            g["_stt_ready"] = True
             print("[stt_engine] Whisper ready — voice input enabled")
         else:
             g["stt_engine"] = None
+            g["_stt_ready"] = False
             print("[stt_engine] Whisper unavailable — voice input disabled")
     except Exception as _stt_e:
         g["stt_engine"] = None
+        g["_stt_ready"] = False
         print(f"[stt_engine] startup skipped: {_stt_e}")
 
     print("[startup] step: wake word detector")

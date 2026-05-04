@@ -642,6 +642,68 @@ Wall time was therefore bounded by `150 + 67 = 217s` — the bottleneck thread, 
 
 ---
 
+### Section 12 — 2026-05-04 Subsystem health snapshot fixes (STT + InsightFace + camera publish gaps)
+
+User asked "any current bugs to fix?" after the external memory work order shipped. Quick health probe revealed `subsystem_health.stt_engine.available`, `subsystem_health.insightface.available`, and `subsystem_health.camera.running` all reporting False/empty even though Ava's logs showed all three subsystems running cleanly. Same pattern as the kokoro_loaded flag bug fixed earlier in `e8e3dce`, but in three new sites.
+
+#### Root causes (4 sites total)
+
+1. **STT** — `brain/startup.py:554-559` set `g["stt_engine"] = _stt` but never `g["_stt_ready"] = True` that the snapshot reader expected.
+2. **InsightFace publish** — `brain/insight_face_engine.py:138-139` set `self._available = True` but never `self.ready = True` or `self.providers = [...]` that the snapshot reader expected.
+3. **InsightFace storage-key mismatch** — separate class of bug, surfaced after fixing #2. Bootstrap stores the engine at `g["_insight_face"]` (singular) but `operator_server.py:1097` reads `g["_insight_face_engine"]` / `g["insight_face_engine"]` — different key names. Reader fell through to None regardless of engine state.
+4. **Camera** — `CameraManager.__init__` never initialized `self.running`. The video capture thread (`brain/background_ticks.py`) opened the camera but never told the manager its capture-running state.
+
+#### Fixes
+
+```python
+# brain/startup.py — STT init
+g["_stt_ready"] = True   # on success
+g["_stt_ready"] = False  # on failure / disabled
+
+# brain/insight_face_engine.py — at end of successful init
+self.ready = True
+self.providers = [self._provider] if self._provider else []
+
+# brain/camera.py — CameraManager.__init__
+self.running: bool = False  # default
+
+# brain/background_ticks.py — _video_frame_capture_thread
+cm.running = True  # after cv2.VideoCapture opens
+cm.running = False # on capture failure
+
+# brain/operator_server.py — snapshot reader
+ife = g.get("_insight_face") or g.get("_insight_face_engine") or g.get("insight_face_engine")
+```
+
+#### Verification
+
+After restart with all 4 fixes, `/api/v1/debug/full` reports:
+
+```
+stt:     True
+insight: avail=True providers=CUDAExecutionProvider
+camera:  avail=True running=True
+kokoro:  True
+```
+
+All four flags reflect actual runtime state. Vault note `subsystem-health-publish-gaps.md` captures both the publish-gap pattern and the new storage-key-mismatch class for future grep lookups.
+
+#### Lesson reinforced
+
+The kokoro fix (commit `e8e3dce`) explicitly stated the general pattern: *"at the end of every init function that succeeds, write `g["<subsystem>_ready"] = True`"*. We didn't grep for other sites at the time; three downstream subsystems silently misreported their health for weeks. **Going forward: after fixing any "subsystem state ≠ snapshot state" bug, immediately grep `operator_server.py` (or wherever the snapshot reader lives) for similar `g.get("<subsystem>_ready")` or `getattr(<obj>, "<attr>", False)` patterns and apply the publish call at every corresponding init site.**
+
+#### Files modified
+
+- `brain/startup.py` — STT publish call.
+- `brain/insight_face_engine.py` — `self.ready = True` + `self.providers` attr.
+- `brain/camera.py` — `self.running` default in `CameraManager.__init__`.
+- `brain/background_ticks.py` — `camera_manager.running = True/False` in capture thread.
+- `brain/operator_server.py` — snapshot reader checks canonical `_insight_face` key first.
+
+Vault: `bugs/subsystem-health-publish-gaps.md` documents the full diagnosis including the storage-key class.
+
+---
+
 ### Section 11 — 2026-05-04 Claude Code external memory setup (Obsidian vault + Graphify)
 
 Sets up Claude Code's *own* external memory infrastructure — distinct from Ava's brain, memory, concept graph, or any of her subsystems. Ava's memory is hers. This vault captures the *why* behind decisions across Claude Code sessions, complementing (not replacing) `ROADMAP.md` and `HISTORY.md` which remain operational source of truth.
