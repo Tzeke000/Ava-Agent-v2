@@ -26,11 +26,18 @@ STAGES = [
     "confirm_photos",
     "name_capture",
     "pronouns",
-    "favorite_color",
+    "age_capture",
+    "gender_capture",
     "relationship",
-    "one_thing",
+    "trust_assignment",
     "complete",
 ]
+# 2026-05-04: replaced `favorite_color` and `one_thing` stages with
+# `age_capture` and `gender_capture` per the four-feature work order spec.
+# Added `trust_assignment` stage that persists the trust score from the
+# explicit Zeke command that triggered the flow. Older profiles that have
+# `favorite_color`/`one_thing` keys still parse fine — those keys are
+# additive in the schema, not removed.
 
 PHOTO_STAGES = {"photo_front", "photo_left", "photo_right", "photo_up", "photo_down"}
 
@@ -125,6 +132,16 @@ def _is_skip(text: str) -> bool:
     return any(k in low for k in ("skip", "pass", "no", "nope", "prefer not", "rather not", "next"))
 
 
+def _trust_label_for(score: float) -> str:
+    """Map a 0–1 trust score to one of the 5 named bands used by trust_system."""
+    s = float(score)
+    if s >= 0.8: return "deep_trust"
+    if s >= 0.6: return "trusted"
+    if s >= 0.4: return "known"
+    if s >= 0.2: return "acquaintance"
+    return "stranger"
+
+
 class OnboardingFlow:
     """
     Drives one person through the 13-stage onboarding sequence.
@@ -132,7 +149,9 @@ class OnboardingFlow:
     run_step(user_input, g) → (response_text, stage_name, done)
     """
 
-    def __init__(self, person_id: str, base_dir: Path, initial_name: Optional[str] = None):
+    def __init__(self, person_id: str, base_dir: Path, initial_name: Optional[str] = None,
+                 trust_score: Optional[float] = None, relationship: Optional[str] = None,
+                 introduced_by: str = "zeke"):
         self.person_id = person_id
         self.base_dir = base_dir
         self.stage_index = 0
@@ -141,9 +160,14 @@ class OnboardingFlow:
         self.data: dict[str, Any] = {
             "name": initial_name or "",
             "pronouns": "",
+            "age": None,
+            "gender": "",
             "favorite_color": "",
-            "relationship": "",
+            "relationship": relationship or "",
             "one_thing": "",
+            "trust_score": trust_score,
+            "_trigger_trust_score": trust_score,
+            "_introduced_by": introduced_by,
         }
         self._awaiting_ready = False  # True when Ava gave photo instruction, waiting for "ready"
         self._retake_stage: Optional[str] = None  # set when retake needed
@@ -172,12 +196,21 @@ class OnboardingFlow:
             return self._handle_name_capture(inp, g)
         elif stage == "pronouns":
             return self._handle_pronouns(inp, g)
+        elif stage == "age_capture":
+            return self._handle_age_capture(inp, g)
+        elif stage == "gender_capture":
+            return self._handle_gender_capture(inp, g)
         elif stage == "favorite_color":
-            return self._handle_favorite_color(inp, g)
+            # Backward-compat path: older flows may still hit this stage
+            # if they were started before the work order landed. Fall
+            # through to handler if present.
+            return self._handle_favorite_color(inp, g) if hasattr(self, "_handle_favorite_color") else self._advance_and_continue(g)
         elif stage == "relationship":
             return self._handle_relationship(inp, g)
         elif stage == "one_thing":
-            return self._handle_one_thing(inp, g)
+            return self._handle_one_thing(inp, g) if hasattr(self, "_handle_one_thing") else self._advance_and_continue(g)
+        elif stage == "trust_assignment":
+            return self._handle_trust_assignment(inp, g)
         elif stage == "complete":
             return self._handle_complete(g)
         return ("I'm not sure where we are. Let me start over.", "greeting", False)
@@ -310,35 +343,98 @@ class OnboardingFlow:
             self.data["pronouns"] = ""
         else:
             self.data["pronouns"] = inp.strip()[:50]
-        self._advance()  # → favorite_color
+        self._advance()  # → age_capture
         return (
-            "What's your favorite color? I like to have a sense of you.",
+            "What's your age?",
+            self.stage,
+            False,
+        )
+
+    def _handle_age_capture(self, inp: str, g: dict[str, Any]) -> tuple[str, str, bool]:
+        if _is_skip(inp):
+            self.data["age"] = None
+        else:
+            # Try to parse an integer from anywhere in the input.
+            m = re.search(r"\b(\d{1,3})\b", inp or "")
+            if m:
+                try:
+                    age = int(m.group(1))
+                    if 0 < age < 150:
+                        self.data["age"] = age
+                except Exception:
+                    self.data["age"] = None
+            else:
+                self.data["age"] = None
+        self._advance()  # → gender_capture
+        return (
+            "And what's your gender?",
+            self.stage,
+            False,
+        )
+
+    def _handle_gender_capture(self, inp: str, g: dict[str, Any]) -> tuple[str, str, bool]:
+        if _is_skip(inp):
+            self.data["gender"] = ""
+        else:
+            self.data["gender"] = inp.strip()[:50]
+        self._advance()  # → relationship
+        return (
+            "What's your relationship to Zeke? (Friend, family, colleague, partner, or something else.)",
             self.stage,
             False,
         )
 
     def _handle_favorite_color(self, inp: str, g: dict[str, Any]) -> tuple[str, str, bool]:
+        # Backward-compat — kept for any in-flight onboarding session that
+        # started before the work order landed.
         self.data["favorite_color"] = inp.strip()[:50]
         self._advance()  # → relationship
         return (
-            "And what's your relationship to Zeke? (For example: friend, family, colleague, partner, or something else.)",
+            "What's your relationship to Zeke? (Friend, family, colleague, partner, or something else.)",
             self.stage,
             False,
         )
 
     def _handle_relationship(self, inp: str, g: dict[str, Any]) -> tuple[str, str, bool]:
         self.data["relationship"] = inp.strip()[:80]
-        self._advance()  # → one_thing
-        return (
-            "Last question: what's one thing you'd like me to remember about you?",
-            self.stage,
-            False,
-        )
+        self._advance()  # → trust_assignment
+        # If a trust score was passed via the trigger command, skip ask-back
+        # and confirm the assignment.
+        trigger_trust = self.data.get("_trigger_trust_score")
+        if trigger_trust is not None:
+            return self._handle_trust_assignment("", g)
+        # No trigger trust supplied — just default to the relationship-derived
+        # score (0.5 = "known") and continue.
+        self.data["trust_score"] = 0.50
+        return self._handle_trust_assignment("", g)
 
     def _handle_one_thing(self, inp: str, g: dict[str, Any]) -> tuple[str, str, bool]:
+        # Backward-compat — kept for in-flight sessions.
         self.data["one_thing"] = inp.strip()[:200]
+        self._advance()  # → trust_assignment (or complete on legacy paths)
+        return self._handle_trust_assignment("", g)
+
+    def _handle_trust_assignment(self, inp: str, g: dict[str, Any]) -> tuple[str, str, bool]:
+        # Persist trust to brain/trust_system.
+        score = float(self.data.get("trust_score") or self.data.get("_trigger_trust_score") or 0.50)
+        self.data["trust_score"] = score
+        try:
+            from brain import trust_system
+            # Init at the trigger score by writing a delta from initial.
+            current = trust_system.get_trust_level(self.person_id, g)
+            delta = score - current
+            if abs(delta) > 0.01:
+                trust_system.update_trust(self.person_id, delta, "onboarding initial assignment", g)
+        except Exception as e:
+            print(f"[onboarding] trust_system update skipped: {e!r}")
         self._advance()  # → complete
         return self._handle_complete(g)
+
+    def _advance_and_continue(self, g: dict[str, Any]) -> tuple[str, str, bool]:
+        """Backward-compat helper for legacy stages that no longer have
+        explicit handlers — just advance and recurse one step."""
+        self._advance()
+        return self.run_step("", g)
 
     def _handle_complete(self, g: dict[str, Any]) -> tuple[str, str, bool]:
         if not self._profile_complete:
@@ -365,6 +461,14 @@ class OnboardingFlow:
             "person_id": self.person_id,
             "name": self.data.get("name") or self.person_id,
             "pronouns": self.data.get("pronouns") or "",
+            # Schema additions 2026-05-04 per work order:
+            "age": self.data.get("age"),
+            "gender": self.data.get("gender") or "",
+            "trust_score": float(self.data.get("trust_score") or 0.50),
+            "trust_label": _trust_label_for(self.data.get("trust_score") or 0.50),
+            "introduced_by": self.data.get("_introduced_by") or "zeke",
+            "introduced_at": now_iso,
+            # Backward-compat keys (still written so older readers don't break)
             "favorite_color": self.data.get("favorite_color") or "",
             "relationship_to_zeke": self.data.get("relationship") or "other",
             "allowed_to_use_computer": False,
@@ -382,6 +486,8 @@ class OnboardingFlow:
             "onboarding_complete": True,
             "last_photo_date": now_iso,
             "quality_score": round(avg_quality, 3),
+            "face_embeddings_count": sum(len(v) for v in self.photos.values()),
+            "face_embeddings_dir": str(self.base_dir / "faces" / self.person_id),
         }
         _save_profile(self.person_id, profile, self.base_dir)
         print(f"[onboarding] profile saved person_id={self.person_id} name={profile['name']}")
@@ -421,8 +527,40 @@ def detect_refresh_trigger(user_input: str) -> bool:
     return any(p.search(user_input) for p in _REFRESH_PATTERNS)
 
 
-def start_onboarding(person_id: str, base_dir: Path, name_hint: Optional[str] = None) -> OnboardingFlow:
-    return OnboardingFlow(person_id, base_dir, initial_name=name_hint)
+def start_onboarding(person_id: str, base_dir: Path, name_hint: Optional[str] = None,
+                     trust_score: Optional[float] = None, relationship: Optional[str] = None,
+                     introduced_by: str = "zeke") -> OnboardingFlow:
+    return OnboardingFlow(person_id, base_dir, initial_name=name_hint,
+                          trust_score=trust_score, relationship=relationship,
+                          introduced_by=introduced_by)
+
+
+def detect_onboarding_trigger_with_trust(user_input: str) -> dict[str, Any]:
+    """Combined trigger detector: pulls together the existing
+    detect_onboarding_trigger result and brain.face_tracking.parse_onboarding_command.
+
+    Returns:
+    {
+        "triggered": bool,
+        "name_hint": str | None,
+        "relationship": str | None,
+        "trust_score": float | None,
+    }
+    """
+    out: dict[str, Any] = {"triggered": False, "name_hint": None, "relationship": None, "trust_score": None}
+    triggered, name_hint = detect_onboarding_trigger(user_input)
+    out["triggered"] = bool(triggered)
+    out["name_hint"] = name_hint
+    try:
+        from brain import face_tracking
+        parsed = face_tracking.parse_onboarding_command(user_input)
+        if parsed.get("onboarding_intent"):
+            out["triggered"] = True
+            out["relationship"] = parsed.get("relationship")
+            out["trust_score"] = parsed.get("trust_score")
+    except Exception as e:
+        print(f"[onboarding] face_tracking parse skipped: {e!r}")
+    return out
 
 
 def run_onboarding_step(user_input: str, g: dict[str, Any]) -> Optional[tuple[str, str, bool]]:

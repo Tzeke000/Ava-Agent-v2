@@ -591,10 +591,25 @@ def run_ava(
                 )
                 _ap = _av.load_profile_by_id(active_person_id)
                 return finalize_ava_turn(user_input, _ref_reply, {}, _ap, [], turn_route="profile_refresh")
-            _ob_triggered, _ob_name = detect_onboarding_trigger(_inp)
+            # Use the combined detector (2026-05-04) so "give them trust 3"
+            # / "meet my friend" phrasings extract relationship + trust score
+            # along with the basic trigger detection. Falls back to the legacy
+            # name_hint when richer parsing isn't available.
+            try:
+                from brain.person_onboarding import detect_onboarding_trigger_with_trust
+                _ob_combined = detect_onboarding_trigger_with_trust(_inp)
+                _ob_triggered = bool(_ob_combined.get("triggered"))
+                _ob_name = _ob_combined.get("name_hint")
+                _ob_relationship = _ob_combined.get("relationship")
+                _ob_trust = _ob_combined.get("trust_score")
+            except Exception:
+                _ob_triggered, _ob_name = detect_onboarding_trigger(_inp)
+                _ob_relationship = None
+                _ob_trust = None
             if _ob_triggered and _g.get("_onboarding_flow") is None:
                 _ob_person_id = f"person_{uuid.uuid4().hex[:8]}"
-                _ob_flow = start_onboarding(_ob_person_id, Path(BASE_DIR), name_hint=_ob_name)
+                _ob_flow = start_onboarding(_ob_person_id, Path(BASE_DIR), name_hint=_ob_name,
+                                            trust_score=_ob_trust, relationship=_ob_relationship)
                 _g["_onboarding_flow"] = _ob_flow
                 _g["_onboarding_stage"] = _ob_flow.stage
         except Exception as _ob_e:
