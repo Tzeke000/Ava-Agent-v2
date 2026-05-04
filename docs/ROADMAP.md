@@ -207,6 +207,16 @@ Public repo's earlier commits contain face photos and old state snapshots. `1174
 
 Have design docs or clear specifications. Need build time only.
 
+### Mobile voice bridge — talk to Claude Code (and Ava) from phone (parked)
+
+Browser-based phone client (no app install) reaches a FastAPI bridge on the home machine over Tailscale. Bridge transcribes voice, routes to Claude Code subprocess (or Anthropic API), streams response back. Eventually extends to Ava as a unified voice-to-home-machine pipeline.
+
+**Pre-conditions explicitly NOT met:** Ava VRAM at 91.5% utilization, voice loop / sleep mode still recently-shipped (need 2+ weeks daily-use confidence), and the current planning loop (Zeke voice → Claude web on phone → Discord paste → Claude Code → Discord summary back) works reliably with zero additional infrastructure. Replacing it with an unfinished bridge would add net friction in the short term.
+
+**Estimated scope when greenlit:** 8-12 hours. Phased build: Tailscale setup → text-only phone interface → voice in/out → Ava bridge as third iteration.
+
+Full design + catches + revisit conditions in `D:\ClaudeCodeMemory\designs\voice-bridge-mobile.md`.
+
 ### Memory rewrite — Phases 5, 6, 7
 Phases 1-4 shipped. **Phase 5 (promotion/demotion wiring)** waits on ~50-100 turns of reflection-log data so the heuristic can be validated before flipping on level changes. Reflection scorer writes to `state/memory_reflection_log.jsonl` after every turn; once scores look reasonable, Phase 5 lands as a single targeted commit.
 
