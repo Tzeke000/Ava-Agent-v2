@@ -642,6 +642,81 @@ Wall time was therefore bounded by `150 + 67 = 217s` — the bottleneck thread, 
 
 ---
 
+### Section 13 — 2026-05-04 Long-form conversation work order — Phase A/C/D shipped, Phase B partial (2 production bugs surfaced)
+
+Five-phase work order: Phase A audio routing for monitoring, Phase B 30-min sustained conversation with identity probes + sleep cycle, Phase C dual-audio-path documentation, Phase D 3 new curriculum stories, Phase E summary. Phases A, C, D shipped clean. **Phase B is partial — surfaced two real production bugs that block sustained-conversation testing on this hardware.** The test did its broader job: the work order anticipated this kind of issue ("issues short single-command tests miss"), and exactly those issues showed up.
+
+#### Phase A — audio routing for monitoring (✅ shipped)
+
+Speaker-monitor implemented in software via `scripts/audio_loopback_harness.py:play_wav_to_cable`. Two parallel `sd.play()` streams: one to `CABLE Input` (Ava's mic), one to `Speakers (Realtek)` (Zeke's monitor). `AVA_HARNESS_NO_MONITOR=1` env var disables. Ava's TTS already plays to speakers via the existing `AVA_TTS_DEVICES="speakers,cable,voicemeeter vaio3 input"` env var — no Voicemeeter mixer config change needed. Both voices reach Realtek during testing; CABLE virtual cable + Voicemeeter VAIO3→B3 capture path stay isolated. No feedback risk because GAIA HD mic is muted in test mode (default mic = CABLE Output).
+
+Vault: `decisions/audio-routing-monitoring.md`.
+
+#### Phase C — dual-audio-path architecture (✅ shipped)
+
+Pattern (b): Windows-default-mic toggle switches between production (GAIA HD, Zeke's voice) and test (CABLE Output, Claude Code's harness). Single-command toggles via the new `scripts/set_audio_test_mode.bat` and `scripts/set_audio_production_mode.bat`. Underlying mechanism is `Set-AudioDevice -Index N` from the `AudioDeviceCmdlets` PowerShell module installed in the voice E2E session.
+
+Manual hardware-path verification procedure documented at `D:\ClaudeCodeMemory\sessions\hardware-path-verification.md` for Zeke to run (requires physical voice into GAIA HD).
+
+Vault: `decisions/dual-audio-path.md`.
+
+#### Phase D — three new curriculum stories (✅ shipped)
+
+Aesop-style originals saved to `curriculum/foundation/`:
+- `the_potter_and_the_thirty_jars.txt` — *"A skill earned through error knows the wrong turns as well as the right."*
+- `the_woodcutter_and_the_purse.txt` — *"To act well once is a choice; to be known for it is a life."*
+- `the_weaver_at_the_difficult_pattern.txt` — *"When the work is hard in the middle, the work is real."*
+
+Each ~250-400 words, plain text with YAML metadata header matching the existing 25 fables. `_index.json` updated. Total entries 25 → 28. Verified loadable via `brain.curriculum.list_curriculum(g)` and `read_curriculum_entry(g, slug=...)`.
+
+#### Phase B — sustained conversation test (⚠️ PARTIAL — blocked by 2 production bugs)
+
+**Two distinct failure modes surfaced and blocked the planned 28-turn run:**
+
+**Bug 1 — voice_loop hangs on `run_ava.return`** (audio path). Reproduced 2× during this session (was filed as `not-reproducing` in the previous voice-E2E session; **now upgraded to REPRODUCING-AGAIN**). On affected turns, `re.run_ava.return path=fast ms=...` fires inside reply_engine, but the very next line in voice_loop (`[vl-diag] run_ava returned ...` print I added between `run_ava_result = run_ava(text)` and the unpack) never fires. State stuck at `thinking` indefinitely. `[stage7] persona inject failed: 'list' object has no attribute 'strip'` errors visible in the log near the hang times — possibly correlated. Force-kill needed to recover Ava.
+
+**Bug 2 — `/api/v1/chat` cascades ghost run_ava workers under sustained load** (text path, NEW). Pivoted Phase B to the text-mode driver after the audio-mode hang. After 5-8 turns of mixed fast/slow paths, subsequent turns block at the client side at urlopen's 240s timeout. Root cause: `avaagent.py:7222-7234` spawns a daemon thread for each `run_ava` call, foreground waits 90s then returns a "Sorry, I'm thinking slowly" fallback **but the worker keeps running**. Multiple ghost workers accumulate, saturating Ollama. The `_CHAT_CALL_LOCK` releases after 90s even on timeout, but Ollama remains contended.
+
+**Phase B coverage NOT achieved:**
+- Identity-anchor stability under sustained load — UNKNOWN. Both attempted identity probes (turns 2 and 6) hit the operator-chat 90s timeout BEFORE Ava could reply. Identity drift was not tested; it was overshadowed by the timeout.
+- Sleep-and-resume mid-conversation — NOT EXERCISED. Sleep trigger was scheduled at turn 14; we stopped at turn 8.
+- Memory coherence across the session — NOT EXERCISED.
+- Mood drift — NOT EXERCISED.
+
+**Phase B coverage achieved (partial):**
+- 8 turns attempted, 3 produced real replies (turns 1, 3, 5), 3 hit the operator-chat 90s timeout fallback (turns 2, 4, 6), 2 cascaded into client-side timeouts with empty replies (turns 7, 8).
+- Voice-command-router fast path verified at 4.5s for "what time is it" (turn 5) — proves the fast path isn't blocked when it doesn't need full LLM invocation.
+- Test surfaced both bugs above clearly with reproduction context. Failure modes documented well enough to fix in a follow-up work order.
+
+**Vault writes:**
+- `bugs/voice-loop-restart-hang.md` — UPGRADED from `not-reproducing` to `REPRODUCING-AGAIN` with new reproduction details.
+- `bugs/operator-chat-cascading-workers.md` — NEW. Root cause + 3 fix-sketch options.
+- `sessions/2026-05-04-long-conversation-test.md` — partial transcript + table.
+
+#### Files modified / new
+
+- `curriculum/foundation/the_potter_and_the_thirty_jars.txt` (new)
+- `curriculum/foundation/the_woodcutter_and_the_purse.txt` (new)
+- `curriculum/foundation/the_weaver_at_the_difficult_pattern.txt` (new)
+- `curriculum/foundation/_index.json` (updated)
+- `scripts/audio_loopback_harness.py` (added `also_to_speakers` mirror)
+- `scripts/set_audio_test_mode.bat` (new)
+- `scripts/set_audio_production_mode.bat` (new)
+- `scripts/verify_long_conversation.py` (new — audio-mode driver, blocked by voice-loop hang)
+- `scripts/verify_long_conversation_text.py` (new — text-mode pivot driver)
+
+#### Confidence assessment
+
+**Voice stack is NOT ready for unsupervised daily use.** Two reproducible failure modes exist:
+1. Voice-loop hang means a single bad turn can wedge Ava's audio path until restart.
+2. Cascading-worker bug means sustained chat usage degrades performance until eventual unresponsiveness.
+
+**Voice stack IS ready for short interactive sessions.** Single-command tests, short multi-turn (under ~5 turns), and the F8/F12 single-command verification we shipped in the prior voice-E2E session all pass clean. Daily use that stays under the failure threshold (which is somewhere around 5-8 sustained turns) is fine.
+
+Phases A/C/D delivery is solid — those are independent of the voice loop bugs. Phase B's intent (verifying long-form coherence) requires the voice-loop hang AND the cascading-worker bug to be fixed first. Filed as ROADMAP follow-ups for the next work order.
+
+---
+
 ### Section 12 — 2026-05-04 Subsystem health snapshot fixes (STT + InsightFace + camera publish gaps)
 
 User asked "any current bugs to fix?" after the external memory work order shipped. Quick health probe revealed `subsystem_health.stt_engine.available`, `subsystem_health.insightface.available`, and `subsystem_health.camera.running` all reporting False/empty even though Ava's logs showed all three subsystems running cleanly. Same pattern as the kokoro_loaded flag bug fixed earlier in `e8e3dce`, but in three new sites.

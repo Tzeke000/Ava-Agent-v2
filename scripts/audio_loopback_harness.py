@@ -145,7 +145,16 @@ def piper_tts(text: str, model_path: str | None = None) -> Path:
     return out_wav
 
 
-def play_wav_to_cable(wav_path: Path) -> None:
+def play_wav_to_cable(wav_path: Path, *, also_to_speakers: bool = True) -> None:
+    """Play WAV to CABLE Input (Ava's mic path). If `also_to_speakers` is True,
+    also mirror the audio to Realtek speakers so Zeke can hear Claude Code's
+    voice during testing — same monitor pattern Voicemeeter would provide,
+    but implemented in software without requiring Voicemeeter routing
+    changes. Set the AVA_HARNESS_NO_MONITOR=1 env var to suppress (e.g.
+    when Zeke's mic isn't muted and acoustic feedback is a risk)."""
+    import os as _os
+    import threading as _threading
+
     out_idx = find_device(*CABLE_IN)
     if out_idx is None:
         raise RuntimeError("CABLE Input device not found")
@@ -163,8 +172,32 @@ def play_wav_to_cable(wav_path: Path) -> None:
         if factor > 1:
             data = np.repeat(data, factor)
         rate = target_rate
+
+    monitor = also_to_speakers and not _os.environ.get("AVA_HARNESS_NO_MONITOR")
+    speaker_idx = find_device("Speakers (Realtek", "output") if monitor else None
+
+    if speaker_idx is None:
+        sd.play(data, samplerate=rate, device=out_idx)
+        sd.wait()
+        return
+
+    # Two parallel sd.play calls — one to CABLE Input (Ava's mic), one to
+    # Realtek speakers (Zeke's monitor). Done via threads so they start
+    # simultaneously; both block until done. Same audio data, same rate.
+    err_holder = {}
+    def _play_speaker():
+        try:
+            sd.play(data, samplerate=rate, device=speaker_idx)
+            sd.wait()
+        except Exception as e:
+            err_holder["speaker"] = repr(e)
+    t = _threading.Thread(target=_play_speaker, daemon=True)
+    t.start()
     sd.play(data, samplerate=rate, device=out_idx)
     sd.wait()
+    t.join(timeout=5.0)
+    if err_holder.get("speaker"):
+        print(f"[harness] speaker monitor error: {err_holder['speaker']}")
 
 
 # ── Driver-side STT (faster-whisper-large) ─────────────────────────
