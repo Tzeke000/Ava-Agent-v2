@@ -1178,6 +1178,48 @@ def save_mood(mood: dict):
     except Exception as e:
         print(f"Mood save error: {e}")
 
+
+def load_mood_raw() -> dict:
+    """Read ava_mood.json without enrichment / circadian / style scoring.
+
+    Used by brain/temporal_sense fast-check tick which runs on a 30 s cadence
+    and must complete in ≤50 ms. The full load_mood() chain (enrich_mood_state +
+    load_emotion_reference + style scores + behavior modifiers + emotion
+    interpretation) takes ~115 ms on this hardware — too slow for the per-tick
+    budget. The fast path only needs raw emotion_weights for decay/growth math;
+    enrichment runs on the slow-cycle metabolism tick (every 10 min) and on
+    explicit mood updates in the reply pipeline.
+
+    Returns the raw dict from disk, or a minimal default with normalized
+    emotion_weights if the file is missing/unreadable.
+    """
+    if MOOD_PATH.exists():
+        try:
+            with open(MOOD_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Mood raw load error: {e}")
+    return {"emotion_weights": dict(DEFAULT_EMOTIONS)}
+
+
+def save_mood_raw(mood: dict):
+    """Write ava_mood.json without re-enriching. Used by brain/temporal_sense
+    fast-check tick when frustration decay or boredom growth changes the raw
+    weights — the cheap path that just persists the new numbers, leaving
+    primary_emotions / style_scores / behavior_modifiers / emotion_interpretation
+    as they were.
+
+    The next consumer that calls load_mood() picks up the new weights and
+    re-derives enrichment fields naturally; the slow-cycle metabolism tick or
+    a turn handler will re-publish enriched state on its next pass."""
+    try:
+        mood = dict(mood)
+        mood["_saved_at"] = now_iso()
+        with open(MOOD_PATH, "w", encoding="utf-8") as f:
+            json.dump(mood, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"Mood raw save error: {e}")
+
 def normalize_emotions(weights: dict) -> dict:
     fixed = {name: max(0.0, float(weights.get(name, 0.0))) for name in EMOTION_NAMES}
     total = sum(fixed.values())

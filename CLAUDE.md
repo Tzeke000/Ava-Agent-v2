@@ -164,6 +164,43 @@ Sensitive credentials (bot tokens, API keys, passwords, SSH keys, OAuth secrets)
 - When writing tokens to `.env` files, write them silently and confirm with a masked summary.
 - Treat all tokens like SSH keys.
 
+#### 10. File consolidation — keep the repo navigable
+
+When adding new code, prefer **adding to an existing related file** over creating a new small file. Many small files scattered across `brain/`, `tools/`, or `scripts/` make the repo harder to navigate, harder to grep, and harder to keep mental models of.
+
+**Practice:**
+
+- If new functionality is a few helper functions related to an existing module's purpose, add to that module — don't spin up `brain/foo_helpers.py` next to `brain/foo.py`.
+- If a new file would be <100 lines and doesn't introduce a clean separation of concerns, fold it in.
+- Counter-pressure: when consolidation produces complexity explosion (file >2000 lines, mixing fundamentally different concerns, circular imports), then split. The rule is "consolidate when reasonable," not "everything in one file."
+
+**How to apply:** before creating a new file, ask "is there already a file whose purpose would naturally include this?" If yes, add there. If no, create with a clear single-purpose name.
+
+#### 11. Desktop app paths — check before cu_open_app falls through
+
+Most Steam apps and ML tools on this machine live at `C:\Users\Tzeke\OneDrive\Desktop`. OBS is there. Several other slow-launching apps are there. Standard `cu_open_app` strategies (PowerShell `Start-Process`, Win-search, Program Files walk) miss these.
+
+**Practice:**
+
+- When `cu_open_app` adds new search locations, include `C:\Users\Tzeke\OneDrive\Desktop` (and follow `.lnk` shortcuts there) in the direct-path strategy.
+- When debugging "Ava can't find this app," check Desktop before assuming the app is missing.
+
+**Caution:** Ava's own launch script (`start_ava.bat` / `start_ava_dev.bat`) lives nearby. The single-instance check in `avaagent.py` will reject a second launch, but **explicitly skip Ava's own launchers when scanning for apps to open** — don't accidentally trigger "open Ava" via cu_open_app and bounce off the single-instance lockout.
+
+**How to apply:** any change to `brain/windows_use/retry_cascade.py` direct-path locations or to `brain/app_discoverer.py` scan roots should add the Desktop path and exclude Ava's launch scripts by name.
+
+#### 12. ROADMAP + HISTORY discipline — keep docs in sync with reality
+
+Every work order completion **must update both** `docs/ROADMAP.md` and `docs/HISTORY.md` before declaring the task done.
+
+**ROADMAP.md** — mark items completed, add new findings discovered during the work, update or remove items whose framing turned out to be wrong.
+
+**HISTORY.md** — add a phase entry summarizing this session's work: what landed, what was diagnosed, what's deferred. The phase entry is the future-self's way of knowing what was tried in this session without having to re-read commit logs.
+
+**Why:** stale ROADMAP entries cause re-doing already-completed work. Stale HISTORY entries make sessions waste time re-discovering known dead ends. The 2026-05-04 dual-brain ROADMAP entry being three commits behind the actual code state was an example — the entry described `ava-gemma4` as the current default when `ava-personal:latest` had already been wired in. Cost a session of "fix the model preference" when the real blocker was elsewhere.
+
+**How to apply:** before a session ends or a commit is made for a multi-task work order, grep the work-order touched files against ROADMAP/HISTORY and update entries that describe the now-changed state. Leave a note in the commit message if the doc updates are part of the commit.
+
 ---
 
 **Rule application scope:** these rules apply to every Claude Code session in this repo, automatically, without needing to be quoted in individual prompts. They are part of the operating context.

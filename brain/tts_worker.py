@@ -349,6 +349,14 @@ class TTSWorker:
             self._engine_type = "kokoro"
             self._available = True
             self._voice_name = _KOKORO_VOICE_DEFAULT
+            # Publish health flag for /api/v1/debug/full subsystem_health.kokoro_loaded.
+            # Without this, the snapshot reports False even after Kokoro fully loaded
+            # because nothing else writes _kokoro_ready on g.
+            if self._g is not None:
+                try:
+                    self._g["_kokoro_ready"] = True
+                except Exception:
+                    pass
             print(f"[tts_worker] Kokoro ready (default voice={_KOKORO_VOICE_DEFAULT})")
             return True
         except Exception as e:

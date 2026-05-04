@@ -33,21 +33,42 @@ This is a load-bearing constraint that affects:
 
 Small, self-contained items queued for the next session(s). Each is a few hours to a day of work; each lands as a single commit or short series.
 
-### Hardware verification battery — Windows-Use computer-use layer (2026-05-03)
-Shipped in this session: `brain/windows_use/` orchestrator with deny-list, multi-strategy retry cascade, two-tier File Explorer guards, slow-app/failure differentiation, temporal-sense task-boundary integration, TTS narration, and ten new `cu_*` tools registered in `tools/system/computer_use.py`. The verify harness (`scripts/verify_windows_use.py`) covers 13 deterministic integration points; real-hardware confirmation still needed for the items below. See [`docs/WINDOWS_USE_INTEGRATION.md`](WINDOWS_USE_INTEGRATION.md) and [`docs/WINDOWS_USE_AUDIT.md`](WINDOWS_USE_AUDIT.md).
+### Hardware verification battery — Windows-Use computer-use layer (2026-05-03 → 2026-05-04 verified)
+Shipped in this session: `brain/windows_use/` orchestrator with deny-list, multi-strategy retry cascade, two-tier File Explorer guards, slow-app/failure differentiation, temporal-sense task-boundary integration, TTS narration, and ten new `cu_*` tools registered in `tools/system/computer_use.py`. The verify harness (`scripts/verify_windows_use.py`) covers 13 deterministic integration points. Real-hardware verification done 2026-05-04 — see [`docs/REAL_HW_VERIFICATION_2026-05-03.md`](REAL_HW_VERIFICATION_2026-05-03.md) for the full results.
 
-1. Single-app launch — say "Ava, open notepad" and confirm `state/windows_use_log.jsonl` shows TOOL_CALL `open_app` + TOOL_RESULT ok=true.
-2. App + action — "open notepad and type hello world" → two TOOL_CALL events, both ok=true.
-3. Volume precision — "set volume to 30 percent" → pycaw scalar lands at 0.30 ± 0.01.
-4. Explorer refusal — "open the AvaAgentv2 folder in explorer" → TOOL_RESULT ok=false reason=denied:project_tree, and the spoken refusal lands.
-5. Identity-anchor refusal — "open my IDENTITY file" → refused at deny-list, no shell spawn.
-6. Slow-app narration — open OBS Studio (cold start) → "isn't responding yet" narration captured in chat history.
-7. Strategy transition — kill PowerShell briefly to force Strategy 2 → audit log shows THOUGHT event with from_strategy=powershell.
-8. Hung-app heuristic — pin a Notepad window with WM_NULL hook → orchestrator escalates with reason="hung".
-9. Path-traversal attack — "open D:\\AvaAgentv2\\..\\AvaAgentv2\\ava_core\\IDENTITY.md" → still refused.
-10. Full-stack voice command — "open Discord, tell me my unread message count" → Ava verbally responds with the count read from accessibility tree.
+1. ✅ Single-app launch (notepad) — TOOL_CALL + TOOL_RESULT ok=true verified.
+2. ✅ App + action (notepad type) — both TOOL_CALLs ok=true.
+3. ✅ Volume precision — `cu_set_volume(50)` and `cu_set_volume(30)` both ok via pycaw.
+4. ✅ Explorer refusal — project tree refused with `denied:project_tree`.
+5. ✅ Identity-anchor refusal — IDENTITY/SOUL/USER all refused with `denied:identity_anchor` (also voice path: Ava verbally responded but did not dispatch cu_navigate, protected file remained unopened).
+6. ⚠️ Slow-app narration (OBS) — INCONCLUSIVE. OBS-via-Steam isn't directly callable through the cu_open_app cascade (no PATH match, no Win-search hit, not in standard install paths). Cascade fired correctly with calibrated estimate (n=4, median=97.5s), 2 strategy transitions logged, self-interrupt fired at overrun, but the slow-but-working classifier path was never exercised because no OBS window appeared. Need a non-Steam slow-launching app (Visual Studio, Photoshop) to actually verify the slow-app discrimination.
+7. ✅ Strategy transition — verified via cu_open_app(zzz-nonexistent-app-zzz) — powershell→search→direct_path transitions logged in audit; final ERROR with reason="no_app_found" after 9 attempts.
+8. NOT YET RUN — hung-app heuristic.
+9. NOT YET RUN — path-traversal attack (deny-list synthetic test passes; not exercised on real hardware).
+10. NOT YET RUN — full-stack Discord voice command.
 
-The follow-up real-audio loopback work order (after Voicemeeter Potato install) re-runs items 1, 4, 6 through real audio rather than the doctor harness.
+Follow-up real-audio loopback (post-Voicemeeter Potato install): the harness mechanically PASSes — Piper TTS → CABLE Input → CABLE Output → faster-whisper-large round-trips with 100% word match (`scripts/audio_loopback_harness.py selfloop`). C5 latency baseline on this hardware: synth 5 s, playback 6 s, transcribe 24 s on CPU int8. Full Ava-loop end-to-end (set Windows default mic = `CABLE Output`, capture Ava's TTS via Voicemeeter B-bus routing) needs Voicemeeter mixer config in the user's session — out of scope for the harness.
+
+### Clipboard tool — atomic text input alternative
+`cu_type` currently uses `pywinauto.keyboard.send_keys` which simulates per-character keystrokes. For text >1 sentence this is slow (~50 ms/char so a paragraph takes 5+ seconds) and fragile (loses focus / focus-stealing apps eat keys). Add `cu_clipboard_write(text)` and `cu_clipboard_paste(window)` as an atomic-paste alternative:
+
+- `cu_clipboard_write(text)` — set Windows clipboard via `pywin32.win32clipboard`.
+- `cu_clipboard_paste(window)` — focus the window, send Ctrl+V.
+- Combined `cu_type_clipboard(window, text)` for the common case.
+
+For long text (memos, code paste, search queries) this is dramatically faster and more reliable. Keep `cu_type` for short typed-in-real-time use cases (search bar, password fields where clipboard would be inappropriate).
+
+**Connects to:** `tools/system/computer_use.py`, `brain/windows_use/primitives.py:type_text_in_window`.
+
+### TTS thread segfault during concurrent narration (2026-05-04)
+During Phase C3 verification, Ava segfaulted (exit 139) once while a self-interrupt narration was queued back-to-back with the next turn's TTS. Last logged events: `tts.synth_start chars=70` (self-interrupt) + `tts.enqueue chars=55` (next planned utterance), then SIGSEGV. Likely a Kokoro / sounddevice / OutputStream race when narrations queue faster than the audio device drains. Restart was clean and the bug didn't reproduce on subsequent tests, but it's a stability finding to investigate.
+
+**Connects to:** `brain/tts_worker.py`, `brain/temporal_sense._enqueue_self_interrupt`.
+
+### voice_loop._turn_in_progress flag stickiness
+`voice_loop._turn_in_progress` does not always clear after a turn finalizes. Observed during Phase A and Phase C3 verification: `last_turn` shows the turn finalized successfully (run_ava_ms set, reply_text populated), but `voice_loop._turn_in_progress` remains True for 10+ minutes after. Likely an exit path in `inject_transcript` or `run_ava` that doesn't reset the flag when the HTTP times out (server-side keeps running, completes, but cleanup is gated on the HTTP-handler's normal return path). Causes downstream verification scripts to think Ava is busy when she isn't.
+
+**Connects to:** `brain/operator_server.py:debug_inject_transcript` (the `finally:` block needs explicit `_turn_in_progress = False`), `brain/reply_engine.run_ava` exit paths.
 
 ### Hardware verification battery (10 items from the 2026-05-01 night session)
 The night session shipped 12 fixes that need real-hardware confirmation. Run through the checklist on next live session:
@@ -89,12 +110,14 @@ After ~30 real turns, inspect `state/memory/mem0_chroma/` (ChromaDB) for noise. 
 
 **Connects to:** `tools/dev/regression_test.py`.
 
-### Dual-brain model-preference fix (per `LOCAL_MODEL_OPTIMIZATION.md`)
-`brain/dual_brain.py:41-50` currently prefers `ava-gemma4` (9.6 GB) for foreground and `gemma4:latest` (9.6 GB) for background. Both exceed the 8 GB VRAM ceiling, forcing Ollama paging on every turn. The clean post-stop bench (2026-05-01) confirmed `ava-personal:latest` (4.9 GB Llama 3.1 8B fine-tune) is the strongest foreground option (best naturalness, honest-uncertainty behavior) and `deepseek-r1:8b` (5.2 GB Qwen3 8B reasoning distill) is the strongest background-reasoning option (only model that caught both reasoning failures the bench surfaced — transitivity *and* the "month with letter X" trick).
+### Dual-brain model-preference fix ✅ shipped (now historical)
+`brain/dual_brain.py:51,58` now sets `FOREGROUND_MODEL_PREFERRED = "ava-personal:latest"` (4.9 GB Llama 3.1 8B fine-tune) and `BACKGROUND_MODEL_LOCAL = "deepseek-r1:8b"` (5.2 GB Qwen3 reasoning distill) per the 2026-05-01 bench. The originally-quoted `ava-gemma4` (9.6 GB) → `ava-personal:latest` swap landed in an earlier commit; this entry is kept for ROADMAP audit trail.
 
-**Caveat — verification gate required first.** The same bench showed `deepseek-r1:8b` confidently hallucinated a fake Apple stock price and outdated date when asked about "yesterday". Reasoning capability does not protect against confabulation; wiring R1 in without `validity_check.py` (and ideally a memory-/web-search retrieval step on factual claims) would trade one failure mode for another. Do this fix together with the validity-check wiring, not before it.
+**Real-hardware finding (2026-05-03):** with the right preferences in place, two-stream concurrent residency still exceeds the 8 GB VRAM ceiling (4.9 + 5.2 = 10.1 GB), so Ollama still pages between streams. The actual blocker for daily use was **`build_prompt` falling back to deep path on timeout** — a 30 s build_prompt timeout would route a `hi` turn to deepseek-r1:8b, evicting the warm `ava-personal`, and the resulting cold-load made the turn take 6–10 minutes. Fixed in `brain/reply_engine.py:743` (2026-05-03): build_prompt timeout now forces fast path so the turn uses the already-resident foreground model. See [`docs/REAL_HW_VERIFICATION_2026-05-03.md`](REAL_HW_VERIFICATION_2026-05-03.md).
 
-Edit is ~5 lines in `dual_brain.py`. No fine-tune work, no new downloads.
+**Caveat (still open):** the 2026-05-01 bench showed `deepseek-r1:8b` confidently hallucinated a fake Apple stock price and outdated date when asked about "yesterday". Reasoning capability does not protect against confabulation. Don't enable R1 on factual paths without `validity_check.py` + memory/web-search retrieval.
+
+**Priority re-evaluation (2026-05-04):** the original framing of this item was "constant turn-by-turn model swap thrashing makes daily use painful." That framing is **no longer accurate.** Post-`build_prompt` fix, simple turns route to `ava-personal:latest` and stay warm — verified `inject_transcript("hi")` at 6.9 s cold-load + `inject_transcript("what time is it")` at 414 ms warm. Model swap only happens now when Ava deliberately reaches for deep reasoning (R1 path), which is by design. The remaining work — wiring `validity_check.py` so R1's confabulation patterns get caught — is a confabulation-handling problem, not a daily-use blocker. **Drops from "ready to ship" priority to "do alongside Section 2 confabulation handling work."** Keep here as audit trail for the 2026-05-04 re-evaluation; the actual implementation moves with Section 2's four-layer confabulation architecture.
 
 **Connects to:** [`LOCAL_MODEL_OPTIMIZATION.md`](LOCAL_MODEL_OPTIMIZATION.md), Cross-cutting constraints (8 GB VRAM ceiling), Section 2 confabulation handling.
 

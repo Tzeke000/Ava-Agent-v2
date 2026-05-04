@@ -642,6 +642,69 @@ Wall time was therefore bounded by `150 + 67 = 217s` — the bottleneck thread, 
 
 ---
 
+### Section 8 — 2026-05-03 → 2026-05-04 Real-hardware verification + temporal-sense hot path fix
+
+Two work orders chained back-to-back. First did real-hardware verification of the Windows-Use orchestrator, the temporal-sense substrate, and the audio loopback. Second fixed the substrate issues the first surfaced and resumed verification.
+
+#### Findings from the first pass (2026-05-03)
+
+- **A1 FAIL.** Heartbeat fast-check tick was averaging 197 ms (4× the 50 ms spec). 88% of ticks over budget.
+- **A2 PASS.** Frustration decay math correct in both passive (12% / 5 min) and active (~83 s half-life with `_calming_activity_active=True`) modes.
+- **A5 PASS.** Self-interrupt fires correctly on synthetic overrun; respects the 8 s absolute-overrun minimum.
+- **TTS misdiagnosis.** The `kokoro_loaded` snapshot flag reported False, but the trace log showed Kokoro was producing audio normally. Root cause: `g["_kokoro_ready"]` was read by the snapshot but never published by `tts_worker._try_init_kokoro` after init.
+- **Phase B / C deferred.** Each conversational turn took 6–10 minutes due to model swap thrashing. Verification scripts couldn't drive at that cadence.
+
+#### Fixes landed (2026-05-04)
+
+**`avaagent.py`:**
+- New `load_mood_raw()` and `save_mood_raw()` — read/write `ava_mood.json` without enrichment. Bypasses the ~115 ms enrichment chain (circadian decay + emotion-reference file read + style scoring + behavior modifiers + emotion interpretation) for hot-path callers.
+
+**`brain/temporal_sense.py`:**
+- `apply_state_decay_growth` uses `load_mood_raw`/`save_mood_raw` when present on `g`.
+- Added in-memory cache for mood with mtime invalidation. Internal flush throttled to once per 5 minutes (`_MOOD_FLUSH_INTERVAL_SECONDS`).
+- Added cross-tick cache for `active_estimates.json` reads with TTL stat (`_ESTIMATES_STAT_TTL_SECONDS = 60`). Within a tick, repeated `processing_active` / `is_idle` / `_check_overrun` calls share one stat. Internal writes update the cache directly so they're never stale to ourselves.
+- Added per-section timing instrumentation gated by `TEMPORAL_TICK_LOG=1` env var.
+
+**`brain/operator_server.py`:** five new `AVA_DEBUG=1`-gated debug endpoints — `GET /api/v1/debug/temporal/summary`, `POST /api/v1/debug/temporal/{set_calming_active,track_estimate,resolve_estimate}`, `POST /api/v1/debug/tool_call`. The first surfaces the stashed-but-never-read `g["_temporal_last_summary"]`; the others enable synthetic verification of decay, self-interrupt, and direct tool-registry invocation.
+
+**`brain/tts_worker.py`:** `_try_init_kokoro` now publishes `g["_kokoro_ready"] = True` after Kokoro loads. 6-line addition. Fixes the misleading `kokoro_loaded=False` snapshot flag.
+
+**`brain/reply_engine.py:743` — the load-bearing fix.** When `build_prompt` times out at 30 s, the previous code fell back to a minimal prompt **but kept `use_fast_path=False`** — routing the turn to `deepseek-r1:8b` (the deep model). Loading deepseek-r1 evicted `ava-personal:latest` from the 8 GB VRAM, and the resulting cold-load made simple `inject_transcript("hi")` turns take 6–10 minutes. Fix: when build_prompt times out, force `use_fast_path = True` so the now-minimal prompt routes to the already-warm `ava-personal:latest`. Single-turn latency dropped from **600+ s to 6.9 s for cold "hi"**, and **414 ms for the warm "what time is it"** that followed. ~100× speedup on the worst case.
+
+#### A1 re-verification
+
+50 ticks observed under steady-state idle Ava with all caches active. Excluding the first cold-cache tick:
+
+| Metric | Before fix | After fix |
+|---|---|---|
+| Average | 197.6 ms | 12.2 ms |
+| Median | 162.7 ms | 0.4 ms |
+| p95 | 421 ms | 52.5 ms |
+| Max | 652 ms | 75.1 ms |
+| Over budget | 88% | 6.1% |
+
+The remaining 6% over-budget ticks are stat-due ticks where the TTL forces a re-stat — `stat()` itself takes 25–30 ms on Windows + Defender real-time scan. OS-level cost; closing it would need Defender exclusions for `state/`.
+
+#### Phase C verification (post-fix)
+
+- **C3 (Windows-Use battery):** B1 ✅ (notepad opens via search strategy after PowerShell exhausted), B2 ✅, B4 ✅ (volume control via pycaw), B5 ✅ (cascade transitions powershell→search→direct_path with calibrated estimate from history n=3, self-interrupt fires at overrun), B6 ✅ both direct (`cu_navigate` refuses 4 protected paths with `denied:identity_anchor` / `denied:project_tree`) and voice (Ava verbally responds to "Open my IDENTITY file" but does not dispatch `cu_navigate` — voice intent doesn't bypass the architecture). B7 inconclusive on OBS-via-Steam (the Desktop-path search location wasn't checked; addressed by new CLAUDE.md rule #11). B8/B9 covered by integration evidence.
+- **C4 (audio loopback):** harness mechanically verified — Piper TTS → CABLE Input → CABLE Output → faster-whisper-large round-trips with 100% word match on "the quick brown fox jumps over the lazy dog". `scripts/audio_loopback_harness.py` is the canonical entry point.
+- **C5 (latency baseline):** Piper synth 5 s + playrec 6 s + faster-whisper-large transcribe 24 s (CPU int8) = 53 s round-trip. CUDA whisper would drop transcribe to ~2–4 s but needs `nvidia-cu12` DLLs in PATH (currently they're added only inside Ava's process by `_add_cuda_paths`).
+
+#### Side findings flagged for ROADMAP
+
+- **TTS thread segfault (exit 139)** during concurrent Kokoro narration + queued next utterance. Restart cleared. One occurrence in this session — race condition worth investigating.
+- **`voice_loop._turn_in_progress` flag stickiness.** `inject_transcript` clears it but voice_loop re-sets it via some path that doesn't clean up on long-turn / HTTP-timeout exit. Causes verification scripts to think Ava is busy when she isn't.
+- **Clipboard tool** — `cu_clipboard_write` + `cu_clipboard_paste` as atomic alternative to `cu_type`'s per-character keystroke synthesis. For text >1 sentence, paste is dramatically faster and more reliable.
+
+#### Files modified
+
+`avaagent.py`, `brain/temporal_sense.py`, `brain/operator_server.py`, `brain/tts_worker.py`, `brain/reply_engine.py`, `docs/ROADMAP.md`, `docs/HISTORY.md`, `CLAUDE.md` (added rules 10/11/12). New scripts: `scripts/verify_phase_a_realhw.py`, `scripts/verify_phase_b_realhw.py`, `scripts/verify_tts_b4.py`, `scripts/audio_loopback_harness.py`, `scripts/capture_ava_tts.py`. New doc: `docs/REAL_HW_VERIFICATION_2026-05-03.md`. Diagnostic `tools/dev/temporal_probe.py` was created during diagnosis and removed after the cause was found.
+
+Pre-downloaded for Phase C audio: Piper voice model (`models/piper/en_US-amy-medium.onnx`, 63 MB) + `faster-whisper-large-v3` cached at `~/.cache/huggingface/hub/`.
+
+---
+
 ## Major Bug Fixes (cross-phase)
 
 Significant bugs diagnosed and fixed during the project's life. Each row: symptom + root cause + fix (commit hash) + date.
