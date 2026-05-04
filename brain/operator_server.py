@@ -1673,9 +1673,13 @@ def create_app():
         }
 
     @app.post("/api/v1/tts/speak")
-    def tts_speak(body: TTSSpeakIn) -> dict[str, Any]:
+    def tts_speak(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+        # Body parsing pattern: same as operator_chat (line 1597). Avoids the
+        # Pydantic ForwardRef rebuild issue with TTSSpeakIn defined inside
+        # create_app's local scope. Returns 422 when used as `body: TTSSpeakIn`
+        # because FastAPI can't resolve the local class name at request time.
         h = _g()
-        text = str(body.text or "").strip()
+        text = str(body.get("text") or "").strip()
         if not text:
             return {"ok": False, "error": "empty_text"}
         # Prefer the TTS worker so emotion → voice/speed mapping is honored

@@ -642,6 +642,43 @@ Wall time was therefore bounded by `150 + 67 = 217s` — the bottleneck thread, 
 
 ---
 
+### Section 10 — 2026-05-04 Voice E2E bug-fix work order
+
+Closeout of the five follow-ups filed by Section 9's voice E2E verification. All five resolved in this session.
+
+1. **VAIO3 "silent capture" was a test-driver bug.** Reproduced Ava's exact `tts_worker` OutputStream config (sr=24000, ch=1, dtype=float32, blocksize=2048, latency='low') against Voicemeeter VAIO3 in `scripts/_test_kokoro_path.py` and `_test_kokoro_multistream.py` — passes at peak 0.4 in single-stream AND multi-stream-to-3-destinations configs. The "silent" F8/F12 captures were because Kokoro's first-run cudnn EXHAUSTIVE warmup makes synthesis take 25-30s; my 8-25s record windows ended before playback even started. Updated `scripts/_capture_ava_tts_v2.py` to 60s window — final round-trip: `POST /api/v1/tts/speak` → Kokoro synth → VAIO3 → B3 → faster-whisper-large = **92% word overlap**. No Voicemeeter or Kokoro patch needed.
+
+2. **voice_loop hang did NOT reproduce.** Added `[vl-diag]` instrumented prints with `flush=True` to `brain/voice_loop.py:474-486` between the `run_ava()` call, the unpack, and the existing `_trace`. In the new session, two consecutive post-restart turns completed cleanly with all four diag prints firing in sequence:
+   ```
+   [vl-diag] about to call run_ava
+   [vl-diag] run_ava returned, type=tuple
+   [vl-diag] result len=5
+   [vl-diag] unpack ok reply_type=str
+   [trace] vl.run_ava_returned chars=14
+   ```
+   Likely environmental in the previous session (stuck thread or model state). Diagnostic prints stay in — cheap, they'll localize the next occurrence immediately.
+
+3. **`AVA_DEBUG=1` added to `start_ava_dev.bat`** at the avaagent.py launch step so `/api/v1/debug/inject_transcript` and `/api/v1/debug/tool_call` are usable without env-var hand-setting. Production `start_ava.bat` unchanged.
+
+4. **`/api/v1/tts/speak` 422 fixed.** Root cause: `body: TTSSpeakIn` (Pydantic class defined inside `create_app`'s local scope) — Pydantic v2 + FastAPI couldn't resolve the ForwardRef at request time, so the param fell back to query-arg parsing. Fix: changed to `body: dict[str, Any] = Body(default_factory=dict)` matching the working `operator_chat` pattern. `text = str(body.get("text") or "").strip()` extracts the field. Returns `200 {"ok":true,"queued":true,...}`.
+
+5. **OWW retrain documented** in `docs/TRAIN_WAKE_WORD.md` — adds a 2026-05-04 section explaining why hey_jarvis fires on Kokoro `af_bella` (peak 0.917 per the existing benchmark) but FAILS on Piper en_US-amy-medium. Three practical paths laid out: custom `hey_ava.onnx` (preferred long-term), Piper-specific threshold env override, or accept whisper_poll's higher latency. Training itself deferred — hours of compute, out of scope for this work order.
+
+#### Files modified / new
+
+- `brain/wake_word.py` — already had the `transcript_wake:whisper_poll` source label fix from Section 9.
+- `brain/voice_loop.py` — adds 4 `[vl-diag]` `print(..., flush=True)` lines + `flush=True` on the existing prints in the run_ava handoff path.
+- `brain/operator_server.py` — `tts_speak` body parsing fix.
+- `start_ava_dev.bat` — `set AVA_DEBUG=1` at launch step.
+- `docs/TRAIN_WAKE_WORD.md` — Piper-voice section appended.
+- `docs/AVA_FEATURE_ADDITIONS_2026-05_VOICE_E2E_BUGFIXES.md` (new) — companion to the voice E2E doc, closeout report.
+- New diagnostic scripts (committed for future re-verifications):
+  - `scripts/_test_kokoro_path.py` — 8-trial OutputStream config sweep against VAIO3
+  - `scripts/_test_kokoro_multistream.py` — 5-trial multi-destination probe
+  - `scripts/verify_multiturn_post_wake.py` — 2c-style sleep+wake+turn-1+turn-2 driver
+
+---
+
 ### Section 9 — 2026-05-04 Four-feature work order: Sleep mode + Clipboard + Curriculum + New Person Onboarding
 
 One large work order that landed four features in a single overnight session, with a design framework doc preceding the implementation.

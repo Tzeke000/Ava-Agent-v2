@@ -32,8 +32,12 @@ if exist "%~dp0state\restart_requested.flag" (
 )
 
 REM ── Step 2: Start avaagent.py ────────────────────────────────────────────────
-echo [ava-dev] Step 1/4: Starting py -3.11 avaagent.py ^(minimized^)...
-start "Ava Python" /MIN /D "%~dp0" py -3.11 avaagent.py
+REM AVA_DEBUG=1 enables /api/v1/debug/inject_transcript and /api/v1/debug/tool_call,
+REM which test harnesses + verify_*.py drivers depend on. Dev-only — production
+REM (start_ava.bat) doesn't set this so debug endpoints stay locked.
+set AVA_DEBUG=1
+echo [ava-dev] Step 1/4: Starting py -3.11 avaagent.py ^(minimized, AVA_DEBUG=1^)...
+start "Ava Python" /MIN /D "%~dp0" cmd /c "set AVA_DEBUG=1 && py -3.11 avaagent.py"
 if errorlevel 1 (
   echo [ava-dev] ERROR: could not start py -3.11 avaagent.py
   pause

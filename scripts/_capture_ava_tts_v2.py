@@ -30,7 +30,7 @@ def find_idx(name_substr, kind):
 
 def main():
     text = "I am Ava. This is a routing verification message for Voicemeeter B3 capture."
-    rec_seconds = 25.0  # plenty of room for synth + playback
+    rec_seconds = 60.0  # Kokoro can take 25-30s synth on cudnn first runs
     sample_rate = 44100
 
     b3_idx = find_idx("Voicemeeter Out B3", "input")

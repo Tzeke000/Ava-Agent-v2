@@ -473,13 +473,21 @@ class VoiceLoop:
         print(f"[voice_loop] calling run_ava with: {text[:100]!r}")
         try:
             from brain.reply_engine import run_ava
+            print(f"[vl-diag] about to call run_ava", flush=True)
             run_ava_result = run_ava(text)
+            print(f"[vl-diag] run_ava returned, type={type(run_ava_result).__name__}", flush=True)
+            try:
+                _len = len(run_ava_result) if run_ava_result is not None else -1
+            except Exception:
+                _len = -2
+            print(f"[vl-diag] result len={_len}", flush=True)
             reply, _visual, _profile, _actions, _reflection = run_ava_result
+            print(f"[vl-diag] unpack ok reply_type={type(reply).__name__}", flush=True)
             _trace(f"vl.run_ava_returned chars={len(str(reply or ''))}")  # TRACE-PHASE1
-            print(f"[voice_loop] run_ava returned reply_chars={len(str(reply or ''))}")
+            print(f"[voice_loop] run_ava returned reply_chars={len(str(reply or ''))}", flush=True)
         except Exception as e:
             import traceback as _tb
-            print(f"[voice_loop] run_ava failed: {e!r}\n{_tb.format_exc()[:600]}")
+            print(f"[voice_loop] run_ava failed: {e!r}\n{_tb.format_exc()[:600]}", flush=True)
             self._g.pop("_turn_in_progress", None)
             self._g.pop("_turn_started_ts", None)
             self._set_state("passive")
