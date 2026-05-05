@@ -255,6 +255,28 @@ def _cmd_what_thinking(text, m, g):
 
 @_builtin(r"\b(?:what(?:'s|s)? your mood|how are you (?:feeling|doing))\b")
 def _cmd_mood(text, m, g):
+    """Authentic introspection — Ava actually reflects, not template fill.
+
+    Uses brain/introspection.compose_feeling_reply which synthesizes a
+    1-3 sentence reply from her actual state via ava-personal:latest.
+    Fallback to hand-composed from digest if the LLM is slow/unavailable.
+    Per Zeke 2026-05-05 17:11.
+    """
+    try:
+        from brain.introspection import compose_feeling_reply
+        reply = compose_feeling_reply(g)
+        if reply:
+            primary = "calm"
+            try:
+                load_mood = g.get("load_mood")
+                if callable(load_mood):
+                    primary = str((load_mood() or {}).get("current_mood") or "calm")
+            except Exception:
+                pass
+            return reply, primary
+    except Exception as e:
+        print(f"[voice_commands] introspection error: {e!r}")
+    # Fallback to the prior templated path so we never block on this command.
     try:
         load_mood = g.get("load_mood")
         if callable(load_mood):
