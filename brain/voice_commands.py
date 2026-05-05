@@ -67,12 +67,32 @@ def _route_open_app(name: str, g: dict[str, Any]) -> tuple[bool, str]:
     name = (name or "").strip()
     if not name:
         return False, "Open what?"
-    # Already-open dedup — if a window for this app is already visible,
-    # acknowledge instead of launching a second instance. Mirrors the
-    # WindowsUseAgent.open_app dedup added in 2026-05 work order.
+    # Already-open dedup — STRICT: match by PROCESS executable name, not
+    # window title substring. The previous title-substring check produced
+    # false positives ("chrome" matched any window with "chrome" in the
+    # title — Discord with embedded Chromium, VSCode tab editing
+    # chrome.css, etc). 2026-05-05 hardware test: Zeke heard Ava say
+    # "Chrome is already open" when Chrome was NOT open. We resolve
+    # the canonical exe via app_launcher's APP_MAP/aliases, then check
+    # psutil processes for that exe. Only matches count.
     try:
+        from tools.system.app_launcher import _resolve_app
         from brain.windows_use.primitives import find_window_candidates
+        exe_path, canonical = _resolve_app(name)
+        target_exe = ""
+        if exe_path and isinstance(exe_path, str):
+            from pathlib import Path as _P
+            target_exe = _P(exe_path).name.lower()
+        elif canonical:
+            target_exe = f"{canonical}.exe"
         existing = find_window_candidates(name)
+        if target_exe:
+            existing = [
+                c for c in (existing or [])
+                if str(c.get("process_name") or "").lower() == target_exe
+            ]
+        else:
+            existing = []
     except Exception:
         existing = []
     if existing:
@@ -102,15 +122,38 @@ def _route_open_app(name: str, g: dict[str, Any]) -> tuple[bool, str]:
 
 
 def _launch_entry(entry: dict[str, Any]) -> None:
-    """Launch a discoverer entry. steam:// URIs go through the shell, exe
-    paths via subprocess."""
+    """Launch a discoverer entry. Handles steam://, epic://, .lnk, .url,
+    and raw .exe paths.
+
+    2026-05-05 hardware test: Zeke heard "opening Microsoft Edge" but
+    Edge never opened. Cause: discoverer returned an .lnk Start Menu
+    shortcut, but `subprocess.Popen([".lnk path"])` silently fails on
+    Windows — Popen does NOT follow shell shortcuts. Use os.startfile
+    instead for non-exe paths so the shell resolves them properly.
+    """
     import os
     import subprocess
     path = str(entry.get("exe_path") or "")
-    if path.startswith("steam://") or path.startswith("epic://"):
-        os.startfile(path)  # type: ignore[attr-defined]  # Windows-only
+    if not path:
+        raise FileNotFoundError("entry has empty exe_path")
+    lower = path.lower()
+    # Protocol URIs go through the shell.
+    if lower.startswith(("steam://", "epic://", "ms-", "http://", "https://")):
+        os.startfile(path)  # type: ignore[attr-defined]
         return
-    subprocess.Popen([path], creationflags=0)
+    # .lnk / .url / .appref-ms — shell shortcuts. Popen can't follow them.
+    if lower.endswith((".lnk", ".url", ".appref-ms")):
+        os.startfile(path)  # type: ignore[attr-defined]
+        return
+    # Raw .exe — Popen with the parent dir as cwd so the launched process
+    # can find sibling DLLs / resources.
+    cwd = None
+    try:
+        from pathlib import Path as _P
+        cwd = str(_P(path).parent)
+    except Exception:
+        pass
+    subprocess.Popen([path], cwd=cwd, creationflags=0)
 
 
 def _route_move_widget(label: str, g: dict[str, Any]) -> tuple[bool, str]:
@@ -253,7 +296,33 @@ def _cmd_what_thinking(text, m, g):
 
 # ── Mood ────────────────────────────────────────────────────────────────────
 
-@_builtin(r"\b(?:what(?:'s|s)? your mood|how are you (?:feeling|doing))\b")
+@_builtin(
+    r"\b(?:"
+    # Existing — mood / how are you
+    r"what(?:'s|s)? your mood"
+    r"|how are you (?:feeling|doing)"
+    r"|how do you feel"
+    # 2026-05-05: also catch identity-probe phrasings so they hit
+    # introspection (1-3s on warm model) instead of falling to the
+    # slow deep-path (60-120s timeouts in Phase B). Per Zeke's ask
+    # to make Ava feel smoother + more authentic.
+    r"|tell me about yourself"
+    r"|tell me about you\b"
+    r"|who are you"
+    r"|what (?:can|do) you do"
+    r"|what are you(?:\s|\?|$)"
+    r"|describe yourself"
+    # 2026-05-05 retest: introspection-want / introspection-fix
+    # phrasings ("what do you want for yourself", "what do you
+    # need to be fixed") were timing out on deep path. Route to
+    # introspection composer too — she has internal state that
+    # answers these naturally.
+    r"|what do you want"
+    r"|what do you need"
+    r"|what (?:are you (?:thinking|wondering)|do you wonder)"
+    r"|do you have any (?:bugs|errors|issues|concerns)"
+    r")\b"
+)
 def _cmd_mood(text, m, g):
     """Authentic introspection — Ava actually reflects, not template fill.
 
@@ -557,6 +626,9 @@ def _cmd_open(text, m, g):
     if re.search(r"\s+through\s+\S", target, flags=re.IGNORECASE):
         return "", ""
     ok, msg = _route_open_app(target, g)
+    if ok:
+        # Track for pronoun-recall close ("close my last app").
+        g["_last_opened_app"] = target
     return msg, "joy" if ok else "calm"
 
 
@@ -600,6 +672,25 @@ def _cmd_close(text, m, g):
     # not be passed verbatim to find an app named "notepad and chrome".
     if re.search(r"\s+and\s+\S", target, flags=re.IGNORECASE):
         return "", "neutral"
+    # Pronoun-recall close: "close my last app i told you to open" / "close
+    # the last thing you opened" — resolve "my last app" / "the last app"
+    # to the actual last-opened app from g._last_opened_app. Without this,
+    # the catch-all close regex captures the literal pronoun phrase as the
+    # app name and fails. 2026-05-05 Phase B Session C T13 caught this.
+    if re.search(
+        r"\b(?:my|the)\s+last\s+(?:app|thing|application|program)\b",
+        target,
+        flags=re.IGNORECASE,
+    ):
+        last_app = (
+            g.get("_last_opened_app")
+            or g.get("_last_action", {}).get("trigger_target")
+            or ""
+        )
+        if last_app:
+            target = str(last_app)
+        else:
+            return "I don't remember the last app you asked me to open.", "calm"
     try:
         from tools.system.app_launcher import _tool_close_app
         res = _tool_close_app({"app_name": target}, g)

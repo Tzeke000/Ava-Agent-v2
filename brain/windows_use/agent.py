@@ -72,7 +72,22 @@ class WindowsUseAgent:
         # second instance. Mirrors the cu_close_app disambiguation pattern.
         # Vault: 2026-05 work order Phase A — Session A step 4.
         try:
+            from tools.system.app_launcher import _resolve_app
+            from pathlib import Path as _P
+            exe_path, canonical = _resolve_app(name)
+            target_exe = ""
+            if exe_path and isinstance(exe_path, str):
+                target_exe = _P(exe_path).name.lower()
+            elif canonical:
+                target_exe = f"{canonical}.exe"
             existing = primitives.find_window_candidates(name)
+            if target_exe:
+                existing = [
+                    c for c in (existing or [])
+                    if str(c.get("process_name") or "").lower() == target_exe
+                ]
+            else:
+                existing = []
         except Exception:
             existing = []
         if existing:

@@ -66,6 +66,14 @@ _APP_MAP: dict[str, list[str]] = {
     "obsidian": [
         os.path.expandvars(r"%LOCALAPPDATA%\Obsidian\Obsidian.exe"),
     ],
+    "obs": [
+        r"C:\Program Files\obs-studio\bin\64bit\obs64.exe",
+        r"C:\Program Files (x86)\obs-studio\bin\64bit\obs64.exe",
+    ],
+    "cursor": [
+        os.path.expandvars(r"%LOCALAPPDATA%\Programs\cursor\Cursor.exe"),
+        os.path.expandvars(r"%LOCALAPPDATA%\cursor\Cursor.exe"),
+    ],
 }
 
 _ALIASES: dict[str, str] = {
@@ -88,6 +96,9 @@ _ALIASES: dict[str, str] = {
     # turn 3 caught this 2026-05-05.
     "notes": "notepad",
     "note": "notepad",
+    "obs studio": "obs",
+    "open broadcaster software": "obs",
+    "open broadcaster": "obs",
 }
 
 
