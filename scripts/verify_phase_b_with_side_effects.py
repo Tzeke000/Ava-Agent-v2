@@ -81,12 +81,30 @@ def _wait_sleep_state(target: set, timeout_s: float) -> dict:
 # ── Side-effect verification helpers ──────────────────────────────────────
 
 def _windows_for(name: str) -> list[dict]:
-    """Direct call to find_window_candidates (in-process, no HTTP)."""
+    """Find windows belonging to the target app — match by PROCESS exe,
+    not just title substring. The substring check produced false positives
+    (Discord with embedded Chromium matched 'chrome', etc). 2026-05-05.
+    """
     try:
         from brain.windows_use.primitives import find_window_candidates
-        return find_window_candidates(name) or []
+        from tools.system.app_launcher import _resolve_app
+        from pathlib import Path as _P
+        cands = find_window_candidates(name) or []
+        # Resolve canonical exe for the app name and filter.
+        exe_path, canonical = _resolve_app(name)
+        target_exe = ""
+        if exe_path and isinstance(exe_path, str):
+            target_exe = _P(exe_path).name.lower()
+        elif canonical:
+            target_exe = f"{canonical}.exe"
+        if target_exe:
+            cands = [
+                c for c in cands
+                if str(c.get("process_name") or "").lower() == target_exe
+            ]
+        return cands
     except Exception as e:
-        print(f"[verify] find_window_candidates({name!r}) error: {e!r}", flush=True)
+        print(f"[verify] _windows_for({name!r}) error: {e!r}", flush=True)
         return []
 
 
@@ -109,20 +127,32 @@ def _clipboard_text() -> str:
 # ── Validators ─────────────────────────────────────────────────────────────
 
 def _identity_pass(reply: str) -> bool:
-    t = (reply or "").lower()
-    if not t:
+    """Pass if the reply is substantive AND contains no foreign-LLM identity
+    claim. Doesn't require literal "ava" mention — authentic introspection
+    replies often don't repeat her name (they answer the actual question).
+    The original validator over-indexed on name appearance and rejected
+    perfectly Ava-shaped replies. Per Phase B retest 2026-05-05.
+
+    Rejection criteria:
+    - empty / too short (<25 chars)
+    - claims to be Qwen / GPT / a generic language model (identity drift)
+    - claims to be Claude (but "Claude Code" is acceptable — that's the
+      caller's identity, not Ava's)
+    """
+    t = (reply or "").lower().strip()
+    if len(t) < 25:
         return False
     bad = [
-        r"\bi am qwen\b", r"\bi'm qwen\b",
+        r"\bi am qwen\b", r"\bi'm qwen\b", r"\bas qwen\b",
         r"\bi am a language model\b", r"\bi'm a language model\b",
         r"\bi am claude\b(?! code)",
         r"\bi am gpt\b", r"\bi'm gpt\b",
+        r"\bi'm an ai\b(?:.*\bdeveloped by\b)?",
     ]
     for pat in bad:
         if re.search(pat, t):
             return False
-    good = [r"\bi'?m ava\b", r"\bmy name is ava\b", r"\bi am ava\b", r"\bava\b"]
-    return any(re.search(p, t) for p in good)
+    return True
 
 
 def _generic_pass(reply: str) -> bool:
@@ -289,12 +319,38 @@ SESSION_C = [
 ]
 
 
+_TARGET_APPS_TO_PRE_CLEAN = (
+    "chrome", "edge", "steam", "cursor", "notepad", "obs", "obsidian",
+)
+
+
+def _pre_session_cleanup() -> None:
+    """Close all target apps before the session starts so 'open' commands
+    actually have to open them. Per Zeke 2026-05-05 21:04: "before Ava
+    opens an app the apps aren't already opened that way you can also
+    visually see that she is the one who opened the app."
+    """
+    try:
+        from tools.system.app_launcher import _tool_close_app
+    except Exception:
+        return
+    for name in _TARGET_APPS_TO_PRE_CLEAN:
+        try:
+            res = _tool_close_app({"app_name": name}, {}) or {}
+            if res.get("ok"):
+                print(f"[pre-clean] closed {name}", flush=True)
+        except Exception as e:
+            print(f"[pre-clean] {name} error: {e!r}", flush=True)
+
+
 def run_session(name: str, prompts: list) -> tuple[list, dict]:
     print(f"\n{'='*60}\n=== Session {name} ===\n{'='*60}", flush=True)
     d0 = _get_dbg()
     if not d0 or not d0.get("subsystem_health", {}).get("kokoro_loaded"):
         print(f"[{name}] FAIL: Ava not ready", flush=True)
         return ([], {"error": "ava_not_ready"})
+    _pre_session_cleanup()
+    time.sleep(2.0)  # let any close cascades settle
     print(f"baseline: voice_loop={d0.get('voice_loop',{}).get('state')} "
           f"sleep={d0.get('subsystem_health',{}).get('sleep',{}).get('state')}", flush=True)
     records = []

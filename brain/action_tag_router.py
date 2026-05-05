@@ -178,6 +178,9 @@ def _do_open(name: str, g: dict[str, Any]) -> str:
     try:
         from brain.voice_commands import _route_open_app
         ok, msg = _route_open_app(name, g)
+        if ok:
+            # Track last-opened app for "close my last app" pronoun recall.
+            g["_last_opened_app"] = name
         return msg or (f"Opening {name}." if ok else f"I couldn't open {name}.")
     except Exception as e:
         print(f"[action_tag] open_app error: {e!r}")
@@ -303,14 +306,64 @@ def route(text: str, g: dict[str, Any]) -> tuple[bool, str]:
     if not _has_action_hint(text):
         print(f"[action_tag] heuristic skip — no action-hint in {text[:60]!r}")
         return False, ""
+    # Skill recall (Hermes-pattern) — pre-classifier shortcut for known
+    # procedural skills. Trigger phrases are auto-stored on successful
+    # compound dispatches; recall is a Jaccard match on normalized
+    # tokens. Conservatively threshold-gated to avoid false positives.
+    try:
+        from pathlib import Path as _Path
+        from brain import skills as _skills
+        base = _Path(g.get("BASE_DIR") or ".")
+        recalled = _skills.recall(base, text)
+        if recalled is not None:
+            skill, score = recalled
+            actions_in = skill.get("actions") or []
+            actions = [(t, a) for (t, a) in actions_in]
+            print(f"[action_tag] skill recall: {skill.get('slug')!r} score={score:.2f} actions={actions}")
+            handled, reply = dispatch_actions(actions, g)
+            if handled:
+                # Track usage on the skill record.
+                try:
+                    skill["success_count"] = int(skill.get("success_count") or 0) + 1
+                    import time as _t
+                    skill["last_used"] = _t.time()
+                    _skills.save_skill(base, skill)
+                except Exception:
+                    pass
+                return handled, reply
+    except Exception as e:
+        print(f"[action_tag] skill recall error (non-fatal): {e!r}")
     # Pattern-shortcut for common compounds (e.g., "open X and type Y").
     # Avoids the LLM classifier latency AND num_predict truncation that
     # mangles long TYPE_TEXT bodies.
     shortcut = _try_pattern_shortcut(text)
     if shortcut is not None:
         print(f"[action_tag] pattern-shortcut: {shortcut}")
-        return dispatch_actions(shortcut, g)
+        handled, reply = dispatch_actions(shortcut, g)
+        if handled:
+            _try_persist_skill(g, text, shortcut)
+        return handled, reply
     actions = classify_actions(text)
     if not actions:
         return False, ""
-    return dispatch_actions(actions, g)
+    handled, reply = dispatch_actions(actions, g)
+    if handled:
+        _try_persist_skill(g, text, actions)
+    return handled, reply
+
+
+def _try_persist_skill(
+    g: dict[str, Any],
+    text: str,
+    actions: list[tuple[str, str | None]],
+) -> None:
+    """Best-effort skill auto-creation after a successful dispatch."""
+    try:
+        from pathlib import Path as _Path
+        from brain import skills as _skills
+        base = _Path(g.get("BASE_DIR") or ".")
+        slug = _skills.auto_create_or_update(base, text, actions)
+        if slug:
+            print(f"[action_tag] persisted skill: {slug}")
+    except Exception as e:
+        print(f"[action_tag] skill persist error (non-fatal): {e!r}")

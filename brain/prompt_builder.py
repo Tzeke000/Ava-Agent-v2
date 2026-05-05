@@ -442,22 +442,59 @@ Respond as Ava.
                 injected += "\n\n" + "\n".join(extras)
         except Exception:
             pass
-        # mem0 — semantic recall of relevant facts about the active person.
+        # FTS5 fast-path — Hermes/Jarvis-pattern. Tries SQLite full-text
+        # search over chat_history.jsonl FIRST. Returns in microseconds.
+        # Skip the slow mem0 vector path if FTS5 has hits.
+        injected_memory = False
         try:
-            ava_memory = _g.get("_ava_memory")
-            if ava_memory is not None and getattr(ava_memory, "available", False):
-                pid = str(active_person_id or "zeke")
-                hits = ava_memory.search(user_input or "", user_id=pid, limit=4)
-                if hits:
-                    lines = []
-                    for h in hits:
-                        text = str(h.get("memory") or "").strip()
-                        if text:
-                            lines.append(f"- {text}")
-                    if lines:
-                        injected += "\n\nMEMORIES:\n" + "\n".join(lines[:4])
-        except Exception:
-            pass
+            from brain import fts_memory as _fts
+            from pathlib import Path as _Path
+            base = _Path(_g.get("BASE_DIR") or ".")
+            pid = str(active_person_id or "zeke")
+            fts_hits = _fts.search(base, user_input or "", limit=4, person_id=pid)
+            if fts_hits:
+                lines = []
+                for h in fts_hits:
+                    text = str(h.get("content") or "").strip()
+                    if text:
+                        lines.append(f"- ({h.get('role')}) {text[:160]}")
+                if lines:
+                    injected += "\n\nMEMORIES (FTS):\n" + "\n".join(lines[:4])
+                    injected_memory = True
+        except Exception as e:
+            print(f"[prompt_builder] fts_memory error (non-fatal): {e!r}")
+
+        # mem0 — semantic recall of relevant facts about the active person.
+        # Only runs when FTS5 came up empty AND mem0.search has a wallclock
+        # cap so it can't dominate build_prompt latency. Was previously
+        # 5-20s of unbounded vector lookup.
+        if not injected_memory:
+            try:
+                ava_memory = _g.get("_ava_memory")
+                if ava_memory is not None and getattr(ava_memory, "available", False):
+                    pid = str(active_person_id or "zeke")
+                    import concurrent.futures as _cf
+                    _exec = _cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="mem0-search")
+                    _fut = _exec.submit(
+                        ava_memory.search, user_input or "", user_id=pid, limit=4
+                    )
+                    try:
+                        hits = _fut.result(timeout=2.5)
+                    except _cf.TimeoutError:
+                        hits = None
+                        print("[prompt_builder] mem0 search timeout — skipping")
+                    finally:
+                        _exec.shutdown(wait=False)
+                    if hits:
+                        lines = []
+                        for h in hits:
+                            text = str(h.get("memory") or "").strip()
+                            if text:
+                                lines.append(f"- {text}")
+                        if lines:
+                            injected += "\n\nMEMORIES:\n" + "\n".join(lines[:4])
+            except Exception:
+                pass
         if messages and isinstance(messages[0], SystemMessage):
             messages[0].content = injected + "\n\n" + messages[0].content
         else:
