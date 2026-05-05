@@ -6925,16 +6925,37 @@ def _pick_fast_model_fallback() -> str | None:
 
 
 def _pick_deep_model_fallback() -> str | None:
-    """Deep-path model preference. Updated 2026-05-02.
+    """Deep-path model preference. Updated 2026-05-05.
 
-    deepseek-r1:8b leads — it's the Qwen3 8B reasoning distill, fits in
-    8 GB, and was the only bench model that caught both transitivity AND
-    letter-frequency tricks. Falls back to llama3.1:8b (same size, no
-    reasoning trace) and gemma2:9b (older but still fits). gemma4 (9.6 GB),
-    qwen2.5:14b (9 GB), and deepseek-r1:14b (9 GB) dropped — they exceed
-    the 8 GB VRAM ceiling and force Ollama paging.
+    Phase B retry surfaced that putting deepseek-r1:8b first causes the
+    same VRAM-swap wedge that A1 fixed for greetings (see
+    bugs/autonomous-greeting-blocks-chat.md). Fast path keeps ava-personal
+    in VRAM. Deep path swaps to deepseek-r1, paying paging penalty + the
+    reasoning chain blows past the harness 240s timeout (and the voice
+    loop's worker timeout). Open-ended turns like "Tell me about
+    yourself" / "What do you want?" / "What's the weather like?" all
+    wedged in B+C tests.
+
+    Fix: prefer ava-personal:latest first so deep path uses the
+    already-loaded model — no swap, identity-baked replies, deep-path's
+    richer prompt context (build_prompt vs build_prompt_fast) is the
+    differentiator instead of model swap. Falls back to llama3.1:8b
+    (same VRAM tier, no reasoning trace) → mistral:7b → gemma2:9b →
+    deepseek-r1:8b only if nothing else available.
+
+    Reasoning quality tradeoff: deepseek-r1:8b wins benchmark trick
+    questions (transitivity / letter-frequency) but those aren't the
+    voice-first conversation use case. Real voice queries are
+    introspection, weather, basic-knowledge — ava-personal handles
+    those without VRAM swap and stays Ava-shaped.
     """
-    preferred = ["deepseek-r1:8b", "llama3.1:8b", "gemma2:9b", "mistral:7b"]
+    preferred = [
+        "ava-personal:latest", "ava-personal",
+        "llama3.1:8b", "llama3.1", "llama3:8b", "llama3",
+        "mistral:7b", "mistral",
+        "gemma2:9b",
+        "deepseek-r1:8b",
+    ]
     try:
         from brain.model_routing import discover_available_model_tags
 

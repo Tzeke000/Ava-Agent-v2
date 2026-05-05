@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef } from "react";
 import * as THREE from "three";
 
-type OrbState = "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "offline" | "listening" | "attentive" | "sleeping" | "waking";
+type OrbState = "idle" | "thinking" | "deep" | "speaking" | "bored" | "excited" | "offline" | "listening" | "attentive" | "sleeping" | "waking" | "pointing";
 
 interface OrbProps {
   emotion: string;
@@ -156,6 +156,7 @@ const STATE_TINT = {
   offline: new THREE.Color("#404858"),
   sleeping: new THREE.Color("#0a1530"),  // deep midnight blue — emotion-agnostic during sleep
   waking: new THREE.Color("#5a7ad0"),    // dawn blue — brightening pulse during wake transition
+  pointing: new THREE.Color("#ffeb3b"),  // bright yellow — Ava is targeting a desktop element (cu_click preview)
 };
 
 function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude = 0, energy = 0.5, recenterTrigger, cubeMorphEnabled = true, sleepProgress = 0, sleepRemainingSeconds = 0, wakeProgress = 0 }: OrbProps) {
@@ -631,6 +632,14 @@ function OrbCanvasInner({ emotion, state, size = 320, shapeOverride, amplitude =
         _coreScratch.lerp(STATE_TINT.waking, 0.5 + wp * 0.3);
         _glowScratch.lerp(STATE_TINT.waking, 0.4 + wp * 0.3);
         _lightScratch.lerp(STATE_TINT.waking, 0.4 + wp * 0.3);
+      } else if (liveState === "pointing") {
+        // Pointing: bright yellow tint — Ava is targeting a specific desktop
+        // element (cu_click target preview). Strong, unmissable. Full Arrow
+        // shape geometry deferred to future visual polish; tint signals the
+        // state for now. See vault: designs/orb-state-shapes.md.
+        _coreScratch.lerp(STATE_TINT.pointing, 0.55);
+        _glowScratch.lerp(STATE_TINT.pointing, 0.45);
+        _lightScratch.lerp(STATE_TINT.pointing, 0.45);
       }
 
       // ── Sleep / wake visuals ─────────────────────────────────────────────

@@ -299,6 +299,44 @@ def _cmd_time(text, m, g):
 
 @_builtin(
     r"\b(?:"
+    # "what's the weather", "what is the weather", "weather like", "weather report"
+    r"what(?:'s|s| is)? (?:the )?weather(?: like)?(?: today| right now| outside)?"
+    # "how's the weather"
+    r"|how(?:'s|s| is) the weather"
+    # "is it raining/snowing/sunny/hot/cold (outside)?"
+    r"|is it (?:raining|snowing|sunny|hot|cold|warm|cool)(?: outside)?"
+    # "tell me the weather"
+    r"|tell me (?:the |about the )?weather"
+    # "weather report", "weather forecast"
+    r"|weather (?:report|forecast)"
+    # "temperature outside", "what's the temperature"
+    r"|(?:what(?:'s|s| is)? )?(?:the )?temperature(?: outside)?"
+    r")\b"
+)
+def _cmd_weather(text, m, g):
+    """Tier-1 weather lookup. Hits wttr.in directly to avoid the LLM's stale
+    training data and the deep-path VRAM-swap wedge. On any network failure,
+    Ava verbally says she can't reach the internet (per Zeke 2026-05-05 05:14).
+    """
+    try:
+        from tools.web.weather import _fetch_weather_text
+        ok, message = _fetch_weather_text()
+        if not ok:
+            return message, "calm"
+        # wttr.in returns "<City>: <icon> <temp>". Replace the unicode weather
+        # icon with a neutral lead-in for TTS clarity.
+        spoken = message
+        # Strip emoji/unicode-icon block if present (between colon and temp).
+        spoken = re.sub(r":\s*[^A-Za-z0-9+\-]+\s*", ": ", spoken, count=1)
+        spoken = spoken.replace("+", "")
+        return spoken, "neutral"
+    except Exception as e:
+        print(f"[voice_commands] weather error: {e!r}")
+        return "I couldn't reach the weather service.", "calm"
+
+
+@_builtin(
+    r"\b(?:"
     # "what's today's date", "what's the date", "what is the date", "what date is it"
     r"what(?:'s|s| is)? (?:today(?:'s|s)?|the) date"
     r"|what date is it"
