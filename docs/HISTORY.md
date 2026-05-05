@@ -642,6 +642,52 @@ Wall time was therefore bounded by `150 + 67 = 217s` — the bottleneck thread, 
 
 ---
 
+### Section 14 — 2026-05-04 Bug-fix follow-up: voice-loop hang + cascading workers + new architectural follow-up
+
+Goal: get Ava's chat + voice paths to ChatGPT-mobile-quality reliability — every turn completes, sub-15s typical latency, conversation flows across many turns. Fix the two bugs Section 13 surfaced, then re-run Phase B.
+
+#### Fixes applied (4)
+
+1. **Cascading workers in `/api/v1/chat`** (Bug 2 from Section 13). Added `_RUN_AVA_SERIAL_LOCK` (module-level `threading.Lock`) and `_run_ava_cancel` event to `avaagent.py:7222+`. Workers acquire the serial lock with 1s polls so they can bail on cancel; foreground 90s timeout fires `_run_ava_cancel.set()`. Result: under sustained chat load, new requests queue cleanly behind the in-flight worker instead of stacking ghost workers that keep hammering Ollama after the foreground timed out.
+
+2. **Voice_loop hang on `run_ava.return`** (Bug 1 from Section 13). Wrapped voice_loop's `run_ava(text)` call in a worker thread with a hard 120s timeout (`brain/voice_loop.py:474+`). On timeout, state drops to `passive` instead of hanging at `thinking` indefinitely. Diagnostic `[vl-diag]` prints kept in place to localize any remaining occurrence.
+
+3. **`[stage7] persona inject failed`** root cause. `brain/persona_switcher.py:62` was calling `notes.strip()` on what could be a list (older profile schema stored notes as `list[str]`). Fixed to coerce: `isinstance(notes_raw, list) → "\n".join(...)`. Eliminates the recurring exception that correlated with hangs.
+
+4. **Operator-chat post-run_ava streamline.** Moved `bump_session_message_count`, `update_self_narrative`, post-reply `workspace.tick`, `build_perception`, `update_expression_state`, `process_camera_snapshot` from inline-after-run_ava to a daemon-thread housekeeping function (`avaagent.py:7280+`). HTTP response returns immediately after `run_ava` does. Heartbeat already runs all this work every 30s, so removing the inline pass doesn't reduce Ava's awareness — only the per-chat-call freshness, which the HTTP caller doesn't need.
+
+#### Phase B retry — blocked by new architectural issue
+
+After applying the four fixes and restarting Ava, Phase B retry started cleanly. **Turn 1 timed out empty at 240s.** Ava's logs showed:
+- `re.lock_wait_acquired label=greeting:deepseek-r1:8b` at 20:09:46
+- 12+ minutes later: lock STILL held, no `lock_released` log
+
+Root cause: Ava's autonomous proactive-greeting subsystem fired when it detected Zeke's face on camera. The greeting routes to `deepseek-r1:8b` (5.2 GB reasoning model). Under VRAM contention with `llava:13b` (5.5 GB) already resident, Ollama's model swap got stuck — possibly Ollama itself paged unstably under the 8 GB ceiling.
+
+The chat path was blocked waiting on the same global ollama lock. The 4 fixes from this session work AS DESIGNED — they prevent THEIR specific failure modes — but they assume a healthy ollama. When ollama is wedged on a different subsystem's call, no per-caller fix saves the chat path.
+
+This is a NEW issue, filed in vault as `bugs/autonomous-greeting-blocks-chat.md` with 4 fix-option sketches. **Recommended fix combo:** (B) lighter model for autonomous greeting (`ava-personal:latest` instead of `deepseek-r1:8b`) + (C) suppress proactive greeting when `_last_user_message_ts` is within ~60s. Option A (priority queue at the ollama lock) is the proper long-term fix but more invasive.
+
+Phase B retry can complete once the priority/lightweight-greeting fix lands. Until then, sustained-conversation testing remains blocked by the autonomous-vs-foreground contention pattern.
+
+#### Files modified
+
+- `avaagent.py` — `_RUN_AVA_SERIAL_LOCK` + `_run_ava_cancel` event; chat-streamline housekeeping refactor; cancel-aware worker.
+- `brain/voice_loop.py` — voice_loop run_ava timeout wrapper.
+- `brain/persona_switcher.py` — `notes` coercion fix.
+
+#### Vault writes
+
+- `bugs/operator-chat-cascading-workers.md` — UPGRADED to FIXED (commit pending).
+- `bugs/voice-loop-restart-hang.md` — UPGRADED with mitigation applied.
+- `bugs/autonomous-greeting-blocks-chat.md` — NEW. The architectural follow-up.
+
+#### Confidence assessment
+
+Per-caller robustness is now in place. Single-turn chats and short multi-turn sessions should be reliable as long as Ava isn't running heavy autonomous work concurrently. Sustained mixed-load (autonomous greeting + chat) still breaks. Daily use that doesn't trigger heavy autonomous behavior is OK; full ChatGPT-mobile parity needs the priority-queue fix from `bugs/autonomous-greeting-blocks-chat.md`.
+
+---
+
 ### Section 13 — 2026-05-04 Long-form conversation work order — Phase A/C/D shipped, Phase B partial (2 production bugs surfaced)
 
 Five-phase work order: Phase A audio routing for monitoring, Phase B 30-min sustained conversation with identity probes + sleep cycle, Phase C dual-audio-path documentation, Phase D 3 new curriculum stories, Phase E summary. Phases A, C, D shipped clean. **Phase B is partial — surfaced two real production bugs that block sustained-conversation testing on this hardware.** The test did its broader job: the work order anticipated this kind of issue ("issues short single-command tests miss"), and exactly those issues showed up.
