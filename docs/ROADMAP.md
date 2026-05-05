@@ -41,6 +41,18 @@ Set up of Claude Code's own external memory at `D:\ClaudeCodeMemory\` (separate 
 - ✅ **Phase B — Graphify (`graphifyy` v0.7.5).** `graphify update D:\AvaAgentv2` extracts AST from 283 files → 4,248 nodes + 8,248 edges. Output mirrored from `D:\AvaAgentv2\graphify-out\` (gitignored) to vault at `D:\ClaudeCodeMemory\graphify\ava-agent-v2\`. Manual updater at `scripts\update_graphify.bat`. **Token reduction measured: 119.7x avg vs naive corpus reading** (per-question 86-192x range).
 - ⏸️ **Phase C — mem0 / Qdrant / Neo4j.** Deferred. Hardware baseline: VRAM at 91.5% utilization with llava:13b resident, only 354 MiB free. mem0's reuse of `nomic-embed-text` would force Ollama to page out `ava-personal:latest` on every memory write/query, landing 30-90 s latency cost in the next voice turn. Cost/benefit wrong vs Phase A+B's already-shipped value. Full reasoning in `D:\ClaudeCodeMemory\decisions\mem0-deferred.md`. Revisit when (a) hardware ceiling raises, (b) a Qdrant-only mem0 MCP without Neo4j or external embedding swaps emerges, or (c) the vault grows past ~500 notes and grep-over-markdown stops being sufficient.
 
+### Bug-fix follow-up (2026-05-04 — 4 fixes applied, Phase B blocked by new issue)
+
+Voice-loop hang and cascading-workers bugs from Section 1's prior entry are FIXED:
+- `voice-loop-restart-hang` — voice_loop now runs run_ava in a worker thread with 120s hard timeout. State drops to `passive` instead of hanging. Plus `notes.strip()` exception in `persona_switcher.py` (root cause of correlated `[stage7] persona inject failed`) fixed.
+- `operator-chat-cascading-workers` — module-level `_RUN_AVA_SERIAL_LOCK` + `_run_ava_cancel` event in `avaagent.py`. Workers queue cleanly; foreground timeout cancels the worker before it calls run_ava if still queued. Plus chat-streamline pass: post-run_ava housekeeping moved to background daemon thread so HTTP responds immediately.
+
+**New blocker surfaced for Phase B retry: `autonomous-greeting-blocks-chat`.** When Ava detects a face on camera, the proactive-greeting subsystem fires `run_ava` routed to `deepseek-r1:8b` (5.2 GB reasoning model). Under VRAM contention with llava:13b (5.5 GB) already resident, the global ollama lock is held for many minutes. Chat path blocks waiting on the lock. Vault: `bugs/autonomous-greeting-blocks-chat.md` with 4 fix options.
+
+**Recommended fix:** (B) route autonomous greeting to `ava-personal:latest` (already-resident foreground model — no swap, ~5s response) + (C) suppress proactive greeting when `_last_user_message_ts` is within 60s. The proper long-term fix is (A) priority queue at the ollama lock so user chat preempts autonomous background work — more invasive, defer until sustained-load testing actually requires it.
+
+Phase B retry can complete once one of these lands.
+
 ### Long-form conversation work order (2026-05-04 — Phase A/C/D shipped, Phase B partial)
 
 Five-phase work order. **Phase A** (audio routing for monitoring), **C** (dual-audio-path documentation + toggle scripts), **D** (3 new curriculum stories) all shipped clean. **Phase B** (30-min sustained conversation with identity probes + sleep cycle) blocked by two reproducible production bugs surfaced under sustained load:

@@ -35,6 +35,16 @@ from typing import Any
 import numpy as np
 from faster_whisper import WhisperModel
 
+# Module-level serial lock for /api/v1/chat → run_ava invocations. Ensures only
+# ONE run_ava worker is hitting Ollama at any moment across all chat
+# invocations. Without this, slow turns that the foreground times out at 90s
+# left their worker chasing Ollama in the background, while new foreground
+# requests fired new workers — ghost workers accumulated until Ollama was
+# saturated. With this lock, new workers queue cleanly, and the foreground's
+# 90s timeout cancels them via _run_ava_cancel before they call run_ava if
+# they're still queued. Vault: bugs/operator-chat-cascading-workers.md.
+_RUN_AVA_SERIAL_LOCK = threading.Lock()
+
 warnings.filterwarnings("ignore")
 
 from langchain_ollama import ChatOllama, OllamaEmbeddings
@@ -7203,26 +7213,54 @@ def operator_console_chat(message: str, *, image=None) -> dict:
             except Exception:
                 pass
             print("[operator_console_chat] step: run_ava (90s timeout)")
-            # Use threading.Event so we don't block on ThreadPoolExecutor.__exit__
-            # waiting for a stuck worker. Worker keeps running in background but we
-            # return to the caller immediately on timeout.
+            # Threading.Event lets the foreground return on timeout without
+            # blocking on ThreadPoolExecutor.__exit__. Module-level serial lock
+            # `_RUN_AVA_SERIAL_LOCK` (defined below) ensures only ONE run_ava
+            # worker hits Ollama at a time across all chat invocations — fixes
+            # the cascading-worker bug where a slow worker that timed out at 90s
+            # kept hammering Ollama while subsequent foreground requests fired
+            # NEW workers, accumulating ghosts. With serialization, new workers
+            # queue cleanly; if the foreground times out before the worker even
+            # gets the lock, `_run_ava_cancel` event tells the worker to bail
+            # without invoking run_ava (no ghost work). Vault:
+            # bugs/operator-chat-cascading-workers.md (Option C).
             _run_ava_result_box: list = [None]
             _run_ava_error_box: list = [None]
             _run_ava_done = threading.Event()
+            _run_ava_cancel = threading.Event()
             _person_id_for_run = get_active_person_id()
 
             def _run_ava_worker():
                 try:
-                    _run_ava_result_box[0] = run_ava(clean_message, image, _person_id_for_run)
-                except Exception as _rae:
-                    _run_ava_error_box[0] = _rae
+                    # Try to acquire the serial lock with 1s polls so we can
+                    # honor cancellation if the foreground gives up.
+                    while not _run_ava_cancel.is_set():
+                        if _RUN_AVA_SERIAL_LOCK.acquire(timeout=1.0):
+                            break
+                    else:
+                        print("[operator_console_chat] worker cancelled before run_ava (still queued behind prior turn)")
+                        return
+                    try:
+                        if _run_ava_cancel.is_set():
+                            # Foreground gave up between acquisition and the call.
+                            print("[operator_console_chat] worker cancelled at acquisition (foreground already returned)")
+                            return
+                        _run_ava_result_box[0] = run_ava(clean_message, image, _person_id_for_run)
+                    except Exception as _rae:
+                        _run_ava_error_box[0] = _rae
+                    finally:
+                        _RUN_AVA_SERIAL_LOCK.release()
                 finally:
                     _run_ava_done.set()
 
             _t_ra = threading.Thread(target=_run_ava_worker, daemon=True, name="ava-run-ava-turn")
             _t_ra.start()
             if not _run_ava_done.wait(timeout=90.0):
-                print("[operator_console_chat] TIMEOUT after 90s — returning fallback response (worker still running in bg)")
+                # Foreground gives up. Tell the worker to bail rather than
+                # continuing to chase Ollama in the background — that's what
+                # caused the cascading-worker pile-up.
+                _run_ava_cancel.set()
+                print("[operator_console_chat] TIMEOUT after 90s — cancelling worker, returning fallback response")
                 _run_ava_result = None
             elif _run_ava_error_box[0] is not None:
                 print(f"[operator_console_chat] run_ava error: {_run_ava_error_box[0]!r}")
@@ -7248,41 +7286,21 @@ def operator_console_chat(message: str, *, image=None) -> dict:
                 )
             except Exception:
                 pass
-            try:
-                msg_count = bump_session_message_count()
-                if msg_count % 10 == 0:
-                    recent = load_recent_chat(limit=10, person_id=active_profile["person_id"])
-                    summary = " ".join((r.get("content", "") or "")[:100] for r in recent[-5:])
-                    mood = load_mood()
-                    face_emo = load_expression_state().get("raw_emotion", "neutral")
-                    update_self_narrative(globals(), summary, mood, face_emo)
-            except Exception as e:
-                print(f"[self-narrative] update failed (operator chat): {e}")
-
-            try:
-                with _occ_futures.ThreadPoolExecutor(max_workers=1) as _ex_p:
-                    _fut_p = _ex_p.submit(lambda: workspace.tick(camera_manager, image, globals(), clean_message))
-                    _fut_p.result(timeout=5.0)
-            except _occ_futures.TimeoutError:
-                print("[operator_console_chat] WARN: post-reply workspace.tick exceeded 5s")
-            except Exception as _wpe:
-                print(f"[operator_console_chat] post-reply workspace.tick error: {_wpe!r}")
-            perception = workspace.state.perception if workspace.state else build_perception(
-                camera_manager, image, globals(), clean_message
-            )
-            expr_state = update_expression_state(
-                perception.frame,
-                recognized_person_id=perception.face_identity,
-                visual_truth_trusted=perception.visual_truth_trusted,
-            )
-            if perception.visual_truth_trusted:
-                process_camera_snapshot(
-                    perception.frame,
-                    recognized_text=perception.recognized_text,
-                    recognized_person_id=perception.face_identity,
-                    expression_state=expr_state,
-                )
-
+            # Build the chat response IMMEDIATELY from run_ava's output so the
+            # HTTP caller gets it back in the next packet. Post-reply work
+            # (session-message count bump, self-narrative update at every 10th
+            # msg, post-reply workspace.tick, perception rebuild, expression
+            # state update, camera snapshot) used to run inline here — but
+            # under sustained chat load, one of these blocks (bump_session_
+            # message_count → load_session_state file lock?) was hanging
+            # post-run_ava and never returning to the HTTP caller. The chat
+            # reply was generated but never delivered. See vault
+            # bugs/operator-chat-cascading-workers.md for the full diagnosis.
+            #
+            # Heartbeat already runs workspace.tick + perception every 30s
+            # so skipping them here doesn't affect Ava's awareness — only
+            # the per-chat-call freshness, which the HTTP caller doesn't need.
+            # Self-narrative update fires from a separate heartbeat hook too.
             out["reply"] = reply
             out["visual"] = dict(visual or {})
             out["actions"] = list(actions or [])
@@ -7292,8 +7310,25 @@ def operator_console_chat(message: str, *, image=None) -> dict:
                 "name": active_profile.get("name"),
             }
             out["canonical_history"] = list(_get_canonical_history())
-            out["face_status"] = visual.get("face_status", perception.face_status)
-            out["recognition_status"] = visual.get("recognition_status", perception.recognized_text)
+            out["face_status"] = (visual or {}).get("face_status", "—")
+            out["recognition_status"] = (visual or {}).get("recognition_status", "—")
+
+            # Fire the post-reply housekeeping in a daemon thread so it
+            # doesn't block the response. If it hangs, only that thread
+            # is affected; the HTTP caller already got their reply.
+            def _post_reply_housekeeping():
+                try:
+                    msg_count = bump_session_message_count()
+                    if msg_count % 10 == 0:
+                        recent = load_recent_chat(limit=10, person_id=active_profile["person_id"])
+                        summary = " ".join((r.get("content", "") or "")[:100] for r in recent[-5:])
+                        mood = load_mood()
+                        face_emo = load_expression_state().get("raw_emotion", "neutral")
+                        update_self_narrative(globals(), summary, mood, face_emo)
+                except Exception as _e:
+                    print(f"[self-narrative] update failed (operator chat housekeeping): {_e}")
+            threading.Thread(target=_post_reply_housekeeping, daemon=True,
+                             name="ava-occ-housekeeping").start()
             try:
                 print(
                     f"[operator_console_chat] exit ok reply_len={len(str(out.get('reply') or ''))} "

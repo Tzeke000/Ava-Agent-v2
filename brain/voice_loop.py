@@ -471,10 +471,47 @@ class VoiceLoop:
         self._g["_turn_in_progress"] = True
         self._g["_turn_started_ts"] = time.time()
         print(f"[voice_loop] calling run_ava with: {text[:100]!r}")
+        # Run run_ava in a worker thread with a hard 120s deadline. Without
+        # the timeout, a hung run_ava (observed intermittently — see vault
+        # bugs/voice-loop-restart-hang.md) wedges voice_loop's `thinking`
+        # state forever. With the timeout, voice_loop drops to `passive` and
+        # the user can wake Ava again. Worker is daemon=True so it doesn't
+        # block process exit; on timeout we DON'T spawn a new run_ava (the
+        # ghost worker is the cost of one stuck Ollama call, bounded).
+        run_ava_result = None
+        run_ava_error: list = [None]
+        run_ava_done = threading.Event()
+
+        def _vl_run_ava_worker():
+            try:
+                from brain.reply_engine import run_ava
+                print(f"[vl-diag] worker entering run_ava", flush=True)
+                run_ava_error[0] = run_ava(text)
+                print(f"[vl-diag] worker run_ava returned cleanly", flush=True)
+            except Exception as _ra_e:
+                run_ava_error[0] = _ra_e
+                import traceback as _tb
+                print(f"[voice_loop] run_ava failed: {_ra_e!r}\n{_tb.format_exc()[:600]}", flush=True)
+            finally:
+                run_ava_done.set()
+
         try:
-            from brain.reply_engine import run_ava
-            print(f"[vl-diag] about to call run_ava", flush=True)
-            run_ava_result = run_ava(text)
+            print(f"[vl-diag] about to call run_ava (with 120s timeout)", flush=True)
+            _t = threading.Thread(target=_vl_run_ava_worker, daemon=True, name="ava-vl-run-ava")
+            _t.start()
+            if not run_ava_done.wait(timeout=120.0):
+                print(f"[vl-diag] run_ava TIMEOUT after 120s — abandoning ghost worker", flush=True)
+                self._g.pop("_turn_in_progress", None)
+                self._g.pop("_turn_started_ts", None)
+                self._set_state("passive")
+                return
+            result = run_ava_error[0]
+            if isinstance(result, Exception):
+                self._g.pop("_turn_in_progress", None)
+                self._g.pop("_turn_started_ts", None)
+                self._set_state("passive")
+                return
+            run_ava_result = result
             print(f"[vl-diag] run_ava returned, type={type(run_ava_result).__name__}", flush=True)
             try:
                 _len = len(run_ava_result) if run_ava_result is not None else -1
@@ -487,7 +524,7 @@ class VoiceLoop:
             print(f"[voice_loop] run_ava returned reply_chars={len(str(reply or ''))}", flush=True)
         except Exception as e:
             import traceback as _tb
-            print(f"[voice_loop] run_ava failed: {e!r}\n{_tb.format_exc()[:600]}", flush=True)
+            print(f"[voice_loop] run_ava handoff failed: {e!r}\n{_tb.format_exc()[:600]}", flush=True)
             self._g.pop("_turn_in_progress", None)
             self._g.pop("_turn_started_ts", None)
             self._set_state("passive")

@@ -53,13 +53,21 @@ def build_persona_block(profile: Dict[str, Any]) -> str:
 
     tone = _TONE_TEMPLATES.get(level, _TONE_TEMPLATES[2])
 
-    # Pull any learned notes from the profile
-    notes = profile.get("notes") or profile.get("about") or ""
+    # Pull any learned notes from the profile. `notes` may be a list (older
+    # profile schemas store an array of note strings) or a string. Coerce
+    # to string before .strip() to avoid `'list' object has no attribute
+    # 'strip'` exceptions that previously fired as `[stage7] persona inject
+    # failed` and correlated with the voice_loop hang.
+    notes_raw = profile.get("notes") or profile.get("about") or ""
+    if isinstance(notes_raw, list):
+        notes = "\n".join(str(n).strip() for n in notes_raw if n)
+    else:
+        notes = str(notes_raw).strip()
     learned_section = ""
     if notes and not is_blocked(profile):
         learned_section = "\n\n" + _LEARNED_CONTEXT_TEMPLATE.format(
             name=name,
-            notes=notes.strip(),
+            notes=notes,
         )
 
     # Pull relationship context
