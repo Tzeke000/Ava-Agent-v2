@@ -8,7 +8,12 @@ import { listen } from "@tauri-apps/api/event";
 
 /** Operator HTTP API aggregate (brain/operator_server.py — started from avaagent.py). */
 type Snapshot = Record<string, unknown>;
-type ChatMessage = { role?: string; content?: string };
+type ChatMessage = {
+  role?: string;
+  content?: string;
+  source?: string;            // zeke | claude_code | ava_response | ava_initiative | unknown_user | <person_id>
+  meta?: Record<string, unknown>;
+};
 
 // ── Brain-tab performance caps ──────────────────────────────────────────
 // The 3D force-graph renders sluggishly with large graphs. The lunch run
@@ -1624,7 +1629,19 @@ export default function App() {
   const uptimeLabel = `${Math.floor(uptimeMs / 3600000)}h ${Math.floor((uptimeMs % 3600000) / 60000)}m`;
 
   const updatedLabel = lastUpdated ? new Date(lastUpdated).toLocaleString() : "—";
+  // frameUrl reaches /api/v1/vision/latest_frame for the few places we still
+  // need a fresh HTTP-driven frame (e.g. brain visualizations that want a
+  // specific moment, or the camera tab's "expanded" view fallback). For
+  // everywhere ELSE that displays the live camera, prefer `liveFrameSrc`
+  // (the shared state set by the single 5fps poll at line 885+). This
+  // matches the orb pattern: one source, mirrored to all tabs. Multiple
+  // <img src={frameUrl}> references fire independent HTTP fetches per tab
+  // even though Ava only captures the camera once on the backend — wasteful
+  // bandwidth + browser load. Vault: see 2026-05 work order Phase A2.
   const frameUrl = `${API_BASE}/api/v1/vision/latest_frame?t=${cameraTick}`;
+  // Prefer shared state for camera display. Falls back to frameUrl only when
+  // shared state hasn't loaded yet (cold start or paused stream).
+  const sharedCameraSrc = liveFrameSrc || frameUrl;
   const activeBrainIdSet = useMemo(
     () => new Set((brainActive.active_nodes || []).map((n) => String(n.id))),
     [brainActive.active_nodes]
@@ -2351,7 +2368,9 @@ export default function App() {
               </div>
               {PHOTO_STAGES_UI.includes(onboardingStage || "") && (
                 <div style={{ marginBottom: "0.75rem" }}>
-                  <img src={`${API_BASE}/api/v1/camera/frame?t=${cameraTick}`}
+                  {/* Onboarding photo stage uses the same shared camera
+                      stream as the rest of the UI (no separate fetch). */}
+                  <img src={sharedCameraSrc}
                     alt="camera" style={{ width: "100%", borderRadius: 8, border: "1px solid #1e40af" }}
                     onError={() => {}} />
                 </div>
@@ -2454,7 +2473,7 @@ export default function App() {
                     )}
                     <img
                       className="camera-frame"
-                      src={frameUrl}
+                      src={sharedCameraSrc}
                       alt="Ava camera feed"
                       onLoad={() => setCameraFrameOk(true)}
                       onError={() => setCameraFrameOk(false)}
@@ -2536,9 +2555,24 @@ export default function App() {
                           : m.role === "system"
                             ? "system"
                             : "user";
+                      // Prefer the `source` tag (zeke / claude_code /
+                      // ava_response / ava_initiative / unknown_user) over
+                      // the bare `role` so the chat log surfaces who
+                      // actually spoke. Source-attribution tagging lands at
+                      // brain/avaagent.py:_resolve_chat_source.
+                      const sourceLabel = (() => {
+                        const s = (m.source ?? "").toString();
+                        if (s === "zeke") return "zeke";
+                        if (s === "claude_code") return "claude code";
+                        if (s === "ava_response") return "ava";
+                        if (s === "ava_initiative") return "ava (initiated)";
+                        if (s === "unknown_user") return "unknown user";
+                        if (s) return s;  // passthrough for third-party profiles
+                        return m.role ?? "?";
+                      })();
                       return (
                         <div key={i} className={`chat-bubble chat-${rk}`}>
-                          <span className="chat-role">{m.role ?? "?"}</span>
+                          <span className="chat-role">{sourceLabel}</span>
                           <div className="chat-text">{String(m.content ?? "")}</div>
                         </div>
                       );
@@ -2943,7 +2977,7 @@ export default function App() {
               </div>
               <Section title="What Ava sees">
                 <div className="camera-frame-shell">
-                  <img className="camera-frame" src={frameUrl} alt="Ava camera feed voice tab" />
+                  <img className="camera-frame" src={sharedCameraSrc} alt="Ava camera feed voice tab" />
                 </div>
                 <p className="op-muted">{sceneSummary}</p>
                 <p className="op-muted">

@@ -65,6 +65,39 @@ class WindowsUseAgent:
             )
         # Deny-list does not apply to app names (those don't resolve to
         # paths). It applies to the navigate() / read / write surface.
+        # ── Already-open dedup ────────────────────────────────────
+        # Before launching, check if a window for this app is already
+        # visible. If yes, return ok=True with reason="already_open" so the
+        # voice command router speaks "already open" instead of opening a
+        # second instance. Mirrors the cu_close_app disambiguation pattern.
+        # Vault: 2026-05 work order Phase A — Session A step 4.
+        try:
+            existing = primitives.find_window_candidates(name)
+        except Exception:
+            existing = []
+        if existing:
+            tid_dedup, started_dedup, _est_dedup = temporal_integration.begin(self.g, kind=op, context=name)
+            event_subscriber.emit(self.g, "TOOL_CALL", op, {
+                "name": name, "context": context, "estimate_id": tid_dedup,
+                "estimate_seconds": 0.0, "dedup": True,
+            })
+            temporal_integration.end(self.g, tid_dedup, started_dedup)
+            result = WindowsUseResult(
+                ok=True, operation=op, target=name,
+                duration_seconds=0.0, strategy_used="already_open",
+                attempts=0, reason="already_open",
+                estimate_id=tid_dedup,
+                candidates=[
+                    {
+                        "kind": c.get("kind"),
+                        "title": c.get("title"),
+                        "process": c.get("process"),
+                    }
+                    for c in existing[:5]
+                ],
+            )
+            event_subscriber.emit(self.g, "TOOL_RESULT", op, result.as_dict())
+            return result
         tid, started, est = temporal_integration.begin(self.g, kind=op, context=name)
         event_subscriber.emit(self.g, "TOOL_CALL", op, {
             "name": name, "context": context, "estimate_id": tid, "estimate_seconds": est,

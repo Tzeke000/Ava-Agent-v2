@@ -41,6 +41,20 @@ Set up of Claude Code's own external memory at `D:\ClaudeCodeMemory\` (separate 
 - ✅ **Phase B — Graphify (`graphifyy` v0.7.5).** `graphify update D:\AvaAgentv2` extracts AST from 283 files → 4,248 nodes + 8,248 edges. Output mirrored from `D:\AvaAgentv2\graphify-out\` (gitignored) to vault at `D:\ClaudeCodeMemory\graphify\ava-agent-v2\`. Manual updater at `scripts\update_graphify.bat`. **Token reduction measured: 119.7x avg vs naive corpus reading** (per-question 86-192x range).
 - ⏸️ **Phase C — mem0 / Qdrant / Neo4j.** Deferred. Hardware baseline: VRAM at 91.5% utilization with llava:13b resident, only 354 MiB free. mem0's reuse of `nomic-embed-text` would force Ollama to page out `ava-personal:latest` on every memory write/query, landing 30-90 s latency cost in the next voice turn. Cost/benefit wrong vs Phase A+B's already-shipped value. Full reasoning in `D:\ClaudeCodeMemory\decisions\mem0-deferred.md`. Revisit when (a) hardware ceiling raises, (b) a Qdrant-only mem0 MCP without Neo4j or external embedding swaps emerges, or (c) the vault grows past ~500 notes and grep-over-markdown stops being sufficient.
 
+### Phase A bug fixes + Phase B Session A inject-verified (2026-05-04 — A done, B partial)
+
+5 Phase A fixes shipped: autonomous greeting (B+C combo from prior bug note), 1-min wake-word grace period (60s in voice_tuning.json), source attribution at all 3 layers (storage already worked, UI now renders source label, /api/v1/chat accepts as_user param), camera feed redundancy (consolidated to sharedCameraSrc), orb state shape canonical doc.
+
+Plus bonuses: cu_open_app already-open dedup (later contradicted by Zeke's tab semantics — needs scope-to-non-browser-apps follow-up), close-cmd reply phrasing cleanup ("Closed steam too" → "Steam is closed."), Lessac high-quality Piper voice downloaded.
+
+Phase B Session A PASSED via inject_transcript: 8/8 turns including dedup verified ("Open Edge" twice → second returns "Edge is already open"). Sessions B and C DEFERRED — synthesized-voice harness (Piper → CABLE → Whisper-poll) consistently fails wake detection because Piper's compressed timing without natural breath gaps doesn't fit Whisper-poll's 1.5s rolling capture / 3s sleep cycle. Vault: `bugs/synthesized-voice-wake-detection.md` with 5 fix-option sketches.
+
+Net for Zeke's daily use: voice production path works (he confirmed hearing Ava live during the test). Test infrastructure for synthesized voice needs follow-up. Recommended fix: Option D from the bug note — `AVA_TEST_MODE=1` env var that bypasses wake-keyword check for synthesized-voice harness. Or fall back to manual real-voice test sessions when Zeke's at the machine.
+
+Carry-forward design items captured in vault:
+- `designs/app-knowledge-and-tab-handling.md` — browser tab semantics ("Open Chrome" twice = 2 windows; "Open another tab" = new tab in last browser; "Open Edge tab" = switch context). Plus app-knowledge map (research + cache app intents in state/app_knowledge.json).
+- `designs/orb-state-shapes.md` — 5 extras in OrbState code that aren't in canonical 7 (`bored`, `excited`, `offline`, `sleeping`, `waking`); 1 missing (`pointing` — Arrow shape, no implementation yet).
+
 ### Bug-fix follow-up (2026-05-04 — 4 fixes applied, Phase B blocked by new issue)
 
 Voice-loop hang and cascading-workers bugs from Section 1's prior entry are FIXED:

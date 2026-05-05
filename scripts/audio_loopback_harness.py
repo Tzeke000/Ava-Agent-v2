@@ -119,12 +119,30 @@ def piper_tts(text: str, model_path: str | None = None) -> Path:
         print("Then download a voice model (e.g. en_US-amy-medium) to models/piper/")
         sys.exit(2)
     if model_path is None:
-        candidates = list(Path("models/piper").glob("*.onnx")) if Path("models/piper").exists() else []
-        if not candidates:
-            print("No Piper voice model found at models/piper/*.onnx")
-            print("Download from https://github.com/rhasspy/piper/releases (e.g. en_US-amy-medium)")
-            sys.exit(2)
-        model_path = str(candidates[0])
+        # Prefer Lessac high-quality voice if available — more natural prosody
+        # and breath gaps than amy-medium, which makes Whisper-poll's wake
+        # detector more reliable on synthesized "Hey Ava" prompts.
+        # Fall back to whatever .onnx exists in models/piper/.
+        models_dir = Path("models/piper")
+        preferred_order = [
+            "en_US-lessac-high.onnx",
+            "en_US-libritts_r-medium.onnx",
+            "en_US-amy-medium.onnx",
+        ]
+        chosen = None
+        for name in preferred_order:
+            p = models_dir / name
+            if p.is_file():
+                chosen = p
+                break
+        if chosen is None:
+            candidates = list(models_dir.glob("*.onnx")) if models_dir.exists() else []
+            if not candidates:
+                print("No Piper voice model found at models/piper/*.onnx")
+                print("Download from https://github.com/rhasspy/piper/releases (e.g. en_US-amy-medium)")
+                sys.exit(2)
+            chosen = candidates[0]
+        model_path = str(chosen)
     voice = PiperVoice.load(model_path)
     out_wav = Path(tempfile.gettempdir()) / f"piper_out_{int(time.time()*1000)}.wav"
     sample_rate = int(getattr(voice.config, "sample_rate", 22050))

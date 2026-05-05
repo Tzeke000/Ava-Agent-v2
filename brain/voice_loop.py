@@ -389,6 +389,24 @@ class VoiceLoop:
             except Exception:
                 pass
 
+        # ── WAKE-TRANSCRIPT FALLBACK ──────────────────────────────────────────
+        # If listening captured nothing but Whisper-poll's wake-phase chunk
+        # has a fresh transcript (≤ 5s old), use that instead. Handles the
+        # case where user says "Hey Ava, X" in one breath: Whisper-poll's
+        # 1.5s window catches the whole phrase but listening's NEW recording
+        # starts post-wake and only captures end-of-utterance silence.
+        # See brain/wake_word.py:_whisper_poll_loop where _wake_transcript
+        # is stashed. Vault: 2026-05 work order Phase B retry.
+        if not text:
+            wake_tx = str(self._g.get("_wake_transcript") or "").strip()
+            wake_tx_ts = float(self._g.get("_wake_transcript_ts") or 0.0)
+            if wake_tx and (time.time() - wake_tx_ts) <= 5.0:
+                print(f"[voice_loop] empty listen — falling back to wake-phase transcript: {wake_tx[:120]!r}")
+                text = wake_tx
+                # Consume so it doesn't fire on a subsequent passive→listening cycle
+                self._g.pop("_wake_transcript", None)
+                self._g.pop("_wake_transcript_ts", None)
+
         if not text:
             print("[voice_loop] empty transcription after listen")
             self._set_state("passive")
