@@ -65,6 +65,7 @@ def _expand_search_paths() -> dict[str, list[Path]]:
     return {
         "desktop": [
             home / "Desktop",
+            home / "OneDrive" / "Desktop",  # OneDrive-redirected Desktop on Windows 10/11
             Path(r"C:\Users\Public\Desktop"),
         ],
         "start_menu": [

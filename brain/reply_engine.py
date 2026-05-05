@@ -224,6 +224,64 @@ def run_ava(
     except Exception as _vce:
         print(f"[run_ava] voice_command router error (non-fatal): {_vce!r}")
 
+    # ── ACTION-TAG ROUTER (Jarvis Pattern 1, fallback after regex misses) ────
+    # When the regex voice_command_router doesn't match, ask the fast LLM to
+    # emit action tags like [OPEN_APP:Notes][TYPE_TEXT:hello]. Dispatch each
+    # through existing handlers and skip the slow deep-path build_prompt +
+    # invoke. Catches compound commands ("open Notes and type X") and
+    # phrasing variations ("could you launch Chrome for me") that the
+    # strict regex misses. See brain/action_tag_router.py.
+    _trace("re.action_tag.start")  # TRACE-PHASE1
+    try:
+        from brain.action_tag_router import route as _atr_route
+        from brain.turn_visual import default_visual_payload as _atr_vis
+        from brain.output_guard import scrub_visible_reply as _atr_scrub  # noqa: F401
+        _at_handled, _at_response = _atr_route(_inp, _g)
+        _trace(f"re.action_tag.done handled={_at_handled} resp_chars={len(_at_response or '')}")  # TRACE-PHASE1
+        if _at_handled and _at_response:
+            print(f"[action_tag] dispatched: {_inp[:60]!r} → {_at_response[:80]!r}")
+            try:
+                _canon = list(_av._get_canonical_history())
+                _canon.append({"role": "user", "content": user_input})
+                _canon.append({"role": "assistant", "content": _at_response})
+                _av._set_canonical_history(_canon)
+            except Exception:
+                pass
+            try:
+                import json as _json2
+                from pathlib import Path as _Path2
+                _hp = _Path2(BASE_DIR) / "state" / "chat_history.jsonl"
+                _hp.parent.mkdir(parents=True, exist_ok=True)
+                _now = time.time()
+                _user_source = _av._resolve_chat_source("user", {"person_id": active_person_id})
+                with _hp.open("a", encoding="utf-8") as _f:
+                    _f.write(_json2.dumps({
+                        "ts": _now, "role": "user", "source": _user_source,
+                        "content": user_input,
+                        "person_id": active_person_id,
+                    }, ensure_ascii=False) + "\n")
+                    _f.write(_json2.dumps({
+                        "ts": _now, "role": "assistant", "source": "ava_response",
+                        "content": _at_response,
+                        "person_id": active_person_id,
+                        "model": "action_tag_router", "emotion": "neutral",
+                        "turn_route": "action_tag",
+                    }, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            _profile_at = _av.load_profile_by_id(active_person_id)
+            _vis_at = _atr_vis(
+                face_status="—", recognition_status="—", expression_status="—",
+                memory_preview="", turn_route="action_tag",
+                visual_truth_trusted=False, vision_status="action_tag",
+            )
+            _g["_ava_thinking"] = False
+            # Same trust as voice_command path: handler-controlled string,
+            # skip the LLM-thought-tail scrubber.
+            return _at_response, _vis_at, _profile_at, [], {"action_tag": True}
+    except Exception as _ate:
+        print(f"[run_ava] action_tag_router error (non-fatal): {_ate!r}")
+
     # Set thinking flag — UI uses this to show fast blue pulse animation
     _g["_ava_thinking"] = True
     _g["_ava_thinking_since"] = time.time()
