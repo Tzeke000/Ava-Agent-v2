@@ -1606,8 +1606,28 @@ def create_app():
             return {"ok": False, "error": "chat_not_configured", "reply": "", "debug_reply_source": "empty"}
         try:
             message = ""
+            as_user = ""
             if isinstance(body, dict):
                 message = str(body.get("message") or "")
+                # Optional source attribution. Callers (e.g. test harness)
+                # should pass `as_user: "claude_code"` so Ava addresses them
+                # as Claude rather than as Zeke. Without this, all chat
+                # input collapses to active_person_id (= Zeke when on
+                # camera). Vault: bugs/source-attribution-regression.md.
+                as_user = str(body.get("as_user") or "").strip()
+            # Set active person BEFORE the chat call so run_ava picks up the
+            # right profile (claude_code.json with name="Claude Code", etc).
+            host = _g()
+            if as_user:
+                set_active = host.get("set_active_person")
+                if callable(set_active):
+                    try:
+                        if as_user == "claude_code":
+                            from brain.dev_profiles import ensure_claude_code_profile
+                            ensure_claude_code_profile(host.get("BASE_DIR"))
+                        set_active(as_user, source="operator_chat_api")
+                    except Exception as _ape:
+                        print(f"[operator_chat] set_active_person({as_user!r}) failed: {_ape!r}")
             # Keep operator chat in the same server thread with a lock to avoid racey global-state turns.
             with _CHAT_CALL_LOCK:
                 raw = _CHAT_FN(message)

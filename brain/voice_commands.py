@@ -67,6 +67,16 @@ def _route_open_app(name: str, g: dict[str, Any]) -> tuple[bool, str]:
     name = (name or "").strip()
     if not name:
         return False, "Open what?"
+    # Already-open dedup — if a window for this app is already visible,
+    # acknowledge instead of launching a second instance. Mirrors the
+    # WindowsUseAgent.open_app dedup added in 2026-05 work order.
+    try:
+        from brain.windows_use.primitives import find_window_candidates
+        existing = find_window_candidates(name)
+    except Exception:
+        existing = []
+    if existing:
+        return True, f"{name.capitalize()} is already open."
     disc = g.get("_app_discoverer")
     if disc is not None:
         try:
@@ -478,15 +488,32 @@ def _cmd_open(text, m, g):
 
 @_builtin(r"\b(?:close|quit|kill) (.+?)$")
 def _cmd_close(text, m, g):
-    target = m.group(1).strip()
+    raw_target = m.group(1).strip()
+    # Strip trailing courtesy/conjunction words so the spoken reply doesn't
+    # echo the user's phrasing verbatim. "Close steam too" → target=steam,
+    # reply="Steam is closed." instead of "Closed steam too." which sounds
+    # like Ava is restating the user's command rather than confirming.
+    # Vault: 2026-05 Phase B Zeke feedback during Session A.
+    _trailing_strip = re.compile(
+        r"\s+(please|now|right now|already|too|also|then|"
+        r"would you|could you|for me|thanks|thank you)\.?$",
+        re.IGNORECASE,
+    )
+    target = raw_target
+    while True:
+        new_target = _trailing_strip.sub("", target).strip(" .,!?")
+        if new_target == target:
+            break
+        target = new_target
     try:
         from tools.system.app_launcher import _tool_close_app
         res = _tool_close_app({"app_name": target}, g)
         if res.get("ok"):
-            return f"Closed {target}.", "calm"
+            display = target.title() if target else raw_target
+            return f"{display} is closed.", "calm"
     except Exception:
         pass
-    return f"I couldn't close {target}.", "calm"
+    return f"I couldn't close {target or raw_target}.", "calm"
 
 
 @_builtin(r"\bplay (?:the )?dino(?: game)?\b")

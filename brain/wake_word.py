@@ -349,6 +349,19 @@ class WakeWordDetector:
                     # classifier rejects the follow-up command with
                     # reason="no_ava_token" (functional regression after
                     # openWakeWord was disabled in 2026-04-29 bench).
+                    #
+                    # Also stash the FULL transcribed text on globals so
+                    # voice_loop can use it as a fallback if its listening
+                    # capture comes up empty. This handles the timing race
+                    # where the user says "Hey Ava, X" in one breath:
+                    # Whisper-poll's 1.5s window catches the whole thing
+                    # but listening's NEW recording (started post-wake) only
+                    # captures end-of-utterance silence. Without this
+                    # fallback, listening's `no speech detected` exit drops
+                    # the command and Ava never responds. Vault: 2026-05
+                    # work order Phase B Session A retry diagnosis.
+                    self._g["_wake_transcript"] = text
+                    self._g["_wake_transcript_ts"] = time.time()
                     self._trigger_wake(source="transcript_wake:whisper_poll")
             except Exception:
                 pass

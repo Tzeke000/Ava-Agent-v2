@@ -35,6 +35,7 @@ models/wake_words/*.onnx
 # Piper voice models: https://huggingface.co/rhasspy/piper-voices  (~50-100MB each)
 # faster-whisper models live in ~/.cache/huggingface/hub/, also not committed.
 models/piper/
+# (also excludes en_US-lessac-high.onnx which is 108MB)
 
 # Curriculum raw downloads — regeneratable from Project Gutenberg via
 # scripts/_parse_aesop.py. The split per-fable files are committed; the

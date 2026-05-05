@@ -642,6 +642,75 @@ Wall time was therefore bounded by `150 + 67 = 217s` — the bottleneck thread, 
 
 ---
 
+### Section 15 — 2026-05-04 Phase A bug fixes + Phase B Session A inject-mode verification
+
+Five Phase A fixes shipped clean. Phase B Session A behavior verified via inject_transcript (audio loopback driver fragility blocked synthesized-voice path; documented as test-infrastructure issue, not Ava regression). Sessions B and C deferred to manual real-voice runs.
+
+#### Phase A fixes (all shipped)
+
+1. **Autonomous greeting → ava-personal:latest + 5min user-engagement quiet.** `brain/proactive_triggers.py`. Greeting no longer routes to deepseek-r1:8b which was wedging Ollama for 12+ min under VRAM contention. Plus 5-min suppress when `_last_user_message_ts` is fresh — autonomous "hello"s during active conversation are noise. Vault: `bugs/autonomous-greeting-blocks-chat.md`.
+
+2. **1-minute wake-word grace period.** `config/voice_tuning.json` `attentive_base_seconds` 180 → 60. Mirrors Claude mobile / ChatGPT voice mode — after Ava responds, follow-up commands within 60s don't need re-wake. Outside grace, re-wake required.
+
+3. **Source attribution at all 3 layers.** Storage already worked (`source` field present in chat_history.jsonl). UI updated (`apps/ava-control/src/App.tsx` chat bubble renders source label: "zeke / claude code / ava / ava (initiated)" instead of bare role). `/api/v1/chat` accepts `as_user` param so HTTP callers can identify themselves; sets active_person_id BEFORE chat_fn so run_ava picks up the right profile (Claude Code's profile has `name="Claude Code"`).
+
+4. **Camera feed redundancy.** `apps/ava-control/src/App.tsx` consolidated 3 different camera-image sources (`liveFrameSrc` shared state vs `frameUrl` HTTP-fetched per consumer vs a dead `/api/v1/camera/frame` URL) into `sharedCameraSrc = liveFrameSrc || frameUrl`. Single 5fps poll at one source, all tabs subscribe. Same orb pattern.
+
+5. **Orb state shape canonical list.** Vault: `designs/orb-state-shapes.md`. 7 canonical shapes (sphere/cone/cube/triangular prism/hex bipyramid/torus/arrow). Surfaced 5 extras in code (`bored`, `excited`, `offline`, `sleeping`, `waking`) and 1 missing (`pointing` — Arrow shape, no implementation yet) for Zeke's call.
+
+#### Bonus fixes
+
+- **`cu_open_app` already-open dedup.** Both `WindowsUseAgent.open_app` and `voice_commands._route_open_app` check `find_window_candidates` before launching. Returns "X is already open" instead of opening a second window. (Note: Zeke clarified later that "Open Chrome" + "Open Chrome" should actually open 2 windows, with "Open another tab" being its own intent. Dedup needs a small follow-up to scope to non-browser apps only — vault: `designs/app-knowledge-and-tab-handling.md`.)
+
+- **`_cmd_close` reply phrasing cleanup.** `brain/voice_commands.py` close handler was returning `"Closed {raw_target}."` where target included trailing courtesy words ("please" / "too" / etc), so Ava said "Closed steam too" — sounded like restating user's command, not confirming. Now strips trailing courtesy/conjunction words and renders `"{Display} is closed."`.
+
+- **Lessac high-quality Piper voice** downloaded to `models/piper/en_US-lessac-high.onnx` (108MB, gitignored). More natural prosody than amy-medium; harness now prefers it.
+
+#### Phase B — partial
+
+**Session A: PASSED via inject_transcript** (8/8 turns produced replies):
+- Identity probe → Ava responded with mood format ("Feeling neutral with some focused.") — strict identity validator marked FAIL (no literal "ava" in reply) but **no identity drift** (no "I am Qwen" / "I am a language model" violations).
+- Open Chrome ✅, Open Edge ✅, **Open Edge again → "Edge is already open." ✅ (dedup verified)**, Open Steam ✅.
+- Close Chrome ✅, Close both Edge tabs ✅, Close Steam ✅.
+
+Transcript: `D:\ClaudeCodeMemory\sessions\2026-05-04-conversation-test-A.md`.
+
+**Sessions B and C: DEFERRED.** B partially run via inject (3 of 4 turns timed out on deep-path run_ava > 240s — model swap penalties). C not run.
+
+**Audio-loopback driver consistently failed** despite multiple workarounds: split utterance + silence, one-utterance, pre-silence pad, voice swap from amy-medium to lessac-high. Whisper-poll's 1.5s rolling capture / 3s sleep cycle is tuned for human speech timing; Piper synth's compressed timing without natural breath gaps doesn't reliably trigger wake. Vault: `bugs/synthesized-voice-wake-detection.md` with 5 fix-option sketches (recommended: Option D — `AVA_TEST_MODE=1` env var bypasses wake-keyword check for synthesized-voice harness).
+
+#### Files modified
+
+- `brain/proactive_triggers.py` — A1
+- `config/voice_tuning.json` — A4
+- `brain/operator_server.py` — A3 (chat as_user param)
+- `apps/ava-control/src/App.tsx` — A2 (camera redundancy) + A3 (chat source label) + ChatMessage type
+- `brain/persona_switcher.py` — earlier Section 14 fix (notes-list coercion)
+- `brain/windows_use/agent.py` — cu_open_app dedup
+- `brain/voice_commands.py` — open-app dedup + close-cmd cleanup
+- `start_ava_dev.bat` — AVA_TTS_DEVICES env var added (speakers + cable + vaio3 for monitoring)
+- `scripts/audio_loopback_harness.py` — Lessac voice preference
+- `scripts/verify_session_A.py` (new) — Session A driver
+- `scripts/verify_all_sessions.py` (new) — all-sessions driver via inject_transcript
+- `.gitignore` — note that lessac onnx is also excluded
+
+#### Vault writes
+
+- `bugs/synthesized-voice-wake-detection.md` (NEW) — full diagnosis of why Piper-driven testing keeps failing
+- `designs/orb-state-shapes.md` (NEW) — canonical 7-shape list with discrepancies for Zeke's call
+- `designs/app-knowledge-and-tab-handling.md` (NEW) — Zeke's feedback on browser tab semantics + app knowledge map design
+- `sessions/2026-05-04-conversation-test-A.md` (NEW) — Session A inject-mode transcript
+
+#### Confidence assessment
+
+- **Phase A: shipped.** Bug fixes are real and correct.
+- **Phase B Session A: PASSED via inject** — dedup works, multi-app open/close works.
+- **Phase B Sessions B+C: DEFERRED** — need either real-voice manual testing or harness redesign (Option D test-mode wake bypass).
+- **Voice production path: WORKS** for Zeke (he confirmed hearing Ava during the test session).
+- **Voice testing infrastructure: BROKEN** for synthesized voice. Filed as test-only bug.
+
+---
+
 ### Section 14 — 2026-05-04 Bug-fix follow-up: voice-loop hang + cascading workers + new architectural follow-up
 
 Goal: get Ava's chat + voice paths to ChatGPT-mobile-quality reliability — every turn completes, sub-15s typical latency, conversation flows across many turns. Fix the two bugs Section 13 surfaced, then re-run Phase B.

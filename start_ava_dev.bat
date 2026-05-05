@@ -35,9 +35,18 @@ REM ── Step 2: Start avaagent.py ──────────────�
 REM AVA_DEBUG=1 enables /api/v1/debug/inject_transcript and /api/v1/debug/tool_call,
 REM which test harnesses + verify_*.py drivers depend on. Dev-only — production
 REM (start_ava.bat) doesn't set this so debug endpoints stay locked.
+REM
+REM AVA_TTS_DEVICES routes Ava's Kokoro TTS to:
+REM   - speakers   (Realtek — Zeke hears Ava live)
+REM   - cable      (CABLE Input — feeds Ava's own STT path during test loops)
+REM   - voicemeeter vaio3 input  (VM strip 7 → B3 — captured by faster-whisper
+REM                               in scripts/audio_loopback_harness.py)
+REM Without VAIO3, the test harness records silence on B3 and reports empty
+REM replies even when Ava actually spoke. Vault: decisions/audio-routing-monitoring.md.
 set AVA_DEBUG=1
-echo [ava-dev] Step 1/4: Starting py -3.11 avaagent.py ^(minimized, AVA_DEBUG=1^)...
-start "Ava Python" /MIN /D "%~dp0" cmd /c "set AVA_DEBUG=1 && py -3.11 avaagent.py"
+set AVA_TTS_DEVICES=speakers,cable,voicemeeter vaio3 input
+echo [ava-dev] Step 1/4: Starting py -3.11 avaagent.py ^(minimized, AVA_DEBUG=1, AVA_TTS_DEVICES=speakers+cable+vaio3^)...
+start "Ava Python" /MIN /D "%~dp0" cmd /c "set AVA_DEBUG=1 && set AVA_TTS_DEVICES=speakers,cable,voicemeeter vaio3 input && py -3.11 avaagent.py"
 if errorlevel 1 (
   echo [ava-dev] ERROR: could not start py -3.11 avaagent.py
   pause

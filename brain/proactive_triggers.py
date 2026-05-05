@@ -419,13 +419,18 @@ def _generate_greeting_async(g: dict[str, Any], person_id: str, prev_person: str
                 from brain.ollama_lock import with_ollama
                 from langchain_ollama import ChatOllama
                 from langchain_core.messages import HumanMessage
-                db = get_dual_brain(g)
-                model = db.get_thinking_model() if db is not None else "qwen2.5:14b"
+                # Greeting is a 12-word sentence — use the foreground model
+                # that's already VRAM-resident. Routing to deepseek-r1:8b
+                # (thinking model, 5.2 GB) forces a swap from llava:13b
+                # (5.5 GB), which exceeds the 8 GB ceiling and wedged Ollama
+                # for 12+ minutes during the long-conversation Phase B test.
+                # Vault: bugs/autonomous-greeting-blocks-chat.md (Option B).
+                model = "ava-personal:latest"
             except Exception:
                 from brain.ollama_lock import with_ollama
                 from langchain_ollama import ChatOllama
                 from langchain_core.messages import HumanMessage
-                model = "qwen2.5:14b"
+                model = "ava-personal:latest"
 
             try:
                 from brain.identity_loader import identity_anchor_prompt
@@ -471,11 +476,23 @@ def _generate_greeting_async(g: dict[str, Any], person_id: str, prev_person: str
     threading.Thread(target=_run, daemon=True, name="ava-greet").start()
 
 
+_RECENT_USER_TURN_QUIET_SEC = 300.0  # 5 minutes — suppress autonomous greetings while user is actively engaged
+
+
 def maybe_greet_on_face_detection(g: dict[str, Any], person_id: str, prev_person: str) -> None:
-    """Called by runtime_presence on face change. Greets Zeke at most every 30 min."""
+    """Called by runtime_presence on face change. Greets Zeke at most every 30 min,
+    AND only when no recent user turn (≤ 5 min) — autonomous greetings during active
+    conversation are noise, not value. Vault: bugs/autonomous-greeting-blocks-chat.md
+    (Option C)."""
     try:
         # Don't greet during an active conversation — Ava is already engaged.
         if bool(g.get("_conversation_active")) or bool(g.get("_turn_in_progress")):
+            return
+        # 5-min user-engagement quiet — if Zeke spoke recently (voice or chat),
+        # skip the greeting. He doesn't need an autonomous "hello" while
+        # mid-conversation, and the greeting eats Ollama for 5+ seconds.
+        last_user_msg = float(g.get("_last_user_message_ts") or 0)
+        if (time.time() - last_user_msg) < _RECENT_USER_TURN_QUIET_SEC:
             return
         owner = str(g.get("OWNER_PERSON_ID") or "zeke")
         if person_id != owner:
