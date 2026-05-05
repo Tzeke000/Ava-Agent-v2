@@ -82,6 +82,12 @@ _ALIASES: dict[str, str] = {
     "calc": "calculator",
     "snip": "snipping",
     "task manager": "taskmgr",
+    # Notes is macOS-native; on Windows the closest equivalent is Notepad.
+    # Without this alias, "Open Notes and type X" hangs the open cascade
+    # because Windows doesn't ship a "Notes" app — Phase B Session B
+    # turn 3 caught this 2026-05-05.
+    "notes": "notepad",
+    "note": "notepad",
 }
 
 
@@ -153,6 +159,7 @@ def _filesystem_glob_search(name: str) -> str | None:
     home = Path(os.path.expanduser("~"))
     roots = [
         home / "Desktop",
+        home / "OneDrive" / "Desktop",  # OneDrive-redirected Desktop holds .lnk shortcuts to many Steam apps and ML tools (CLAUDE.md rule 11)
         Path(r"C:\Users\Public\Desktop"),
         Path(r"C:\Program Files"),
         Path(r"C:\Program Files (x86)"),

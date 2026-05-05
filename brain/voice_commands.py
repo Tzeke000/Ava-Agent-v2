@@ -520,6 +520,20 @@ def _cmd_open(text, m, g):
     if target.lower() in ("the journal", "journal", "memory", "brain", "status", "tools", "models", "debug", "people"):
         # Already handled by tab handlers — shouldn't get here, but be safe.
         return "", ""
+    # Compound commands like "open Notes and then type X" — decline so the
+    # action_tag_router fallback can split into [OPEN_APP:Notes][TYPE_TEXT:X]
+    # and dispatch sequentially. The catch-all `\bopen (.+?)$` would
+    # otherwise treat the entire tail as the app name and hang trying to
+    # find an app called "notes and then type x".
+    if re.search(r"\b(?:and then|and type|then type|and paste|then paste)\b", target, flags=re.IGNORECASE):
+        return "", ""
+    # "open chrome and edge" — two-app open. Decline so action-tag splits.
+    if re.search(r"\s+and\s+\S", target, flags=re.IGNORECASE):
+        return "", ""
+    # "open obs through steam" — nested-launch intent. Action-tag should pick
+    # up the primary target (OBS); decline here so it routes there.
+    if re.search(r"\s+through\s+\S", target, flags=re.IGNORECASE):
+        return "", ""
     ok, msg = _route_open_app(target, g)
     return msg, "joy" if ok else "calm"
 
@@ -558,6 +572,11 @@ def _cmd_close(text, m, g):
         # Empty response = decline. Dispatcher loop continues past this
         # handler; if no other pattern matches, route() returns (False, "")
         # and voice_loop calls run_ava(text) for deep-path handling.
+        return "", "neutral"
+    # Compound close commands like "close notepad and chrome" should split
+    # into [CLOSE_APP:notepad][CLOSE_APP:chrome] via the action-tag router,
+    # not be passed verbatim to find an app named "notepad and chrome".
+    if re.search(r"\s+and\s+\S", target, flags=re.IGNORECASE):
         return "", "neutral"
     try:
         from tools.system.app_launcher import _tool_close_app
