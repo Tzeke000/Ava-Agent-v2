@@ -2394,19 +2394,49 @@ def create_app():
         reply: str = ""
         run_ava_ms = 0
         run_ava_error: str | None = None
+        run_ava_timed_out = False
         try:
             from brain.reply_engine import run_ava as _run_ava
+            import concurrent.futures as _cf
             t0 = time.time()
             # Pass active_person_id so claude_code (or any other registered
             # profile) routes correctly. None falls through to whatever
             # avaagent.get_active_person_id() returns — typically "zeke".
             _ap_arg = as_user if as_user and as_user != "zeke" else None
-            result = _run_ava(text, None, _ap_arg)
-            run_ava_ms = int((time.time() - t0) * 1000)
+            # 2026-05-05: Phase B retry surfaced that run_ava can wedge
+            # past 4 minutes on deep-path queries when the model swaps
+            # under VRAM contention. The handler previously parsed
+            # timeout_seconds but never enforced it — caller saw empty
+            # reply after their own timeout. Now we enforce it via a
+            # bounded executor: on timeout, return abbreviated fallback
+            # so the caller (voice loop, harness) gets a real reply
+            # within budget. The background thread continues so any
+            # late-arriving result still updates state.
+            _exec = _cf.ThreadPoolExecutor(max_workers=1, thread_name_prefix="inject-runava")
+            _fut = _exec.submit(_run_ava, text, None, _ap_arg)
             try:
-                reply = str((result or [""])[0] or "")
-            except Exception:
-                reply = ""
+                result = _fut.result(timeout=timeout_s)
+                run_ava_ms = int((time.time() - t0) * 1000)
+                try:
+                    reply = str((result or [""])[0] or "")
+                except Exception:
+                    reply = ""
+            except _cf.TimeoutError:
+                run_ava_timed_out = True
+                run_ava_ms = int((time.time() - t0) * 1000)
+                reply = "Hold on — that one's taking me longer than usual to think through."
+                try:
+                    from brain.debug_state import record_error as _rec
+                    _rec(
+                        "inject_transcript",
+                        f"run_ava timeout after {timeout_s:.1f}s",
+                        traceback=f"deadline={timeout_s:.1f}s text={text[:120]!r}",
+                    )
+                except Exception:
+                    pass
+            finally:
+                # Detach — don't block on shutdown if work is still running.
+                _exec.shutdown(wait=False)
         except Exception as e:
             import traceback as _tb
             run_ava_error = f"{type(e).__name__}: {e}"
@@ -2506,11 +2536,12 @@ def create_app():
                     pass
 
         result_payload: dict[str, Any] = {
-            "ok": run_ava_error is None and bool(reply),
+            "ok": run_ava_error is None and bool(reply) and not run_ava_timed_out,
             "input_text": text,
             "wake_source": wake_source,
             "reply_text": reply,
             "reply_chars": len(reply),
+            "run_ava_timed_out": run_ava_timed_out,
             "total_ms": total_ms,
             "run_ava_ms": run_ava_ms,
             "run_ava_error": run_ava_error,

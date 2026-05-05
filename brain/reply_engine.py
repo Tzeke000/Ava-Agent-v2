@@ -212,7 +212,15 @@ def run_ava(
                     visual_truth_trusted=False, vision_status="voice_command",
                 )
                 _g["_ava_thinking"] = False
-                return scrub_visible_reply(_response), _vis_vc, _profile_vc, [], {"voice_command": True}
+                # Voice command replies are clean strings produced by handlers
+                # — they don't contain unfinished LLM thought-tails or internal
+                # MEMORY/GOAL/ACTION blocks that scrub_visible_reply targets.
+                # Running them through the scrubber is unsafe: it strips short
+                # final lines that lack terminal punctuation. The weather
+                # handler's "Beaufort, SC: 55°F" got trimmed to empty and the
+                # caller saw "I'm here." (Phase B retry 2026-05-05). Skip the
+                # scrub for voice command responses; trust the handler.
+                return _response, _vis_vc, _profile_vc, [], {"voice_command": True}
     except Exception as _vce:
         print(f"[run_ava] voice_command router error (non-fatal): {_vce!r}")
 
