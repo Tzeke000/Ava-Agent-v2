@@ -505,6 +505,19 @@ def _cmd_close(text, m, g):
         if new_target == target:
             break
         target = new_target
+    # Extract just the app name from quantified phrases like "both edge tabs",
+    # "all chrome windows", "every steam instance". Pattern: <quantifier> X
+    # <window-noun> → X. Vault: surfaced by Phase B Session A retry 2026-05-05.
+    _quant_extract = re.compile(
+        r"^(?:both|all|every|the)\s+(\S+?)(?:\s+(?:tabs?|windows?|instances?|"
+        r"sessions?|panes?))?$",
+        re.IGNORECASE,
+    )
+    qm = _quant_extract.match(target)
+    if qm:
+        target = qm.group(1).strip()
+    # Also strip trailing window-noun if no quantifier matched ("close edge tab")
+    target = re.sub(r"\s+(tabs?|windows?|instances?)$", "", target, flags=re.IGNORECASE).strip()
     try:
         from tools.system.app_launcher import _tool_close_app
         res = _tool_close_app({"app_name": target}, g)
