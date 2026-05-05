@@ -884,14 +884,106 @@ def run_ava(
             from brain.ollama_lock import with_ollama
             _trace(f"re.ollama_invoke_start deep model={_used_model_label}")  # TRACE-PHASE1
             _deep_invoke_t0 = time.time()  # TRACE-PHASE1
-            result = with_ollama(
-                lambda: _invoke_llm.invoke(messages),
-                label=f"main:{_used_model_label}",
+
+            # ── Streaming deep-path (Jarvis-pattern, 2026-05-05) ─────────────
+            # Sentence-by-sentence playback so user hears Ava starting within
+            # 2-3s instead of waiting 30-90s for the full reply. Same shape
+            # as the fast path streaming above. Behind AVA_STREAMING_ENABLED.
+            import os as _os_streamflag2
+            _deep_streaming_enabled = _os_streamflag2.environ.get(
+                "AVA_STREAMING_ENABLED", "1"
+            ) not in ("0", "", "false", "False")
+            _deep_tts_worker = _g.get("_tts_worker")
+            _deep_streaming_ok = (
+                _deep_streaming_enabled
+                and _deep_tts_worker is not None
+                and getattr(_deep_tts_worker, "available", False)
             )
-            _trace(f"re.ollama_invoke_done deep ms={int((time.time()-_deep_invoke_t0)*1000)}")  # TRACE-PHASE1
+
+            raw_reply = ""
+            if _deep_streaming_ok:
+                _deep_stream_emotion = "neutral"
+                _deep_stream_intensity = 0.5
+                try:
+                    _mood_state = _g.get("_current_mood") or {}
+                    if isinstance(_mood_state, dict):
+                        _deep_stream_emotion = str(
+                            _mood_state.get("current_mood")
+                            or _mood_state.get("primary_emotion")
+                            or "neutral"
+                        )
+                        _deep_stream_intensity = float(
+                            _mood_state.get("energy")
+                            or _mood_state.get("intensity")
+                            or 0.5
+                        )
+                except Exception:
+                    pass
+
+                from brain.sentence_chunker import SentenceBuffer
+                _deep_buf = SentenceBuffer()
+                _deep_sentences: list[str] = []
+                _deep_first_chunk_ts: float | None = None
+
+                def _deep_stream_loop():
+                    nonlocal raw_reply, _deep_first_chunk_ts
+                    for _chunk_event in _invoke_llm.stream(messages):
+                        _delta = getattr(_chunk_event, "content", "") or ""
+                        if not _delta:
+                            continue
+                        for _sentence in _deep_buf.feed(_delta):
+                            _deep_sentences.append(_sentence)
+                            if _deep_first_chunk_ts is None:
+                                _deep_first_chunk_ts = time.time()
+                                _trace(
+                                    f"re.deep_stream.first_chunk ms={int((_deep_first_chunk_ts - _deep_invoke_t0) * 1000)} "
+                                    f"chars={len(_sentence)}"
+                                )
+                            _deep_tts_worker.speak(
+                                _sentence,
+                                emotion=_deep_stream_emotion,
+                                intensity=_deep_stream_intensity,
+                                blocking=False,
+                            )
+                    for _sentence in _deep_buf.flush():
+                        _deep_sentences.append(_sentence)
+                        if _deep_first_chunk_ts is None:
+                            _deep_first_chunk_ts = time.time()
+                        _deep_tts_worker.speak(
+                            _sentence,
+                            emotion=_deep_stream_emotion,
+                            intensity=_deep_stream_intensity,
+                            blocking=False,
+                        )
+
+                try:
+                    with_ollama(
+                        _deep_stream_loop,
+                        label=f"main:stream:{_used_model_label}",
+                    )
+                except Exception as _ds_err:
+                    print(f"[run_ava] deep stream error (falling back to invoke): {_ds_err!r}")
+                    raw_reply = ""
+                else:
+                    raw_reply = " ".join(_deep_sentences).strip()
+                    _trace(
+                        f"re.ollama_invoke_done deep_stream ms={int((time.time() - _deep_invoke_t0) * 1000)} "
+                        f"sentences={len(_deep_sentences)}"
+                    )
+                    _g["_streamed_reply"] = True
+                # Fall through to non-stream path if streaming returned empty.
+
+            if not raw_reply:
+                # Non-streaming legacy path (no TTS / streaming disabled / stream failed).
+                result = with_ollama(
+                    lambda: _invoke_llm.invoke(messages),
+                    label=f"main:{_used_model_label}",
+                )
+                _trace(f"re.ollama_invoke_done deep ms={int((time.time()-_deep_invoke_t0)*1000)}")  # TRACE-PHASE1
+                raw_reply = getattr(result, "content", str(result)).strip()
+
             _g["_last_invoked_model"] = str(_used_model_label)
             print(f"[perf] post-invoke {_elapsed()} model={_used_model_label}")
-            raw_reply = getattr(result, "content", str(result)).strip()
             if not raw_reply:
                 raw_reply = "I'm here."
             print(f"[run_ava] step: llm response received reply_chars={len(raw_reply)} (t={_elapsed()})")
