@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -311,14 +312,50 @@ def _tool_close_app(params: dict[str, Any], g: dict[str, Any]) -> dict[str, Any]
         exe_name = app_name if "." in app_name else f"{app_name}.exe"
 
     killed = 0
+    pids_to_kill = []
     for proc in psutil.process_iter(["name", "pid"]):
         try:
             if proc.info["name"] and proc.info["name"].lower() == exe_name.lower():
-                proc.terminate()
-                killed += 1
+                pids_to_kill.append(proc)
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
-    return {"ok": True, "terminated": killed, "target": exe_name}
+    # Try graceful terminate first
+    for proc in pids_to_kill:
+        try:
+            proc.terminate()
+            killed += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+    # Wait briefly for processes to exit
+    if pids_to_kill:
+        psutil.wait_procs(pids_to_kill, timeout=2.0)
+    # If anything is still alive (Chrome's confirmation dialogs, multi-process
+    # apps that ignore SIGTERM), force-kill with /F via taskkill which Windows
+    # honors more aggressively than psutil's terminate.
+    still_alive = [p for p in pids_to_kill if p.is_running()]
+    if still_alive:
+        try:
+            subprocess.run(
+                ["taskkill", "/IM", exe_name, "/F"],
+                capture_output=True, text=True, timeout=8,
+            )
+        except Exception:
+            pass
+        # Re-check after taskkill
+        time.sleep(1.0)
+        still_alive = [p for p in pids_to_kill if p.is_running()]
+    # `ok` reflects ACTUAL termination, not just attempted termination. Per
+    # Zeke's framing 2026-05-04: "what's the point of telling her to do
+    # something if she doesn't actually do it" — if no processes were killed
+    # OR processes are still alive after the cascade, that's a failure even
+    # if we tried. Vault: decisions/voice-text-pipeline-equivalence.md.
+    actually_closed = (killed > 0 and len(still_alive) == 0)
+    return {
+        "ok": actually_closed,
+        "terminated": killed,
+        "still_alive": len(still_alive),
+        "target": exe_name,
+    }
 
 
 def _tool_get_open_apps(params: dict[str, Any], g: dict[str, Any]) -> dict[str, Any]:
