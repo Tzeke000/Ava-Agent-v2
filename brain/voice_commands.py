@@ -505,19 +505,22 @@ def _cmd_close(text, m, g):
         if new_target == target:
             break
         target = new_target
-    # Extract just the app name from quantified phrases like "both edge tabs",
-    # "all chrome windows", "every steam instance". Pattern: <quantifier> X
-    # <window-noun> → X. Vault: surfaced by Phase B Session A retry 2026-05-05.
-    _quant_extract = re.compile(
-        r"^(?:both|all|every|the)\s+(\S+?)(?:\s+(?:tabs?|windows?|instances?|"
-        r"sessions?|panes?))?$",
-        re.IGNORECASE,
-    )
-    qm = _quant_extract.match(target)
-    if qm:
-        target = qm.group(1).strip()
-    # Also strip trailing window-noun if no quantifier matched ("close edge tab")
-    target = re.sub(r"\s+(tabs?|windows?|instances?)$", "", target, flags=re.IGNORECASE).strip()
+    # If the phrasing mentions tab/window-level intent ("close edge tab",
+    # "close both edge tabs", "close all chrome windows"), DO NOT match
+    # close_app — these are tab-level operations, not whole-browser
+    # terminations. Per Zeke 2026-05-05: "Ava does not need to put in CMD
+    # close both edge tabs. She needs to close edge tab and then close
+    # edge tab again ... actually close one tab and then close the other
+    # tab and know which tabs Person is talking about." Until a
+    # dedicated close_tab handler exists (uses UIA tree walk + Ctrl+W
+    # keystroke on focused tab), let these phrasings fall through to the
+    # deep path where Ava can ask for clarification or use cu_click /
+    # cu_type to handle them. Vault: designs/app-knowledge-and-tab-handling.md.
+    if re.search(r"\b(?:tabs?|windows?)\b", target, flags=re.IGNORECASE):
+        # Empty response = decline. Dispatcher loop continues past this
+        # handler; if no other pattern matches, route() returns (False, "")
+        # and voice_loop calls run_ava(text) for deep-path handling.
+        return "", "neutral"
     try:
         from tools.system.app_launcher import _tool_close_app
         res = _tool_close_app({"app_name": target}, g)
