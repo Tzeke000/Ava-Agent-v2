@@ -782,6 +782,81 @@ def _cmd_set_reminder(text, m, g):
     return f"I'll remind you in {minutes:.0f} minutes.", "calm"
 
 
+@_builtin(
+    r"^(?:hey\s+ava[,\s]+)?(?:please\s+)?(?:"
+    r"build\s+me\s+(?:a\s+|an\s+)?"
+    r"|write\s+me\s+(?:a\s+|an\s+)?"
+    r"|make\s+me\s+(?:a\s+|an\s+)?"
+    r"|create\s+(?:a\s+|an\s+)"
+    r"|generate\s+(?:a\s+|an\s+)"
+    r"|build\s+(?:a\s+|an\s+)"
+    r").+"
+)
+def _cmd_build_software(text, m, g):
+    """Hand a build request off to Claude Code (Jarvis-pattern subagent).
+
+    Triggers on: "build me a X", "write me a Y", "make me a Z", "create a W",
+    "generate a V", "build a U". Spawns `claude --print` in a fresh
+    state/builds/<slug>/ directory. Acks immediately; result is announced
+    via TTS when the subprocess completes.
+    """
+    try:
+        from brain.claude_code_subagent import (
+            looks_like_build_request,
+            extract_task,
+            delegate_build,
+        )
+        if not looks_like_build_request(text):
+            return "", ""
+        task = extract_task(text)
+        if not task or len(task) < 3:
+            return "", ""
+        ack = delegate_build(task, g)
+        return ack, "curiosity"
+    except Exception as e:
+        print(f"[voice_commands] build_software error: {e!r}")
+        return "", ""
+
+
+@_builtin(
+    r"\bremind me\s+(?:to\s+)?.+?\s+(?:"
+    # Absolute time forms — "at 3pm", "at 15:00", "at 9:30am"
+    r"at\s+\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)?"
+    # Tomorrow forms
+    r"|tomorrow(?:\s+at\s+\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)?)?"
+    r")\b"
+)
+def _cmd_set_reminder_absolute(text, m, g):
+    """Handles "remind me to X at HH:MM" / "remind me to X tomorrow at HH"
+    via the new brain/scheduler.py — Hermes-pattern persistent scheduler.
+    The existing _cmd_set_reminder above handles relative "in N min/hour"
+    via tools/system/reminder_tool.py and the heartbeat tick.
+    """
+    try:
+        from pathlib import Path as _P
+        from brain.scheduler import add_reminder
+        from datetime import datetime as _dtcls
+        base = _P(g.get("BASE_DIR") or ".")
+        person = (
+            g.get("_active_person_id")
+            or g.get("active_person_id")
+            or "zeke"
+        )
+        entry = add_reminder(base, text, source_user=str(person))
+        if entry is None:
+            return "", "neutral"  # decline; fall through
+        # Format a concise confirmation.
+        when = _dtcls.fromisoformat(entry["when_iso"])
+        if when.date() == _dtcls.now().date():
+            human = when.strftime("at %I:%M %p").lstrip("0")
+        else:
+            human = when.strftime("on %A at %I:%M %p").replace(" 0", " ")
+        return f"Got it. I'll remind you {human}.", "calm"
+    except Exception as e:
+        print(f"[voice_commands] absolute reminder error: {e!r}")
+        return "I couldn't set that reminder.", "neutral"
+
+
 @_builtin(r"\bwhat reminders (?:do i have|are pending)\b|\blist (?:my )?reminders\b")
 def _cmd_list_reminders(text, m, g):
     try:

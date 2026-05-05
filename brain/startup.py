@@ -604,6 +604,13 @@ def run_startup(g: dict[str, Any]) -> None:
         print(f"[llava] check failed: {e}")
         g["_llava_model_name"] = None
 
+    print("[startup] step: scheduler (reminders watcher)")
+    try:
+        from brain.scheduler import start_watcher as _start_sched
+        _start_sched(g)
+    except Exception as _se:
+        print(f"[scheduler] start failed: {_se!r}")
+
     print("[startup] step: voice loop")
     try:
         from brain.voice_loop import start_voice_loop

@@ -282,6 +282,56 @@ def run_ava(
     except Exception as _ate:
         print(f"[run_ava] action_tag_router error (non-fatal): {_ate!r}")
 
+    # ── KNOWLEDGE QUERY SUBAGENT (Hermes-pattern, 2026-05-05) ────────────────
+    # For open-ended factual questions ("tell me about polar bears"), the
+    # deep path takes 60-120s on this hardware — way past the harness/voice
+    # tolerance. Delegate to a background thread + return an immediate
+    # acknowledgement. Result is announced via TTS when ready and persisted
+    # to chat_history. See brain/subagent.py.
+    try:
+        from brain.subagent import looks_like_knowledge_query, delegate as _sub_delegate
+        from brain.turn_visual import default_visual_payload as _sub_vis
+        if looks_like_knowledge_query(_inp):
+            _ack = _sub_delegate(_inp, _g)
+            print(f"[subagent] delegated knowledge query — ack={_ack!r}")
+            try:
+                _canon = list(_av._get_canonical_history())
+                _canon.append({"role": "user", "content": user_input})
+                _canon.append({"role": "assistant", "content": _ack})
+                _av._set_canonical_history(_canon)
+            except Exception:
+                pass
+            try:
+                import json as _json3
+                from pathlib import Path as _Path3
+                _hp = _Path3(BASE_DIR) / "state" / "chat_history.jsonl"
+                _hp.parent.mkdir(parents=True, exist_ok=True)
+                _now = time.time()
+                _user_source = _av._resolve_chat_source("user", {"person_id": active_person_id})
+                with _hp.open("a", encoding="utf-8") as _f:
+                    _f.write(_json3.dumps({
+                        "ts": _now, "role": "user", "source": _user_source,
+                        "content": user_input, "person_id": active_person_id,
+                    }, ensure_ascii=False) + "\n")
+                    _f.write(_json3.dumps({
+                        "ts": _now, "role": "assistant", "source": "ava_response",
+                        "content": _ack, "person_id": active_person_id,
+                        "model": "subagent_ack", "emotion": "curiosity",
+                        "turn_route": "subagent_ack",
+                    }, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            _profile_sub = _av.load_profile_by_id(active_person_id)
+            _vis_sub = _sub_vis(
+                face_status="—", recognition_status="—", expression_status="—",
+                memory_preview="", turn_route="subagent_ack",
+                visual_truth_trusted=False, vision_status="subagent_ack",
+            )
+            _g["_ava_thinking"] = False
+            return _ack, _vis_sub, _profile_sub, [], {"subagent_ack": True}
+    except Exception as _se:
+        print(f"[run_ava] subagent error (non-fatal): {_se!r}")
+
     # Set thinking flag — UI uses this to show fast blue pulse animation
     _g["_ava_thinking"] = True
     _g["_ava_thinking_since"] = time.time()
