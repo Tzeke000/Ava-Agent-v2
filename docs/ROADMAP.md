@@ -41,6 +41,16 @@ Set up of Claude Code's own external memory at `D:\ClaudeCodeMemory\` (separate 
 - ✅ **Phase B — Graphify (`graphifyy` v0.7.5).** `graphify update D:\AvaAgentv2` extracts AST from 283 files → 4,248 nodes + 8,248 edges. Output mirrored from `D:\AvaAgentv2\graphify-out\` (gitignored) to vault at `D:\ClaudeCodeMemory\graphify\ava-agent-v2\`. Manual updater at `scripts\update_graphify.bat`. **Token reduction measured: 119.7x avg vs naive corpus reading** (per-question 86-192x range).
 - ⏸️ **Phase C — mem0 / Qdrant / Neo4j.** Deferred. Hardware baseline: VRAM at 91.5% utilization with llava:13b resident, only 354 MiB free. mem0's reuse of `nomic-embed-text` would force Ollama to page out `ava-personal:latest` on every memory write/query, landing 30-90 s latency cost in the next voice turn. Cost/benefit wrong vs Phase A+B's already-shipped value. Full reasoning in `D:\ClaudeCodeMemory\decisions\mem0-deferred.md`. Revisit when (a) hardware ceiling raises, (b) a Qdrant-only mem0 MCP without Neo4j or external embedding swaps emerges, or (c) the vault grows past ~500 notes and grep-over-markdown stops being sufficient.
 
+### Voice pipeline follow-ups from Session A test (2026-05-04 ⏸️ filed)
+
+Three concrete items surfaced from the Session A voice E2E run:
+
+1. **Test driver: track grace period from Ava's `_last_speak_end_ts` not driver's own capture time.** Voice_loop already gates attentive correctly (resets when TTS completes); my driver was timing from when its own `listen_for_ava_until_quiet` finished. Fix: poll `/api/v1/debug/full` for `voice_loop._last_speak_end_ts` between turns, use it for `in_grace = (now - speak_end < 60)` decision. Same `verify_session_*.py` drivers — small change.
+
+2. **Verify Ava actually completes tasks, not just acknowledges them.** Driver should call `find_window_candidates(name)` after each `cu_open_app`/`cu_close_app` and confirm the target window exists/disappeared. Currently only verifies Ava's SPOKEN reply matched expectation. Important for catching cases where Ava says "Opening Chrome" but the launch silently fails.
+
+3. **Voice command latency optimization for deep-path turns.** Routed commands (open/close apps, time, mood) hit the voice_command_router fast path and return in 2-5s — fine. Conversational turns (weather, knowledge, philosophical) go through `run_ava` and currently take 60-120s+ because of model swap penalties + LLM gen latency. Investigate: keep ava-personal:latest pinned for chat, route knowledge-lookup to a separate light path (cached web result OR small fact-only model), streamlined prompt building (skip heavy memory/perception enrichment for simple Q&A).
+
 ### Phase A bug fixes + Phase B Session A inject-verified (2026-05-04 — A done, B partial)
 
 5 Phase A fixes shipped: autonomous greeting (B+C combo from prior bug note), 1-min wake-word grace period (60s in voice_tuning.json), source attribution at all 3 layers (storage already worked, UI now renders source label, /api/v1/chat accepts as_user param), camera feed redundancy (consolidated to sharedCameraSrc), orb state shape canonical doc.
