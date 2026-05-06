@@ -80,6 +80,96 @@ def _wait_sleep_state(target: set, timeout_s: float) -> dict:
 
 # ── Side-effect verification helpers ──────────────────────────────────────
 
+_VERIFY_SCREENSHOT_DIR = Path("D:/ClaudeCodeMemory/sessions/verify-screenshots")
+
+
+def _capture_screenshot(label: str) -> str | None:
+    """Save a screenshot of the current screen for visual evidence (A8).
+
+    Returns the path written, or None on failure. Used after open/close
+    actions so when verification disagrees with Ava's apparent reply,
+    we can SEE what was actually on screen.
+    """
+    try:
+        _VERIFY_SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        safe = re.sub(r"[^a-zA-Z0-9_-]+", "-", label)[:60]
+        out_path = _VERIFY_SCREENSHOT_DIR / f"{ts}-{safe}.png"
+        try:
+            import pyautogui
+            img = pyautogui.screenshot()
+            img.save(str(out_path))
+            return str(out_path)
+        except Exception:
+            pass
+        # Fallback to PIL ImageGrab (Windows-native).
+        try:
+            from PIL import ImageGrab
+            img = ImageGrab.grab()
+            img.save(str(out_path))
+            return str(out_path)
+        except Exception:
+            pass
+        # Fallback to mss.
+        try:
+            import mss
+            with mss.mss() as sct:
+                sct.shot(output=str(out_path))
+            return str(out_path)
+        except Exception:
+            pass
+        return None
+    except Exception as e:
+        print(f"[verify] screenshot({label!r}) error: {e!r}", flush=True)
+        return None
+
+
+def _foreground_window_info() -> dict[str, object]:
+    """Return info about the currently focused window."""
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        hwnd = int(user32.GetForegroundWindow())
+        if not hwnd:
+            return {}
+        length = user32.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buf, length + 1)
+        title = buf.value or ""
+        pid = ctypes.c_ulong(0)
+        user32.GetWindowThreadProcessId(ctypes.c_void_p(hwnd), ctypes.byref(pid))
+        proc_name = ""
+        try:
+            import psutil
+            proc_name = (psutil.Process(int(pid.value)).name() or "").lower()
+        except Exception:
+            pass
+        return {"hwnd": hwnd, "title": title, "pid": int(pid.value), "process_name": proc_name}
+    except Exception:
+        return {}
+
+
+def _foreground_matches(name: str) -> bool:
+    """True if the currently-focused window's process matches `name`."""
+    try:
+        from tools.system.app_launcher import _resolve_app
+        from pathlib import Path as _P
+        exe_path, canonical = _resolve_app(name)
+        target_exe = ""
+        if exe_path and isinstance(exe_path, str):
+            target_exe = _P(exe_path).name.lower()
+        elif canonical:
+            target_exe = f"{canonical}.exe"
+        fg = _foreground_window_info()
+        if not fg:
+            return False
+        if target_exe:
+            return fg.get("process_name", "").lower() == target_exe
+        return name.lower() in (fg.get("title") or "").lower()
+    except Exception:
+        return False
+
+
 def _windows_for(name: str) -> list[dict]:
     """Find windows belonging to the target app — match by PROCESS exe,
     not just title substring. The substring check produced false positives
@@ -166,13 +256,36 @@ def _verify(kind: str, target: str, reply: str, prompt: str, ctx: dict) -> dict:
     v = {"verified": None, "details": ""}
     if kind == "open_app":
         wins = _windows_for(target)
+        fg_match = _foreground_matches(target)
         v["verified"] = bool(wins)
-        v["details"] = f"{len(wins)} window(s) found for {target!r}"
+        v["details"] = (
+            f"{len(wins)} window(s) found for {target!r}; "
+            f"foreground_match={fg_match}"
+        )
+        # A8: capture screenshot — always for open_app turns. Lets us
+        # see what was actually on screen when verification ran. Saves
+        # to D:/ClaudeCodeMemory/sessions/verify-screenshots/.
+        try:
+            shot = _capture_screenshot(f"open-{target}-{'pass' if wins else 'fail'}")
+            if shot:
+                v["screenshot"] = shot
+                v["details"] += f"; screenshot={shot}"
+        except Exception:
+            pass
         ctx["last_opened_app"] = target if wins else ctx.get("last_opened_app")
     elif kind == "close_app":
         wins = _windows_for(target)
         v["verified"] = (len(wins) == 0)
         v["details"] = f"{len(wins)} window(s) remain for {target!r}"
+        # A8: only screenshot on FAILED closes — to see what's still up.
+        if wins:
+            try:
+                shot = _capture_screenshot(f"close-{target}-FAIL-{len(wins)}-still-up")
+                if shot:
+                    v["screenshot"] = shot
+                    v["details"] += f"; screenshot={shot}"
+            except Exception:
+                pass
     elif kind == "dedup_check":
         # Reply should indicate already-open. App should have ONLY ONE window.
         wins = _windows_for(target)
