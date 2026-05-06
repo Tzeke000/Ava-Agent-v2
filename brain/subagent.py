@@ -143,16 +143,25 @@ def _run_in_background(text: str, g: dict[str, Any]) -> None:
     if not reply:
         return
 
+    # B4: wrap reply with confidence-appropriate caveat. Subagent
+    # answers from LLM training data unless we explicitly looked it
+    # up. Default to "training" source which yields medium confidence
+    # + "that's from my training data" tail note.
+    try:
+        from brain.confidence import wrap_for_source
+        reply_with_caveat = wrap_for_source(reply, source_kind="training")
+    except Exception:
+        reply_with_caveat = reply
+
     # Speak via TTS worker.
     worker = g.get("_tts_worker")
     if worker is not None and getattr(worker, "available", False):
         try:
-            preface = "Okay, I looked that up. "
-            worker.speak(preface + reply, emotion="curiosity", intensity=0.5, blocking=False)
+            worker.speak(reply_with_caveat, emotion="curiosity", intensity=0.5, blocking=False)
         except Exception as e:
             print(f"[subagent] TTS speak error: {e!r}")
 
-    _persist_assistant(g, reply, model="ava-personal:latest")
+    _persist_assistant(g, reply_with_caveat, model="ava-personal:latest")
 
 
 def delegate(text: str, g: dict[str, Any]) -> str:
