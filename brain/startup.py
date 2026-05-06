@@ -604,6 +604,13 @@ def run_startup(g: dict[str, Any]) -> None:
         print(f"[llava] check failed: {e}")
         g["_llava_model_name"] = None
 
+    print("[startup] step: safety / boundary layer (skeleton)")
+    try:
+        from brain.safety_layer import configure_safety
+        configure_safety(g)
+    except Exception as _se:
+        print(f"[safety_layer] configure failed: {_se!r}")
+
     print("[startup] step: telemetry (pipeline-stage timing)")
     try:
         from brain.telemetry import configure_telemetry

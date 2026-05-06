@@ -2153,6 +2153,22 @@ def create_app():
         # the schema. Used by tools/dev/dump_debug.py and the regression test.
         return build_debug_full(_g())
 
+    @app.get("/api/v1/debug/safety_decisions")
+    def debug_safety_decisions(limit: int = 50) -> dict[str, Any]:
+        """Recent safety/boundary layer decisions. Today the layer is
+        skeleton — every action gets EXECUTE by default. Future rules
+        will surface declines / ask-backs / defers here."""
+        try:
+            from brain.safety_layer import safety
+            return {
+                "ok": True,
+                "limit": int(limit),
+                "summary": safety.summary(),
+                "decisions": safety.recent_decisions(limit=int(limit)),
+            }
+        except Exception as e:
+            return {"ok": False, "error": repr(e)[:200]}
+
     @app.get("/api/v1/debug/turn_timings")
     def debug_turn_timings(limit: int = 20) -> dict[str, Any]:
         """A6: pipeline-stage telemetry surface.
