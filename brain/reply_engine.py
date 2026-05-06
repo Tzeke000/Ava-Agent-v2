@@ -132,6 +132,24 @@ def run_ava(
     active_person_id = active_person_id or _av.get_active_person_id()
     _trace(f"re.active_person_resolved ms={int((time.time()-_person_t0)*1000)}")  # TRACE-PHASE1
     _inp = (user_input or "").strip()
+
+    # ── A6: Pipeline-stage telemetry ─────────────────────────────────────────
+    # Each turn gets a telemetry record with timing per stage. Lets us
+    # answer "what was slow about that turn?" without log-grepping.
+    _turn_id = ""
+    try:
+        from brain.telemetry import telemetry as _telemetry
+        _turn_source = str(_g.get("_wake_source") or "unknown")
+        _turn_id = _telemetry.start_turn(
+            input_text=_inp,
+            source=_turn_source,
+            person_id=str(active_person_id or ""),
+        )
+        _g["_telemetry_turn_id"] = _turn_id
+        _telemetry.mark(_turn_id, "router_entry")
+    except Exception as _te:
+        print(f"[run_ava] telemetry start failed: {_te!r}")
+
     _g["_last_user_interaction_ts"] = time.time()
     _g["_last_user_message_ts"] = time.time()
     _g["_last_user_input"] = _inp
@@ -220,6 +238,12 @@ def run_ava(
                 # handler's "Beaufort, SC: 55°F" got trimmed to empty and the
                 # caller saw "I'm here." (Phase B retry 2026-05-05). Skip the
                 # scrub for voice command responses; trust the handler.
+                try:
+                    from brain.telemetry import telemetry as _tm
+                    _tm.mark(_turn_id, "voice_command_match")
+                    _tm.end_turn(_turn_id, reply_chars=len(_response or ""), route="voice_command", ok=True)
+                except Exception:
+                    pass
                 return _response, _vis_vc, _profile_vc, [], {"voice_command": True}
     except Exception as _vce:
         print(f"[run_ava] voice_command router error (non-fatal): {_vce!r}")
@@ -278,6 +302,12 @@ def run_ava(
             _g["_ava_thinking"] = False
             # Same trust as voice_command path: handler-controlled string,
             # skip the LLM-thought-tail scrubber.
+            try:
+                from brain.telemetry import telemetry as _tm
+                _tm.mark(_turn_id, "action_tag_match")
+                _tm.end_turn(_turn_id, reply_chars=len(_at_response or ""), route="action_tag", ok=True)
+            except Exception:
+                pass
             return _at_response, _vis_at, _profile_at, [], {"action_tag": True}
     except Exception as _ate:
         print(f"[run_ava] action_tag_router error (non-fatal): {_ate!r}")
@@ -328,6 +358,12 @@ def run_ava(
                 visual_truth_trusted=False, vision_status="subagent_ack",
             )
             _g["_ava_thinking"] = False
+            try:
+                from brain.telemetry import telemetry as _tm
+                _tm.mark(_turn_id, "subagent_delegated")
+                _tm.end_turn(_turn_id, reply_chars=len(_ack or ""), route="subagent_ack", ok=True)
+            except Exception:
+                pass
             return _ack, _vis_sub, _profile_sub, [], {"subagent_ack": True}
     except Exception as _se:
         print(f"[run_ava] subagent error (non-fatal): {_se!r}")
@@ -384,6 +420,11 @@ def run_ava(
         # + LLM. Target: sub-5-second response for "hey ava" style inputs.
         if _is_simple_question(_inp):
             _trace("re.run_ava.fast_path_entered")  # TRACE-PHASE1
+            try:
+                from brain.telemetry import telemetry as _tm_fp
+                _tm_fp.mark(_turn_id, "fast_path_entered")
+            except Exception:
+                pass
             try:
                 _g["_inner_state_line"] = "thinking — fast path"
             except Exception:
@@ -520,6 +561,11 @@ def run_ava(
                 from brain.ollama_lock import with_ollama
                 print(f"[perf] fast pre-invoke {_elapsed()} model={_fast_model}")
                 _trace(f"re.ollama_invoke_start fast model={_fast_model}")  # TRACE-PHASE1
+                try:
+                    from brain.telemetry import telemetry as _tm_lf
+                    _tm_lf.mark(_turn_id, "llm_invoke_start", model=str(_fast_model), path="fast")
+                except Exception:
+                    pass
                 _fast_invoke_t0 = time.time()  # TRACE-PHASE1
 
                 # Streaming chunked path (Component 1 of conversational naturalness).
@@ -655,6 +701,16 @@ def run_ava(
                 if _profile_for_fp is None:
                     _profile_for_fp = _av.load_profile_by_id(active_person_id)
                 _trace(f"re.run_ava.return path=fast ms={int((time.time()-_t_start)*1000)}")  # TRACE-PHASE1
+                try:
+                    from brain.telemetry import telemetry as _tm_fpr
+                    _tm_fpr.end_turn(
+                        _turn_id,
+                        reply_chars=len(_reply_text or ""),
+                        route="fast_path",
+                        ok=True,
+                    )
+                except Exception:
+                    pass
                 return _reply_text, _vis_fast, _profile_for_fp, [], {"fast_path": True}
             except Exception as _fpe:
                 print(f"[run_ava] FAST PATH error: {_fpe!r} — falling through to normal path")
@@ -933,6 +989,11 @@ def run_ava(
             print(f"[perf] pre-invoke {_elapsed()} model={_used_model_label}")
             from brain.ollama_lock import with_ollama
             _trace(f"re.ollama_invoke_start deep model={_used_model_label}")  # TRACE-PHASE1
+            try:
+                from brain.telemetry import telemetry as _tm_ld
+                _tm_ld.mark(_turn_id, "llm_invoke_start", model=str(_used_model_label), path="deep")
+            except Exception:
+                pass
             _deep_invoke_t0 = time.time()  # TRACE-PHASE1
 
             # ── Streaming deep-path (Jarvis-pattern, 2026-05-05) ─────────────
@@ -1132,6 +1193,17 @@ def run_ava(
         _vroute = isinstance(visual, dict) and visual.get("turn_route")
         print(f"[run_ava] step: finalize_ava_turn route={_vroute or 'llm'} path={'fast' if use_fast_path else 'deep'} (t={time.time()-_t_start:.2f}s)")
         _trace(f"re.run_ava.return path={'fast' if use_fast_path else 'deep'} ms={int((time.time()-_t_start)*1000)}")  # TRACE-PHASE1
+        try:
+            from brain.telemetry import telemetry as _tm_main
+            _tm_main.end_turn(
+                _turn_id,
+                reply_chars=len(ai_reply or ""),
+                route=("fast" if use_fast_path else "deep"),
+                model=str(_g.get("_last_invoked_model") or ""),
+                ok=True,
+            )
+        except Exception:
+            pass
         return finalize_ava_turn(
             user_input, ai_reply, visual, active_profile, actions, turn_route=_vroute or "llm"
         )
