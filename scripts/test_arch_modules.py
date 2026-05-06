@@ -1,0 +1,489 @@
+"""Standalone tests for architecture modules shipped 2026-05-06.
+
+Runs without Ava being up. Tests imports, basic API correctness,
+edge cases. Can't test runtime integration (that needs Ava +
+actual voice loop), but verifies the modules are correctly
+structured and their APIs work.
+
+Run: py -3.11 scripts/test_arch_modules.py
+"""
+from __future__ import annotations
+
+import sys
+import time
+import traceback
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+PASS = 0
+FAIL = 0
+ERRORS: list[str] = []
+
+
+def check(name: str, condition: bool, detail: str = "") -> None:
+    global PASS, FAIL
+    if condition:
+        PASS += 1
+        print(f"  PASS  {name}")
+    else:
+        FAIL += 1
+        msg = f"  FAIL  {name}"
+        if detail:
+            msg += f" -- {detail}"
+        print(msg)
+        ERRORS.append(f"{name}: {detail or 'condition false'}")
+
+
+def section(title: str) -> None:
+    print()
+    print(f"=== {title} ===")
+
+
+def safe_run(test_name: str, fn) -> None:
+    try:
+        fn()
+    except Exception as e:
+        global FAIL
+        FAIL += 1
+        tb = traceback.format_exc()
+        ERRORS.append(f"{test_name}: EXCEPTION {e!r}\n{tb}")
+        print(f"  FAIL  {test_name} -- EXCEPTION: {e!r}")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# state_classification
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_state_classification() -> None:
+    section("state_classification")
+    from brain.state_classification import (
+        classify, is_persistent, is_ephemeral, is_derived, regen_source,
+        all_known, report,
+    )
+    check("classify('chat_history.jsonl') == 'persistent'",
+          classify("chat_history.jsonl") == "persistent")
+    check("classify('ava.pid') == 'ephemeral'",
+          classify("ava.pid") == "ephemeral")
+    check("classify('fts_memory.db') == 'derived'",
+          classify("fts_memory.db") == "derived")
+    check("classify('something_unknown.json') is None",
+          classify("something_unknown.json") is None)
+    check("is_persistent('skills') is True",
+          is_persistent("skills") is True)
+    check("is_ephemeral('crash_log.txt') is True",
+          is_ephemeral("crash_log.txt") is True)
+    check("is_derived('discovered_apps.json') is True",
+          is_derived("discovered_apps.json") is True)
+    check("regen_source('fts_memory.db') is non-empty",
+          bool(regen_source("fts_memory.db")))
+    # all_known() may have key overlap across categories (e.g. "learning"
+    # appears as both directory and aggregated summaries). >= 70 is safe.
+    check("all_known() returns >= 70 unique entries",
+          len(all_known()) >= 70, f"got {len(all_known())}")
+
+    # Test report against actual state dir
+    import os
+    listing = os.listdir(ROOT / "state")
+    r = report(listing)
+    check("report includes all 4 categories",
+          set(r.keys()) == {"persistent", "ephemeral", "derived", "unclassified"})
+    check("no unclassified entries in real state dir",
+          len(r["unclassified"]) == 0,
+          f"unclassified: {r['unclassified']}")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# safety_layer
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_safety_layer() -> None:
+    section("safety_layer")
+    from brain.safety_layer import (
+        SafetyLayer, Action, Decision, trust_of, is_high_impact,
+    )
+    layer = SafetyLayer()
+
+    # Default behavior: no rules -> execute
+    action = Action(
+        action_type="open_app",
+        target="chrome",
+        source_user="zeke",
+        impact_level="low",
+    )
+    decision = layer.evaluate(action, {})
+    check("default decision is execute",
+          decision.kind == "execute")
+    check("default rule_name is 'default'",
+          decision.rule_name == "default")
+
+    # Register a rule that declines
+    def decline_rule(act, g):
+        if act.action_type == "delete_file":
+            return Decision(kind="decline", rule_name="decline_rule",
+                          reason="testing", spoken_reply="No.")
+        return None
+
+    layer.register("decline_rule", decline_rule)
+
+    decision2 = layer.evaluate(
+        Action(action_type="delete_file", target="x", source_user="zeke"), {}
+    )
+    check("registered rule fires for matching action",
+          decision2.kind == "decline" and decision2.spoken_reply == "No.")
+
+    decision3 = layer.evaluate(
+        Action(action_type="open_app", target="x", source_user="zeke"), {}
+    )
+    check("non-matching action falls through to default",
+          decision3.kind == "execute")
+
+    # trust_of
+    check("trust_of(zeke) == high",
+          trust_of(Action(action_type="x", source_user="zeke"), {}) == "high")
+    check("trust_of(claude_code) == high",
+          trust_of(Action(action_type="x", source_user="claude_code"), {}) == "high")
+    check("trust_of(unknown) == unknown",
+          trust_of(Action(action_type="x", source_user="rando"), {}) == "unknown")
+
+    # is_high_impact
+    check("is_high_impact(low) == False",
+          not is_high_impact(Action(action_type="x", impact_level="low")))
+    check("is_high_impact(critical) == True",
+          is_high_impact(Action(action_type="x", impact_level="critical")))
+
+    # Decisions log
+    decisions = layer.recent_decisions(limit=10)
+    check("decisions log captured >=3 entries",
+          len(decisions) >= 3)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# decision_router
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_decision_router() -> None:
+    section("decision_router")
+    from brain.decision_router import (
+        DecisionRouter, Handler, HandlerResult, TurnContext,
+        build_turn_context_from_run_ava,
+    )
+
+    router = DecisionRouter()
+
+    # Empty router returns None
+    ctx = build_turn_context_from_run_ava(
+        "hello", {}, "zeke", turn_id="t1", source="test"
+    )
+    check("empty router returns None",
+          router.dispatch(ctx) is None)
+
+    # Register a handler that always claims
+    class AlwaysHandler(Handler):
+        @property
+        def name(self) -> str:
+            return "always"
+        def try_handle(self, ctx):
+            return HandlerResult(reply="claimed", route="always")
+
+    router.register(AlwaysHandler())
+    result = router.dispatch(ctx)
+    check("registered always-handler claims",
+          result is not None and result.reply == "claimed")
+    check("route auto-set to handler name",
+          result.route == "always")
+
+    # Register a deferring handler in front (should defer)
+    class DeferHandler(Handler):
+        @property
+        def name(self) -> str:
+            return "defer"
+        def try_handle(self, ctx):
+            return None
+
+    router2 = DecisionRouter()
+    router2.register(DeferHandler())
+    router2.register(AlwaysHandler())
+    result2 = router2.dispatch(ctx)
+    check("deferring handler falls through to next",
+          result2 is not None and result2.route == "always")
+
+    # TurnContext convenience
+    check("ctx.normalized_input strips trailing punctuation",
+          TurnContext(user_input="Hello?", g={}, active_person_id="zeke").normalized_input == "hello")
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# telemetry
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_telemetry() -> None:
+    section("telemetry")
+    from brain.telemetry import Telemetry
+
+    t = Telemetry()
+
+    # Don't configure -> no persistence
+    turn_id = t.start_turn(input_text="open chrome", source="voice", person_id="zeke")
+    check("start_turn returns non-empty id",
+          bool(turn_id))
+    t.mark(turn_id, "router_entry")
+    time.sleep(0.01)
+    t.mark(turn_id, "voice_command_match", model="regex")
+    t.end_turn(turn_id, reply_chars=20, route="voice_command", ok=True)
+
+    recent = t.recent(limit=10)
+    check("recent() returns the just-completed turn",
+          len(recent) == 1)
+    rec = recent[0]
+    check("recorded turn has 2 stages",
+          len(rec.get("stages", [])) == 2)
+    check("recorded turn has route",
+          rec.get("route") == "voice_command")
+    check("recorded turn has duration_ms > 0",
+          (rec.get("duration_ms") or 0) > 0)
+
+    summary = t.summary()
+    check("summary count matches",
+          summary.get("count") == 1)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# lifecycle
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_lifecycle() -> None:
+    section("lifecycle")
+    from brain.lifecycle import Lifecycle, BEHAVIOR_HINTS
+
+    lc = Lifecycle()
+    check("default state is booting",
+          lc.current() == "booting")
+    check("booting has respond_to_voice=False",
+          lc.hint("respond_to_voice") is False)
+
+    lc.transition("alive_attentive", reason="test")
+    check("transition to alive_attentive works",
+          lc.current() == "alive_attentive")
+    check("alive_attentive has respond_to_voice=True",
+          lc.hint("respond_to_voice") is True)
+
+    lc.transition("drifting", reason="boredom")
+    check("drifting allows play_mode",
+          lc.hint("play_mode_allowed") is True)
+    check("alive_attentive does NOT allow play_mode",
+          BEHAVIOR_HINTS["alive_attentive"]["play_mode_allowed"] is False)
+
+    history = lc.history()
+    check("transition history captured 2 entries",
+          len(history) == 2)
+
+    # Listener test
+    triggered = []
+    def listener(old, new):
+        triggered.append((old, new))
+    lc.on_change(listener)
+    lc.transition("sleeping", reason="test_listener")
+    check("listener fired on transition",
+          len(triggered) == 1 and triggered[0] == ("drifting", "sleeping"))
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# provenance
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_provenance() -> None:
+    section("provenance")
+    from brain.provenance import ProvenanceGraph
+
+    p = ProvenanceGraph()  # not configured -> no persistence
+
+    cid1 = p.record_claim(
+        "Polar bears are the largest land predator",
+        "training",
+        confidence=0.85,
+    )
+    check("record_claim returns non-empty id",
+          bool(cid1))
+    cid2 = p.record_claim(
+        "Zeke prefers shorter replies",
+        "user_told",
+        person_id="zeke",
+        source_ref="2026-05-06 morning",
+        confidence=0.95,
+    )
+
+    check("lookup returns the right record",
+          p.lookup(cid2).claim == "Zeke prefers shorter replies")
+
+    # Search
+    results = p.search("polar")
+    check("search finds polar bear claim",
+          len(results) == 1 and "Polar" in results[0].claim)
+
+    # describe_source for various kinds
+    desc1 = p.describe_source(cid1)
+    check("describe training source",
+          "training" in desc1.lower())
+
+    desc2 = p.describe_source(cid2)
+    check("describe user_told source",
+          "told me directly" in desc2.lower())
+
+    summary = p.summary()
+    check("summary count == 2",
+          summary["count"] == 2)
+    check("summary has training in by_kind",
+          summary["by_kind"].get("training") == 1)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# memory_hierarchy
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_memory_hierarchy() -> None:
+    section("memory_hierarchy")
+    from brain.memory_hierarchy import (
+        l1_set, l1_get, l1_clear, l1_keys,
+        consolidation_status,
+    )
+
+    l1_clear()
+    check("l1_keys() starts empty",
+          len(l1_keys()) == 0)
+
+    l1_set("current_topic", "ava architecture")
+    l1_set("active_task", "decision router")
+    check("l1_get retrieves stored value",
+          l1_get("current_topic") == "ava architecture")
+    check("l1_keys() reflects sets",
+          set(l1_keys()) == {"current_topic", "active_task"})
+
+    l1_clear()
+    check("l1_clear empties the store",
+          len(l1_keys()) == 0)
+
+    # consolidation_status produces sensible output
+    status = consolidation_status(ROOT)
+    check("consolidation_status has 5 layers",
+          set(status.keys()) == {"L1_working", "L2_episodic", "L3_semantic",
+                                  "L4_procedural", "L5_identity"})
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# claude_code_recognition
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_claude_code_recognition() -> None:
+    section("claude_code_recognition")
+    from brain.claude_code_recognition import (
+        is_claude_code_session, looks_like_session_start_for_claude_code,
+        compose_claude_code_greeting, mark_claude_code_seen,
+        maybe_prefix_with_greeting, claude_code_register_hint,
+    )
+
+    check("is_claude_code_session('claude_code') True",
+          is_claude_code_session("claude_code"))
+    check("is_claude_code_session('Claude_Code') True (case insensitive)",
+          is_claude_code_session("Claude_Code"))
+    check("is_claude_code_session('zeke') False",
+          not is_claude_code_session("zeke"))
+    check("is_claude_code_session(None) False",
+          not is_claude_code_session(None))
+
+    g = {}
+    check("first interaction -> greet",
+          looks_like_session_start_for_claude_code(g))
+
+    greeting = compose_claude_code_greeting(g)
+    check("greeting non-empty",
+          bool(greeting) and len(greeting) > 5)
+
+    mark_claude_code_seen(g)
+    check("after mark_seen, cooldown active",
+          not looks_like_session_start_for_claude_code(g))
+
+    g2 = {}
+    out = maybe_prefix_with_greeting("Opening Chrome.", g2)
+    check("prefix wraps greeting before reply",
+          "Opening Chrome." in out and out != "Opening Chrome.")
+
+    out2 = maybe_prefix_with_greeting("Opening Chrome.", g2)
+    check("subsequent call doesn't re-greet",
+          out2 == "Opening Chrome.")
+
+    hint = claude_code_register_hint()
+    check("register hint mentions Claude Code",
+          "Claude Code" in hint)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# constraints_honesty (B8)
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_constraints_honesty() -> None:
+    section("constraints_honesty (B8)")
+    from brain.constraints_honesty import (
+        detect_constraint_query, answer_constraint_query,
+    )
+
+    check("detect 'can you see my screen' -> see screen / can",
+          detect_constraint_query("can you see my screen?") == ("see screen", "can"))
+    check("detect 'do you have access to the internet' -> internet / can't",
+          detect_constraint_query("do you have access to the internet")[0] == "internet")
+    check("detect 'do you remember things' -> remember / can",
+          detect_constraint_query("do you remember things?") == ("remember", "can"))
+    check("detect 'random question' -> None",
+          detect_constraint_query("random question with no constraint pattern") is None)
+
+    a1 = answer_constraint_query("can you see my screen?")
+    check("answer for 'see screen' includes 'screenshot'",
+          a1 and "screenshot" in a1.lower())
+
+    a2 = answer_constraint_query("can you make a phone call?")
+    check("answer for 'phone' is decline",
+          a2 and ("can't" in a2.lower() or "cannot" in a2.lower()))
+
+    a3 = answer_constraint_query("nope, just chat")
+    check("answer for non-pattern is None",
+          a3 is None)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Run all
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def main() -> int:
+    safe_run("state_classification", test_state_classification)
+    safe_run("safety_layer", test_safety_layer)
+    safe_run("decision_router", test_decision_router)
+    safe_run("telemetry", test_telemetry)
+    safe_run("lifecycle", test_lifecycle)
+    safe_run("provenance", test_provenance)
+    safe_run("memory_hierarchy", test_memory_hierarchy)
+    safe_run("claude_code_recognition", test_claude_code_recognition)
+    safe_run("constraints_honesty", test_constraints_honesty)
+
+    print()
+    print(f"=== Results: PASS={PASS}  FAIL={FAIL} ===")
+    if ERRORS:
+        print()
+        print("Failures:")
+        for e in ERRORS:
+            print(f"  - {e[:300]}")
+    return 0 if FAIL == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

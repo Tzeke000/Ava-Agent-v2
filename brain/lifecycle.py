@@ -176,7 +176,7 @@ class Lifecycle:
                 cb(old, new_state)
             except Exception as e:
                 print(f"[lifecycle] listener error: {e!r}")
-        print(f"[lifecycle] {old} → {new_state} ({reason or 'no reason'})")
+        print(f"[lifecycle] {old} -> {new_state} ({reason or 'no reason'})")
 
     def on_change(self, callback) -> None:
         """Register a callback fired on every transition."""
