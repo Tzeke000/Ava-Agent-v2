@@ -667,6 +667,15 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as _dse:
         print(f"[discretion] configure failed: {_dse!r}")
 
+    print("[startup] step: play (capacity for play, lifecycle-gated)")
+    try:
+        from brain.play import configure as configure_play
+        from pathlib import Path as _P_play
+        _base_for_play = _P_play(g.get("BASE_DIR") or ".")
+        configure_play(_base_for_play)
+    except Exception as _playe:
+        print(f"[play] configure failed: {_playe!r}")
+
     print("[startup] step: creative initiative (idea queue + works)")
     try:
         from brain.creative_initiative import configure as configure_ci

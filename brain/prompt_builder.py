@@ -494,6 +494,23 @@ Respond as Ava.
                         personhood_extras.append(f"INTERLOCUTOR REGISTER: {_cc}")
             except Exception:
                 pass
+            try:
+                from brain.play import should_play_now, playful_register_hint, record_play_event
+                _play_ok, _play_trigger = should_play_now(
+                    _g, user_input, person_id=str(active_person_id or "zeke"),
+                )
+                if _play_ok:
+                    personhood_extras.append(f"PLAY REGISTER: {playful_register_hint(_g, str(active_person_id or 'zeke'))}")
+                    try:
+                        record_play_event(
+                            str(active_person_id or "zeke"),
+                            _play_trigger,
+                            note=user_input[:80],
+                        )
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             if personhood_extras:
                 injected += "\n\n" + "\n".join(personhood_extras)
         except Exception:
