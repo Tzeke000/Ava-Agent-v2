@@ -604,6 +604,15 @@ def run_startup(g: dict[str, Any]) -> None:
         print(f"[llava] check failed: {e}")
         g["_llava_model_name"] = None
 
+    print("[startup] step: self-revision log")
+    try:
+        from brain.self_revision import configure as configure_sr
+        from pathlib import Path as _P_sr
+        _base_for_sr = _P_sr(g.get("BASE_DIR") or ".")
+        configure_sr(_base_for_sr)
+    except Exception as _sre:
+        print(f"[self_revision] configure failed: {_sre!r}")
+
     print("[startup] step: emotional vocabulary (Ava's coined words)")
     try:
         from brain.emotional_vocabulary import configure as configure_ev
