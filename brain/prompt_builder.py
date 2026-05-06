@@ -539,6 +539,13 @@ Respond as Ava.
                     personhood_extras.append(_corr_hint)
             except Exception:
                 pass
+            try:
+                from brain.behavior_patterns import pattern_hint
+                _pat_hint = pattern_hint(person_id=str(active_person_id or "zeke"))
+                if _pat_hint:
+                    personhood_extras.append(_pat_hint)
+            except Exception:
+                pass
             if personhood_extras:
                 injected += "\n\n" + "\n".join(personhood_extras)
         except Exception:
