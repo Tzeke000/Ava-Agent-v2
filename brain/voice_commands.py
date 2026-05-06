@@ -184,6 +184,36 @@ def _builtin(pattern: str) -> Callable[[CommandFn], CommandFn]:
     return deco
 
 
+# ── Constraint honesty (B8) — registered early so it matches BEFORE the
+#    catch-all open/close handlers. When user asks "can you see X / do
+#    you have access to Y", Ava answers transparently from a structured
+#    capability registry instead of confabulating. brain/constraints_honesty.py.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@_builtin(
+    r"\b(?:can|do|are) you "
+    r"(?:see|view|look at|read|hear|access|reach|"
+    r"have access to|connected|online|"
+    r"open (?:apps|programs|games|software)|"
+    r"type|click|"
+    r"remember|recall|feel|"
+    r"(?:make|place) (?:a )?(?:phone )?call|"
+    r"send (?:me )?(?:a )?(?:text|sms|email|tweet|post)|"
+    r"delete (?:my |the )?(?:files|everything|all)|"
+    r"modify (?:my |the )?(?:registry|system))"
+)
+def _cmd_constraint_query(text, m, g):
+    """Honest answer about Ava's constraints. Per Zeke 2026-05-06 / B8."""
+    try:
+        from brain.constraints_honesty import answer_constraint_query
+        answer = answer_constraint_query(text, g)
+        if answer:
+            return answer, "calm"
+    except Exception as e:
+        print(f"[voice_commands] constraint_query error: {e!r}")
+    return "", ""  # decline → fall through to other handlers
+
+
 # ── UI navigation ────────────────────────────────────────────────────────────
 
 @_builtin(r"\b(?:show|open) (?:me )?(?:your )?brain(?: tab)?\b")
