@@ -604,6 +604,15 @@ def run_startup(g: dict[str, Any]) -> None:
         print(f"[llava] check failed: {e}")
         g["_llava_model_name"] = None
 
+    print("[startup] step: emotional vocabulary (Ava's coined words)")
+    try:
+        from brain.emotional_vocabulary import configure as configure_ev
+        from pathlib import Path as _P_ev
+        _base_for_ev = _P_ev(g.get("BASE_DIR") or ".")
+        configure_ev(_base_for_ev)
+    except Exception as _eve:
+        print(f"[emotional_vocabulary] configure failed: {_eve!r}")
+
     print("[startup] step: anchor moments (persistent episodic memory)")
     try:
         from brain.anchor_moments import configure as configure_am
