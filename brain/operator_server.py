@@ -2153,6 +2153,17 @@ def create_app():
         # the schema. Used by tools/dev/dump_debug.py and the regression test.
         return build_debug_full(_g())
 
+    @app.get("/api/v1/debug/memory_layers")
+    def debug_memory_layers() -> dict[str, Any]:
+        """Architectural #3 — diagnostic snapshot of L1-L5 memory layers."""
+        try:
+            from brain.memory_hierarchy import consolidation_status
+            from pathlib import Path as _P_mh
+            base = _P_mh(_g().get("BASE_DIR") or ".")
+            return {"ok": True, "layers": consolidation_status(base)}
+        except Exception as e:
+            return {"ok": False, "error": repr(e)[:200]}
+
     @app.get("/api/v1/debug/provenance")
     def debug_provenance(limit: int = 20, q: str = "") -> dict[str, Any]:
         """Recent provenance records — every claim Ava has marked with a
