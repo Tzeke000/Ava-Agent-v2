@@ -51,6 +51,8 @@ PERSISTENT: dict[str, str] = {
     "journal.jsonl": "Ava's own journal entries",
     "concept_graph.json": "Knowledge graph of facts/concepts/relationships",
     "memory_tombstones.jsonl": "Audit log of pruned memories",
+    "anchor_moments.jsonl": "Persistent episodic anchors — never auto-pruned (D16)",
+    "topic_tabled.json": "Topics Ava has tabled with cooldown (D11)",
     "consolidation_log.jsonl": "Sleep-cycle consolidation history",
     "learning_log.jsonl": "Things Ava has learned (provenance source for skills + concept_graph)",
     "metabolism_log.jsonl": "Memory-as-metabolism trace log",
