@@ -175,40 +175,65 @@ def classify_actions(text: str, *, timeout_s: float = 6.0) -> list[tuple[str, st
 
 
 def _do_open(name: str, g: dict[str, Any]) -> str:
+    """Open `name` and verify the side-effect happened (A1, self-awareness).
+
+    The wrapper produces an honest reply: if opening apparently succeeded
+    but no window appears within a few seconds, returns "I tried to open
+    X but it didn't actually open." Catches the silent-success bugs
+    (Edge .lnk failure, Chrome dedup false-positive, etc).
+    """
     try:
         from brain.voice_commands import _route_open_app
-        ok, msg = _route_open_app(name, g)
+        from brain.post_action_verifier import wrap_open_with_verification
+
+        def _do():
+            ok, msg = _route_open_app(name, g)
+            return ok, (msg or (f"Opening {name}." if ok else f"I couldn't open {name}."))
+
+        ok, msg = wrap_open_with_verification(name, _do)
         if ok:
             # Track last-opened app for "close my last app" pronoun recall.
             g["_last_opened_app"] = name
-        return msg or (f"Opening {name}." if ok else f"I couldn't open {name}.")
+        return msg
     except Exception as e:
         print(f"[action_tag] open_app error: {e!r}")
         return f"I couldn't open {name}."
 
 
 def _do_close(name: str, g: dict[str, Any]) -> str:
+    """Close `name` and verify the windows actually went away (A1)."""
     try:
         from tools.system.app_launcher import _tool_close_app
-        result = _tool_close_app({"app_name": name}, g) or {}
-        if result.get("ok"):
-            display = name.strip().title() if name else "It"
-            return f"{display} is closed."
-        return f"I couldn't close {name}."
+        from brain.post_action_verifier import wrap_close_with_verification
+
+        def _do():
+            result = _tool_close_app({"app_name": name}, g) or {}
+            if result.get("ok"):
+                display = name.strip().title() if name else "It"
+                return True, f"{display} is closed."
+            return False, f"I couldn't close {name}."
+
+        _ok, msg = wrap_close_with_verification(name, _do)
+        return msg
     except Exception as e:
         print(f"[action_tag] close_app error: {e!r}")
         return f"I couldn't close {name}."
 
 
 def _do_type(text: str, g: dict[str, Any]) -> str:
-    """Copy text to clipboard and send Ctrl+V to the focused window."""
+    """Copy text to clipboard and send Ctrl+V to the focused window.
+
+    With A1 self-awareness: verifies clipboard payload after the
+    operation. The Ctrl+V can't be directly verified (would require
+    OCR or app introspection), but we can confirm the clipboard
+    holds what we intended to paste — that's the most we can know
+    cheaply.
+    """
     try:
         from brain.windows_use.primitives import set_clipboard
+        from brain.post_action_verifier import verify_after_type
         if not set_clipboard(text):
             return "I couldn't put that on the clipboard."
-        # Send Ctrl+V to the currently-focused window. We don't focus a
-        # specific window here — the user's last action (e.g., open_app)
-        # should have brought the right window forward.
         try:
             import ctypes
             import ctypes.wintypes as _wt
@@ -223,7 +248,11 @@ def _do_type(text: str, g: dict[str, Any]) -> str:
         except Exception as e:
             print(f"[action_tag] paste keybd error: {e!r}")
             return "I copied that to the clipboard but couldn't paste it."
-        return "Pasted."
+        # A1: verify the clipboard payload matches our intent.
+        result = verify_after_type(text)
+        if result.get("verified"):
+            return "Pasted."
+        return result.get("explanation") or "I tried to paste that, but I'm not sure it landed."
     except Exception as e:
         print(f"[action_tag] type_text error: {e!r}")
         return "I couldn't type that."
