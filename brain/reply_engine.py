@@ -244,6 +244,12 @@ def run_ava(
                     _tm.end_turn(_turn_id, reply_chars=len(_response or ""), route="voice_command", ok=True)
                 except Exception:
                     pass
+                # B5: track topics told to this person.
+                try:
+                    from brain.theory_of_mind import post_turn_record
+                    post_turn_record(str(active_person_id or "zeke"), _response)
+                except Exception:
+                    pass
                 return _response, _vis_vc, _profile_vc, [], {"voice_command": True}
     except Exception as _vce:
         print(f"[run_ava] voice_command router error (non-fatal): {_vce!r}")
@@ -306,6 +312,11 @@ def run_ava(
                 from brain.telemetry import telemetry as _tm
                 _tm.mark(_turn_id, "action_tag_match")
                 _tm.end_turn(_turn_id, reply_chars=len(_at_response or ""), route="action_tag", ok=True)
+            except Exception:
+                pass
+            try:
+                from brain.theory_of_mind import post_turn_record
+                post_turn_record(str(active_person_id or "zeke"), _at_response)
             except Exception:
                 pass
             return _at_response, _vis_at, _profile_at, [], {"action_tag": True}
