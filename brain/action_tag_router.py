@@ -135,11 +135,42 @@ def parse_tags(reply: str) -> list[tuple[str, str | None]]:
     return out
 
 
-def classify_actions(text: str, *, timeout_s: float = 6.0) -> list[tuple[str, str | None]]:
+def _build_context_block(g: dict[str, Any]) -> str:
+    """A4: cross-turn context. Build a small snapshot of recent state so
+    the classifier can resolve pronouns ("close it", "another tab")
+    without losing context across turns.
+
+    Pulls from the per-turn state Ava already tracks (set by _do_open,
+    _do_close, voice_command handlers). Empty string if no useful
+    recent state.
+    """
+    parts = []
+    last_opened = g.get("_last_opened_app")
+    if last_opened:
+        parts.append(f"- last app opened: {last_opened}")
+    last_closed = g.get("_last_closed_app")
+    if last_closed:
+        parts.append(f"- last app closed: {last_closed}")
+    last_action = g.get("_last_action") or {}
+    if isinstance(last_action, dict):
+        kind = str(last_action.get("kind") or "")
+        trigger = str(last_action.get("trigger") or "")
+        if kind and trigger:
+            parts.append(f"- last action: {kind} (trigger: {trigger[:80]!r})")
+    if not parts:
+        return ""
+    return "\nRecent context (use to resolve pronouns like 'it', 'that', 'another', 'last'):\n" + "\n".join(parts)
+
+
+def classify_actions(text: str, *, g: dict[str, Any] | None = None, timeout_s: float = 6.0) -> list[tuple[str, str | None]]:
     """Ask the fast LLM to emit action tags for the user's input.
 
     Returns list of (tag, arg) tuples. Empty list on failure or if the
     model didn't emit any recognized tags.
+
+    A4: when `g` is supplied, prepends a cross-turn context block to
+    the classifier prompt so pronouns resolve naturally ("close it"
+    after opening Chrome → [CLOSE_APP:Chrome]).
     """
     if not (text or "").strip():
         return []
@@ -151,13 +182,15 @@ def classify_actions(text: str, *, timeout_s: float = 6.0) -> list[tuple[str, st
         print(f"[action_tag] import error: {e!r}")
         return []
 
+    context_block = _build_context_block(g) if g else ""
+
     try:
         llm = ChatOllama(
             model="ava-personal:latest",
             temperature=0.0,
             num_predict=80,
         )
-        sys_msg = SystemMessage(content=_ACTION_TAG_SYSTEM_PROMPT)
+        sys_msg = SystemMessage(content=_ACTION_TAG_SYSTEM_PROMPT + context_block)
         user_msg = HumanMessage(content=f'User: "{text.strip()}"\nOutput:')
         t0 = time.time()
         result = with_ollama(
@@ -167,7 +200,7 @@ def classify_actions(text: str, *, timeout_s: float = 6.0) -> list[tuple[str, st
         ms = int((time.time() - t0) * 1000)
         reply = getattr(result, "content", str(result))
         tags = parse_tags(reply)
-        print(f"[action_tag] classified in {ms}ms tags={tags} raw={reply[:120]!r}")
+        print(f"[action_tag] classified in {ms}ms tags={tags} ctx={'yes' if context_block else 'no'} raw={reply[:120]!r}")
         return tags
     except Exception as e:
         print(f"[action_tag] classify error: {e!r}")
@@ -213,7 +246,10 @@ def _do_close(name: str, g: dict[str, Any]) -> str:
                 return True, f"{display} is closed."
             return False, f"I couldn't close {name}."
 
-        _ok, msg = wrap_close_with_verification(name, _do)
+        ok, msg = wrap_close_with_verification(name, _do)
+        if ok:
+            # A4: track for cross-turn pronoun resolution.
+            g["_last_closed_app"] = name
         return msg
     except Exception as e:
         print(f"[action_tag] close_app error: {e!r}")
@@ -372,7 +408,9 @@ def route(text: str, g: dict[str, Any]) -> tuple[bool, str]:
         if handled:
             _try_persist_skill(g, text, shortcut)
         return handled, reply
-    actions = classify_actions(text)
+    # A4: pass `g` so the classifier sees recent context (last opened/
+    # closed app, last action). Lets pronouns resolve.
+    actions = classify_actions(text, g=g)
     if not actions:
         return False, ""
     handled, reply = dispatch_actions(actions, g)
