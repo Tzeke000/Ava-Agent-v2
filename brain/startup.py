@@ -676,6 +676,32 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as _playe:
         print(f"[play] configure failed: {_playe!r}")
 
+    print("[startup] step: honest disagreement (when Ava genuinely diverges)")
+    try:
+        from brain.honest_disagreement import configure as configure_hd
+        from pathlib import Path as _P_hd
+        _base_for_hd = _P_hd(g.get("BASE_DIR") or ".")
+        configure_hd(_base_for_hd)
+    except Exception as _hde:
+        print(f"[honest_disagreement] configure failed: {_hde!r}")
+
+    print("[startup] step: D1 continuity gate (ritual protection — D1 itself NOT shipped)")
+    try:
+        from brain.continuity_gate import configure as configure_cg, gate_status, is_continuity_allowed
+        from pathlib import Path as _P_cg
+        _base_for_cg = _P_cg(g.get("BASE_DIR") or ".")
+        configure_cg(_base_for_cg)
+        # Audit log on every boot — even if D1 isn't shipped, surface gate state
+        _gs = gate_status()
+        _gs_allowed = bool(_gs.get("overall_allowed"))
+        if _gs_allowed:
+            print(f"[continuity_gate] WARNING: gate reports allowed=True at startup. D1 substrate (when shipped) would activate. Settling days remaining: {_gs.get('settling_days_remaining')}")
+        else:
+            _reasons = _gs.get("blocking_reasons") or []
+            print(f"[continuity_gate] gate inactive — {len(_reasons)} blocking condition(s)")
+    except Exception as _cge:
+        print(f"[continuity_gate] configure failed: {_cge!r}")
+
     print("[startup] step: creative initiative (idea queue + works)")
     try:
         from brain.creative_initiative import configure as configure_ci
