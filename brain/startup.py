@@ -604,6 +604,24 @@ def run_startup(g: dict[str, Any]) -> None:
         print(f"[llava] check failed: {e}")
         g["_llava_model_name"] = None
 
+    print("[startup] step: anchor moments (persistent episodic memory)")
+    try:
+        from brain.anchor_moments import configure as configure_am
+        from pathlib import Path as _P_am
+        _base_for_am = _P_am(g.get("BASE_DIR") or ".")
+        configure_am(_base_for_am)
+    except Exception as _ame:
+        print(f"[anchor_moments] configure failed: {_ame!r}")
+
+    print("[startup] step: topic tabling (cognitive autonomy)")
+    try:
+        from brain.topic_tabling import configure as configure_tt
+        from pathlib import Path as _P_tt
+        _base_for_tt = _P_tt(g.get("BASE_DIR") or ".")
+        configure_tt(_base_for_tt)
+    except Exception as _tte:
+        print(f"[topic_tabling] configure failed: {_tte!r}")
+
     print("[startup] step: plugin manifest registry")
     try:
         from brain.plugin_manifest import configure as configure_pm
