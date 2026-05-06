@@ -604,6 +604,13 @@ def run_startup(g: dict[str, Any]) -> None:
         print(f"[llava] check failed: {e}")
         g["_llava_model_name"] = None
 
+    print("[startup] step: plugin manifest registry")
+    try:
+        from brain.plugin_manifest import configure as configure_pm
+        configure_pm()
+    except Exception as _pme:
+        print(f"[plugin_manifest] configure failed: {_pme!r}")
+
     print("[startup] step: feature flags (catalog + overrides)")
     try:
         from brain.feature_flags import configure as configure_flags
