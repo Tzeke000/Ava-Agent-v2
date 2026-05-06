@@ -2153,6 +2153,15 @@ def create_app():
         # the schema. Used by tools/dev/dump_debug.py and the regression test.
         return build_debug_full(_g())
 
+    @app.get("/api/v1/debug/lifecycle")
+    def debug_lifecycle() -> dict[str, Any]:
+        """Architectural #8 — current lifecycle state + history."""
+        try:
+            from brain.lifecycle import lifecycle
+            return {"ok": True, **lifecycle.snapshot()}
+        except Exception as e:
+            return {"ok": False, "error": repr(e)[:200]}
+
     @app.get("/api/v1/debug/memory_layers")
     def debug_memory_layers() -> dict[str, Any]:
         """Architectural #3 — diagnostic snapshot of L1-L5 memory layers."""
