@@ -640,6 +640,33 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as _ape:
         print(f"[aesthetic_preference] configure failed: {_ape!r}")
 
+    print("[startup] step: curiosity research (queue of things to learn)")
+    try:
+        from brain.curiosity_research import configure as configure_cr
+        from pathlib import Path as _P_cr
+        _base_for_cr = _P_cr(g.get("BASE_DIR") or ".")
+        configure_cr(_base_for_cr)
+    except Exception as _cre:
+        print(f"[curiosity_research] configure failed: {_cre!r}")
+
+    print("[startup] step: identity stability (periodic bedrock-vs-narrative audit)")
+    try:
+        from brain.identity_stability import configure as configure_is
+        from pathlib import Path as _P_is
+        _base_for_is = _P_is(g.get("BASE_DIR") or ".")
+        configure_is(_base_for_is)
+    except Exception as _ise:
+        print(f"[identity_stability] configure failed: {_ise!r}")
+
+    print("[startup] step: discretion (per-person privacy graph)")
+    try:
+        from brain.discretion import configure as configure_ds
+        from pathlib import Path as _P_ds
+        _base_for_ds = _P_ds(g.get("BASE_DIR") or ".")
+        configure_ds(_base_for_ds)
+    except Exception as _dse:
+        print(f"[discretion] configure failed: {_dse!r}")
+
     print("[startup] step: creative initiative (idea queue + works)")
     try:
         from brain.creative_initiative import configure as configure_ci
