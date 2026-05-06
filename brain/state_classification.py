@@ -61,6 +61,8 @@ PERSISTENT: dict[str, str] = {
     "creative_ideas.jsonl": "Queue of ideas Ava wants to act on (C13)",
     "creative_works.jsonl": "Things Ava has actually made + surfaced (C13)",
     "async_letters.jsonl": "Ava's letters to persons — composed at leisure (D6)",
+    "mood_snapshots.jsonl": "Periodic mood snapshots for comparative memory (D14)",
+    "aesthetic_preferences.jsonl": "Ava's developing taste — likes/dislikes through exposure (D17)",
     "consolidation_log.jsonl": "Sleep-cycle consolidation history",
     "learning_log.jsonl": "Things Ava has learned (provenance source for skills + concept_graph)",
     "metabolism_log.jsonl": "Memory-as-metabolism trace log",

@@ -622,6 +622,24 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as _eve:
         print(f"[emotional_vocabulary] configure failed: {_eve!r}")
 
+    print("[startup] step: comparative memory (mood snapshots)")
+    try:
+        from brain.comparative_memory import configure as configure_cm
+        from pathlib import Path as _P_cm
+        _base_for_cm = _P_cm(g.get("BASE_DIR") or ".")
+        configure_cm(_base_for_cm)
+    except Exception as _cme:
+        print(f"[comparative_memory] configure failed: {_cme!r}")
+
+    print("[startup] step: aesthetic preference (taste accumulator)")
+    try:
+        from brain.aesthetic_preference import configure as configure_ap
+        from pathlib import Path as _P_ap
+        _base_for_ap = _P_ap(g.get("BASE_DIR") or ".")
+        configure_ap(_base_for_ap)
+    except Exception as _ape:
+        print(f"[aesthetic_preference] configure failed: {_ape!r}")
+
     print("[startup] step: creative initiative (idea queue + works)")
     try:
         from brain.creative_initiative import configure as configure_ci
