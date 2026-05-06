@@ -293,6 +293,13 @@ def finalize_ava_turn(
     except Exception:
         pass
 
+    # C12: auto-tag confidential disclosures from the user's input.
+    try:
+        from brain.discretion import auto_tag_from_user_input
+        auto_tag_from_user_input(str(person_id or "zeke"), str(user_input or ""))
+    except Exception:
+        pass
+
     # D14: snapshot mood for comparative memory.
     try:
         from brain.comparative_memory import snapshot_mood
