@@ -2153,6 +2153,16 @@ def create_app():
         # the schema. Used by tools/dev/dump_debug.py and the regression test.
         return build_debug_full(_g())
 
+    @app.get("/api/v1/debug/resource_budget")
+    def debug_resource_budget() -> dict[str, Any]:
+        """Resource budget tracker (architecture #24) — current
+        commitments + active reservations + per-kind budgets."""
+        try:
+            from brain.resource_budget import status
+            return {"ok": True, **status()}
+        except Exception as e:
+            return {"ok": False, "error": repr(e)[:200]}
+
     @app.get("/api/v1/debug/external_services")
     def debug_external_services() -> dict[str, Any]:
         """Per-service circuit-breaker state (architecture #23)."""
