@@ -694,6 +694,15 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as _ale:
         print(f"[active_learning] configure failed: {_ale!r}")
 
+    print("[startup] step: behavior patterns (observation accumulator)")
+    try:
+        from brain.behavior_patterns import configure as configure_bp
+        from pathlib import Path as _P_bp
+        _base_for_bp = _P_bp(g.get("BASE_DIR") or ".")
+        configure_bp(_base_for_bp)
+    except Exception as _bpe:
+        print(f"[behavior_patterns] configure failed: {_bpe!r}")
+
     print("[startup] step: D1 continuity gate (ritual protection — D1 itself NOT shipped)")
     try:
         from brain.continuity_gate import configure as configure_cg, gate_status, is_continuity_allowed
