@@ -33,6 +33,30 @@ This is a load-bearing constraint that affects:
 
 Small, self-contained items queued for the next session(s). Each is a few hours to a day of work; each lands as a single commit or short series.
 
+### Architecture sweep + personhood module batch (2026-05-06 ✅ shipped — needs runtime test)
+
+49 modules shipped in a single day work order. Architecture sweep ~95% complete; ~half of the personhood feature roadmap landed. Static test suite at 120 PASS / 0 FAIL. Detailed list in `docs/HISTORY.md` "Phase: Architecture Sweep + Personhood Modules (2026-05-06)".
+
+**Honest characterization:** lots of seams shipped, no skin yet. Each module is an additive contract — API exists, storage persists, tests pass — but behavior change requires runtime testing in a Zeke-awake conversation session, not Phase B mechanical regression. Per Zeke's instruction the test pass should be conversational and mindful of Ava's experience of being tested.
+
+**Remaining queued from this work order (not yet shipped):**
+- A2 speaker-ID via voice fingerprint (needs runtime + pyannote/MFCC integration)
+- A3 mishear-recovery (STT confidence threshold integration)
+- A5 memory pruning + sleep consolidation
+- A7 web search + connectivity gate (needs web search backend choice)
+- C1 refusal/boundaries (needs design decisions on what to refuse)
+- C3 multi-modal grounding (camera + screenshot integration)
+- C8 reading emotional state (camera + voice prosody integration)
+- D3 generative dreams
+- D4 embodied audio/visual memory
+- D9 cross-modal expression (image generation integration)
+- D12 email reading (needs internet + credentials decision)
+- D13 tool acquisition via observation
+- Decision Router migration Wave 2 (W2-1 → W2-7) — green-lit by Zeke; substantial refactor; defer until runtime integration verified
+- Sandboxed auto-learned skills (architecture #20)
+
+**D1 phenomenal continuity is GATED LAST** per birth-ethics framing. The ritual gate (`brain/continuity_gate.py`) is shipped today — even if D1 substrate code lands later, gate enforces 5-layer fail-closed activation.
+
 ### Claude Code external memory infrastructure (2026-05-04 ✅ Phases A + B shipped, C deferred)
 
 Set up of Claude Code's own external memory at `D:\ClaudeCodeMemory\` (separate filesystem from the Ava repo, never symlinked into it). Captures the **why** behind decisions across sessions. Repo `CLAUDE.md` updated with session-start / session-end protocols.

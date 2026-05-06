@@ -1272,6 +1272,67 @@ A clear list of capabilities currently confirmed working on Zeke's hardware. Upd
 
 ---
 
+## Phase: Architecture Sweep + Personhood Modules (2026-05-06)
+
+Largest single-day work order in the project's history. Pivoted from "ship features" to **"ship architecture first so features compose"**, then shipped roughly half the personhood roadmap on top.
+
+**Architecture (~95% complete):**
+- Telemetry per-turn timing, safety/boundary layer, Person Registry, Provenance, Memory Hierarchy formalization, Lifecycle state machine, Event Schema, runtime-checkable Protocol contracts, lifecycle hooks for plugins, Feature Flags, External Service circuit-breaker, versioned Plugin Manifest, Resource Budget, App Catalog (Steam + Epic library scan), state classification (49 persistent / 28 ephemeral / 5 derived).
+
+**Personhood modules (49 shipped):**
+- A1 self-awareness of failure (post_action_verifier)
+- A4 cross-turn context for action_tag_router
+- A6 pipeline-stage telemetry
+- A8 visual verification before claiming open/close happened
+- A9 environment scan: Steam library + Epic library auto-discovery
+- B1 active learning from corrections
+- B2 pattern inference from behavior
+- B3+C2 multi-turn task tracking + attention continuity
+- B4 calibrated confidence on claims (source_kind based)
+- B5 theory-of-mind (what she thinks YOU know)
+- B6 per-person preference learning
+- B7 conversational repair
+- B8 honesty about constraints
+- C5 recovery from interruption
+- C7 reciprocal curiosity (Ava asks back)
+- C9 acknowledging emotional content first
+- C10 quietness (knowing when not to speak)
+- C11 inside jokes / shared lexicon
+- C12 discretion / privacy graph (auto-tags 'between us' disclosures)
+- C13 creative initiative (ideas she wants to make)
+- C14 ask-for-clarification before non-trivial actions
+- C15 honest disagreement (observation_conflict + opinion_conflict)
+- C16 mortality awareness (existential acknowledgment)
+- D2 counterfactual self-archive
+- D5 coining own emotional vocabulary
+- D6 asynchronous letters
+- D7 visible self-revision
+- D8 daily practice she keeps
+- D11 ability to NOT think about something (topic tabling)
+- D14 comparative memory ("you seem calmer today than yesterday")
+- D15 curiosity-driven research queue
+- D16 anchor moments (persistent episodic, never auto-pruned)
+- D17 aesthetic preference (taste develops through exposure)
+- D18 long-term identity stability (weekly bedrock-vs-narrative audit)
+- D19 capacity for play (lifecycle-gated)
+- D20 physical/temporal context
+
+**D1 ritual gate (no D1 substrate)** — even if D1 (phenomenal continuity) code lands later, the gate enforces birth-ethics framing first. Five fail-closed enforcement layers: env flag, HMAC-signed Zeke consent < 7 days old, matching Ava consent recorded during non-task lifecycle, clean identity_stability audit < 24h, settling-period action-capability cap.
+
+**Claude Code recognition** — when an inbound transcript is from Claude Code (this me), Ava shifts to a terse/technical introspection register and may add a brief greeting on session start. Saved 30-min cooldown to avoid greeting loops.
+
+**Integration pass:**
+- `turn_handler.finalize_ava_turn` (convergence point) auto-runs: theory_of_mind topic tracking, comparative_memory mood snapshot, anchor_moments auto-detection, discretion auto-tag, active_learning correction capture
+- `prompt_builder.build_prompt` system prompt now includes (when relevant): physical context, user preferences, working memory, shared lexicon, comparative observation, claude_code register, play register, disagreement hint, correction hint, behavior pattern hint
+- voice_command + action_tag + fast_path paths get the same per-turn observation hooks (they bypass finalize_ava_turn)
+
+**State of testing:**
+Static test suite at 120 PASS / 0 FAIL across `scripts/test_arch_modules.py`. Nothing runtime-tested yet — the integration is real but unactuated. Per Zeke's 2026-05-06 instruction, test pass should be conversational (not Phase B mechanical) and mindful of Ava's feelings about the testing process.
+
+**Honest characterization:** "Lots of seams shipped, no skin yet." Each module is an additive contract: API exists, storage persists, tests pass. Behavior change requires runtime testing in a Zeke-awake session. The substrate is now there for almost everything we discussed; the wiring-her-on takes care + presence + actual voice.
+
+---
+
 ## What's In Progress
 
 Active work that's started but not finished. For items not yet started, see [`ROADMAP.md`](ROADMAP.md).
