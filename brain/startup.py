@@ -604,6 +604,15 @@ def run_startup(g: dict[str, Any]) -> None:
         print(f"[llava] check failed: {e}")
         g["_llava_model_name"] = None
 
+    print("[startup] step: person registry (per-person facade)")
+    try:
+        from brain.person_registry import configure_person_registry
+        from pathlib import Path as _P_pr
+        _base_for_pr = _P_pr(g.get("BASE_DIR") or ".")
+        configure_person_registry(_base_for_pr)
+    except Exception as _pre:
+        print(f"[person_registry] configure failed: {_pre!r}")
+
     print("[startup] step: safety / boundary layer (skeleton)")
     try:
         from brain.safety_layer import configure_safety
