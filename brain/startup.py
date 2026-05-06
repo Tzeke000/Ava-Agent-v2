@@ -654,6 +654,29 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as _te:
         print(f"[telemetry] configure failed: {_te!r}")
 
+    print("[startup] step: app catalog (Steam + Epic library scan)")
+    try:
+        from brain.app_catalog import build_catalog, needs_rebuild, summary
+        from pathlib import Path as _P_ac
+        _base_for_ac = _P_ac(g.get("BASE_DIR") or ".")
+        if needs_rebuild(_base_for_ac):
+            # Run in background — Steam scan can take a few seconds on
+            # large libraries; don't block voice-loop bootstrap.
+            def _bg_catalog():
+                try:
+                    s = summary(_base_for_ac)
+                    print(f"[app_catalog] before rebuild: {s.get('total_entries')} entries")
+                    cat = build_catalog(_base_for_ac)
+                    print(f"[app_catalog] rebuilt: {len(cat.get('entries') or [])} entries from {cat.get('sources')}")
+                except Exception as e:
+                    print(f"[app_catalog] background rebuild error: {e!r}")
+            _bg("ava-app-catalog", _bg_catalog)
+        else:
+            s = summary(_base_for_ac)
+            print(f"[app_catalog] cached: {s.get('total_entries')} entries from {s.get('sources')}")
+    except Exception as _ace:
+        print(f"[app_catalog] startup skipped: {_ace!r}")
+
     print("[startup] step: scheduler (reminders watcher)")
     try:
         from brain.scheduler import start_watcher as _start_sched
