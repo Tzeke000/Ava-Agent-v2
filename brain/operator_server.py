@@ -2153,6 +2153,27 @@ def create_app():
         # the schema. Used by tools/dev/dump_debug.py and the regression test.
         return build_debug_full(_g())
 
+    @app.get("/api/v1/debug/provenance")
+    def debug_provenance(limit: int = 20, q: str = "") -> dict[str, Any]:
+        """Recent provenance records — every claim Ava has marked with a
+        source. Optional `q` for substring search over claims."""
+        try:
+            from brain.provenance import provenance
+            from dataclasses import asdict
+            if q:
+                results = [asdict(r) for r in provenance.search(q, limit=int(limit))]
+            else:
+                results = [asdict(r) for r in provenance.recent(limit=int(limit))]
+            return {
+                "ok": True,
+                "limit": int(limit),
+                "query": q,
+                "summary": provenance.summary(),
+                "records": results,
+            }
+        except Exception as e:
+            return {"ok": False, "error": repr(e)[:200]}
+
     @app.get("/api/v1/debug/safety_decisions")
     def debug_safety_decisions(limit: int = 50) -> dict[str, Any]:
         """Recent safety/boundary layer decisions. Today the layer is
