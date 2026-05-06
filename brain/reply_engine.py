@@ -153,6 +153,51 @@ def run_ava(
     _g["_last_user_interaction_ts"] = time.time()
     _g["_last_user_message_ts"] = time.time()
     _g["_last_user_input"] = _inp
+
+    # B6: scan user input for preference-correction signals + persist.
+    # Runs every turn; non-matching inputs are no-ops.
+    try:
+        from brain.preference_learning import learn_from_correction
+        n_prefs = learn_from_correction(str(active_person_id or "zeke"), _inp)
+        if n_prefs > 0:
+            print(f"[preference_learning] recorded {n_prefs} preferences from user input")
+    except Exception as _ple:
+        print(f"[preference_learning] error (non-fatal): {_ple!r}")
+
+    # C11: scan for shared-lexicon definitions ("let's call X Y" etc).
+    try:
+        from brain.shared_lexicon import learn_from_text
+        learned = learn_from_text(str(active_person_id or "zeke"), _inp)
+        if learned:
+            print(f"[shared_lexicon] learned term: {learned[0]!r}")
+    except Exception as _sle:
+        print(f"[shared_lexicon] error (non-fatal): {_sle!r}")
+
+    # B7: conversational repair — if the user has corrected Ava 2+
+    # times in a row, switch register to "let me back up — what did
+    # you actually want?" Short-circuits the normal reply path with
+    # an honest clarification question.
+    try:
+        from brain.conversation_repair import maybe_apply_repair, mark_success, is_correction
+        repair_reply = maybe_apply_repair(_g, _inp)
+        if repair_reply is not None:
+            print(f"[conversation_repair] firing repair register")
+            try:
+                from brain.turn_visual import default_visual_payload as _rep_vis
+                _vis_rep = _rep_vis(
+                    face_status="—", recognition_status="—", expression_status="—",
+                    memory_preview="", turn_route="conversation_repair",
+                    visual_truth_trusted=False, vision_status="conversation_repair",
+                )
+                _profile_rep = _av.load_profile_by_id(active_person_id)
+                _g["_ava_thinking"] = False
+                return repair_reply, _vis_rep, _profile_rep, [], {"conversation_repair": True}
+            except Exception:
+                pass
+        elif not is_correction(_inp):
+            mark_success(_g)
+    except Exception as _cre:
+        print(f"[conversation_repair] error (non-fatal): {_cre!r}")
     _u_low = _inp.lower()
     _g["_desktop_tier3_approved"] = any(
         k in _u_low for k in ("yes do it", "go ahead", "yes, do it", "go ahead and do it")
