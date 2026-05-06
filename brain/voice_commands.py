@@ -198,6 +198,33 @@ def _builtin(pattern: str) -> Callable[[CommandFn], CommandFn]:
     return deco
 
 
+# ── Theory-of-mind: "did you tell me / have we talked about X" (B5) ─────
+
+@_builtin(
+    r"\b(?:did (?:you|we) (?:tell me|talk(?:ed)? about|discuss(?:ed)?)|"
+    r"have we (?:talk(?:ed)? about|discussed)|"
+    r"did i (?:already )?(?:hear|tell you))\s+(.+?)$",
+)
+def _cmd_did_we_discuss(text, m, g):
+    """Answer "did you tell me / have we talked about X" by querying the
+    Person Registry's told_about state. B5 in the roadmap.
+    """
+    try:
+        from brain.theory_of_mind import answer_did_i_tell_you
+        person_id = (
+            g.get("_active_person_id")
+            or g.get("active_person_id")
+            or "zeke"
+        )
+        topic = m.group(1).strip().rstrip("?.!,;:")
+        if not topic:
+            return "", "neutral"
+        return answer_did_i_tell_you(str(person_id), topic), "calm"
+    except Exception as e:
+        print(f"[voice_commands] theory_of_mind error: {e!r}")
+        return "", ""
+
+
 # ── Constraint honesty (B8) — registered early so it matches BEFORE the
 #    catch-all open/close handlers. When user asks "can you see X / do
 #    you have access to Y", Ava answers transparently from a structured
