@@ -695,6 +695,12 @@ def run_startup(g: dict[str, Any]) -> None:
         print(f"[background_ticks] startup skipped: {e}")
 
     g["_STARTUP_COMPLETE"] = True
+    # Transition out of "booting" lifecycle state now that subsystems are up.
+    try:
+        from brain.lifecycle import lifecycle
+        lifecycle.transition("alive_attentive", reason="startup complete")
+    except Exception as _le:
+        print(f"[lifecycle] transition failed: {_le!r}")
     print("Ava running...")
     print(f"Base dir: {BASE_DIR}")
     print(f"Profiles dir: {g['PROFILES_DIR']}")
