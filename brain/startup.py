@@ -604,6 +604,15 @@ def run_startup(g: dict[str, Any]) -> None:
         print(f"[llava] check failed: {e}")
         g["_llava_model_name"] = None
 
+    print("[startup] step: provenance graph (claim sourcing)")
+    try:
+        from brain.provenance import configure_provenance
+        from pathlib import Path as _P_pv
+        _base_for_pv = _P_pv(g.get("BASE_DIR") or ".")
+        configure_provenance(_base_for_pv)
+    except Exception as _pve:
+        print(f"[provenance] configure failed: {_pve!r}")
+
     print("[startup] step: person registry (per-person facade)")
     try:
         from brain.person_registry import configure_person_registry
