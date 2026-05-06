@@ -604,6 +604,15 @@ def run_startup(g: dict[str, Any]) -> None:
         print(f"[llava] check failed: {e}")
         g["_llava_model_name"] = None
 
+    print("[startup] step: telemetry (pipeline-stage timing)")
+    try:
+        from brain.telemetry import configure_telemetry
+        from pathlib import Path as _P_tm
+        _base_for_tm = _P_tm(g.get("BASE_DIR") or ".")
+        configure_telemetry(_base_for_tm)
+    except Exception as _te:
+        print(f"[telemetry] configure failed: {_te!r}")
+
     print("[startup] step: scheduler (reminders watcher)")
     try:
         from brain.scheduler import start_watcher as _start_sched

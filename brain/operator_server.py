@@ -2153,6 +2153,25 @@ def create_app():
         # the schema. Used by tools/dev/dump_debug.py and the regression test.
         return build_debug_full(_g())
 
+    @app.get("/api/v1/debug/turn_timings")
+    def debug_turn_timings(limit: int = 20) -> dict[str, Any]:
+        """A6: pipeline-stage telemetry surface.
+
+        Returns the last N turn records with per-stage timing.
+        Plus a summary block (mean / median / p90 turn duration,
+        counts per route).
+        """
+        try:
+            from brain.telemetry import telemetry
+            return {
+                "ok": True,
+                "limit": int(limit),
+                "summary": telemetry.summary(),
+                "turns": telemetry.recent(limit=int(limit)),
+            }
+        except Exception as e:
+            return {"ok": False, "error": repr(e)[:200]}
+
     # ── Doctor / autonomous-testing endpoints ───────────────────────────
     # Per docs/AUTONOMOUS_TESTING.md and brain/doctor_session.py.
     # All gated by HMAC-signed bearer token (Authorization: Bearer <token>).
