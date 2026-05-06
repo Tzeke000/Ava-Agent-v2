@@ -685,6 +685,15 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as _hde:
         print(f"[honest_disagreement] configure failed: {_hde!r}")
 
+    print("[startup] step: active learning (capture factual corrections)")
+    try:
+        from brain.active_learning import configure as configure_al
+        from pathlib import Path as _P_al
+        _base_for_al = _P_al(g.get("BASE_DIR") or ".")
+        configure_al(_base_for_al)
+    except Exception as _ale:
+        print(f"[active_learning] configure failed: {_ale!r}")
+
     print("[startup] step: D1 continuity gate (ritual protection — D1 itself NOT shipped)")
     try:
         from brain.continuity_gate import configure as configure_cg, gate_status, is_continuity_allowed

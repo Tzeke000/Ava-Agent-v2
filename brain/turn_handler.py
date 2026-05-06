@@ -300,6 +300,13 @@ def finalize_ava_turn(
     except Exception:
         pass
 
+    # B1: capture factual/process corrections.
+    try:
+        from brain.active_learning import auto_capture_from_turn
+        auto_capture_from_turn(_g, str(person_id or "zeke"), str(user_input or ""))
+    except Exception:
+        pass
+
     # D14: snapshot mood for comparative memory.
     try:
         from brain.comparative_memory import snapshot_mood
