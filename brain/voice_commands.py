@@ -625,7 +625,18 @@ def _cmd_open(text, m, g):
     # up the primary target (OBS); decline here so it routes there.
     if re.search(r"\s+through\s+\S", target, flags=re.IGNORECASE):
         return "", ""
-    ok, msg = _route_open_app(target, g)
+    # A1 self-awareness: wrap the open through the post-action verifier so
+    # apparent-success that didn't actually produce a window gets caught
+    # and replied honestly.
+    try:
+        from brain.post_action_verifier import wrap_open_with_verification
+
+        def _do():
+            return _route_open_app(target, g)
+
+        ok, msg = wrap_open_with_verification(target, _do)
+    except Exception:
+        ok, msg = _route_open_app(target, g)
     if ok:
         # Track for pronoun-recall close ("close my last app").
         g["_last_opened_app"] = target
@@ -691,12 +702,23 @@ def _cmd_close(text, m, g):
             target = str(last_app)
         else:
             return "I don't remember the last app you asked me to open.", "calm"
+    # A1 self-awareness: wrap the close through the post-action verifier
+    # so apparent-success that didn't actually remove the windows gets
+    # caught and replied honestly ("I tried to close X but it's still
+    # there.").
     try:
         from tools.system.app_launcher import _tool_close_app
-        res = _tool_close_app({"app_name": target}, g)
-        if res.get("ok"):
-            display = target.title() if target else raw_target
-            return f"{display} is closed.", "calm"
+        from brain.post_action_verifier import wrap_close_with_verification
+
+        def _do():
+            res = _tool_close_app({"app_name": target}, g)
+            if res.get("ok"):
+                display = target.title() if target else raw_target
+                return True, f"{display} is closed."
+            return False, f"I couldn't close {target or raw_target}."
+
+        _ok, msg = wrap_close_with_verification(target, _do)
+        return msg, "calm"
     except Exception:
         pass
     return f"I couldn't close {target or raw_target}.", "calm"
