@@ -622,6 +622,24 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as _eve:
         print(f"[emotional_vocabulary] configure failed: {_eve!r}")
 
+    print("[startup] step: counterfactual archive (decision history)")
+    try:
+        from brain.counterfactual_archive import configure as configure_cf
+        from pathlib import Path as _P_cf
+        _base_for_cf = _P_cf(g.get("BASE_DIR") or ".")
+        configure_cf(_base_for_cf)
+    except Exception as _cfe:
+        print(f"[counterfactual_archive] configure failed: {_cfe!r}")
+
+    print("[startup] step: daily practice (registered practices + history)")
+    try:
+        from brain.daily_practice import configure as configure_dp
+        from pathlib import Path as _P_dp
+        _base_for_dp = _P_dp(g.get("BASE_DIR") or ".")
+        configure_dp(_base_for_dp)
+    except Exception as _dpe:
+        print(f"[daily_practice] configure failed: {_dpe!r}")
+
     print("[startup] step: anchor moments (persistent episodic memory)")
     try:
         from brain.anchor_moments import configure as configure_am
