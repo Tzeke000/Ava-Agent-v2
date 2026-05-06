@@ -464,6 +464,126 @@ def test_constraints_honesty() -> None:
 # ─────────────────────────────────────────────────────────────────────────
 
 
+def test_event_schema() -> None:
+    section("event_schema")
+    from brain.event_schema import (
+        all_events, get, by_category, is_declared, validate_payload, summary,
+    )
+    check("at least 25 events declared",
+          len(all_events()) >= 25)
+    check("clipboard_changed declared",
+          is_declared("clipboard_changed"))
+    check("undeclared event correctly flagged",
+          not is_declared("totally_made_up_event"))
+    schema = get("clipboard_changed")
+    check("schema has emitter_category",
+          schema is not None and schema.emitter_category == "system")
+    ok, missing = validate_payload("clipboard_changed", {"text": "hi", "size_bytes": 2})
+    check("valid clipboard payload",
+          ok)
+    ok, missing = validate_payload("clipboard_changed", {"text": "hi"})
+    check("missing-key payload flagged",
+          not ok and "size_bytes" in missing)
+    ok, missing = validate_payload("not_declared", {})
+    check("undeclared payload flagged",
+          not ok)
+    s = summary()
+    check("summary has by_category",
+          "by_category" in s)
+
+
+def test_contracts() -> None:
+    section("contracts")
+    from brain.contracts import (
+        MemoryStore, ActionHandler, Verifier, PersonProfile,
+        SkillProvider, EventEmitter, assert_conforms,
+    )
+
+    class FakeMemoryStore:
+        def search(self, query, *, limit=4, **kwargs):
+            return []
+        def is_available(self):
+            return True
+
+    class IncompleteStore:
+        def search(self, query, **kwargs):
+            return []
+        # missing is_available
+
+    fake = FakeMemoryStore()
+    check("FakeMemoryStore conforms to MemoryStore",
+          isinstance(fake, MemoryStore))
+    incomplete = IncompleteStore()
+    check("IncompleteStore does not conform",
+          not isinstance(incomplete, MemoryStore))
+
+    ok, missing = assert_conforms(fake, MemoryStore)
+    check("assert_conforms reports OK for complete impl", ok)
+    ok2, missing2 = assert_conforms(incomplete, MemoryStore)
+    check("assert_conforms reports missing for incomplete impl",
+          not ok2 and "is_available" in missing2)
+
+
+def test_hooks() -> None:
+    section("hooks")
+    from brain.hooks import (
+        hook, fire, count, clear, unregister, list_hooks,
+        HOOK_ON_TURN_START, HOOK_ON_IDLE_ENTER,
+    )
+    clear()
+    check("clear() empties registry",
+          count(HOOK_ON_TURN_START) == 0)
+
+    fired_count = []
+
+    @hook(HOOK_ON_TURN_START, name="test_handler_a")
+    def handler_a(g):
+        fired_count.append("a")
+
+    @hook(HOOK_ON_TURN_START, name="test_handler_b")
+    def handler_b(g):
+        fired_count.append("b")
+
+    @hook(HOOK_ON_IDLE_ENTER, name="test_idle_handler")
+    def handler_idle(g):
+        fired_count.append("idle")
+
+    check("count after registration", count(HOOK_ON_TURN_START) == 2)
+    check("count for different hook", count(HOOK_ON_IDLE_ENTER) == 1)
+
+    n = fire(HOOK_ON_TURN_START, {})
+    check("fire returns success count",
+          n == 2)
+    check("fired in order",
+          fired_count == ["a", "b"])
+
+    fire(HOOK_ON_IDLE_ENTER, {})
+    check("idle hook fired",
+          fired_count[-1] == "idle")
+
+    # unregister
+    removed = unregister(HOOK_ON_TURN_START, "test_handler_a")
+    check("unregister removes a registered handler",
+          removed and count(HOOK_ON_TURN_START) == 1)
+
+    # Exception in one hook doesn't stop others
+    @hook("on_test_resilience", name="raises")
+    def bad_hook(g):
+        raise RuntimeError("test")
+
+    @hook("on_test_resilience", name="works")
+    def good_hook(g):
+        fired_count.append("worked")
+
+    n2 = fire("on_test_resilience", {})
+    check("fire continues past exceptions",
+          fired_count[-1] == "worked")
+    check("fire success count counts only successful runs",
+          n2 == 1)
+
+    clear()
+
+
 def main() -> int:
     safe_run("state_classification", test_state_classification)
     safe_run("safety_layer", test_safety_layer)
@@ -474,6 +594,9 @@ def main() -> int:
     safe_run("memory_hierarchy", test_memory_hierarchy)
     safe_run("claude_code_recognition", test_claude_code_recognition)
     safe_run("constraints_honesty", test_constraints_honesty)
+    safe_run("event_schema", test_event_schema)
+    safe_run("contracts", test_contracts)
+    safe_run("hooks", test_hooks)
 
     print()
     print(f"=== Results: PASS={PASS}  FAIL={FAIL} ===")

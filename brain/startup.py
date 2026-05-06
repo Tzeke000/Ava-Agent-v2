@@ -694,6 +694,16 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as e:
         print(f"[background_ticks] startup skipped: {e}")
 
+    # Wire the lifecycle bridge so subsystems hooked on
+    # HOOK_ON_LIFECYCLE_CHANGE get notified automatically.
+    try:
+        from brain.hooks import install_lifecycle_bridge, fire, HOOK_ON_STARTUP
+        install_lifecycle_bridge()
+        # Fire on_startup hooks for any registered subsystems.
+        fire(HOOK_ON_STARTUP, g)
+    except Exception as _he:
+        print(f"[hooks] startup bridge failed: {_he!r}")
+
     g["_STARTUP_COMPLETE"] = True
     # Transition out of "booting" lifecycle state now that subsystems are up.
     try:
