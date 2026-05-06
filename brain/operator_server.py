@@ -2153,6 +2153,29 @@ def create_app():
         # the schema. Used by tools/dev/dump_debug.py and the regression test.
         return build_debug_full(_g())
 
+    @app.get("/api/v1/debug/external_services")
+    def debug_external_services() -> dict[str, Any]:
+        """Per-service circuit-breaker state (architecture #23)."""
+        try:
+            from brain.external_service import status
+            return {"ok": True, "services": status()}
+        except Exception as e:
+            return {"ok": False, "error": repr(e)[:200]}
+
+    @app.get("/api/v1/debug/feature_flags")
+    def debug_feature_flags() -> dict[str, Any]:
+        """Resolved feature flags + their declared metadata (architecture #21)."""
+        try:
+            from brain.feature_flags import all_resolved, list_flags
+            from dataclasses import asdict
+            return {
+                "ok": True,
+                "resolved": all_resolved(),
+                "declared": [asdict(f) for f in list_flags()],
+            }
+        except Exception as e:
+            return {"ok": False, "error": repr(e)[:200]}
+
     @app.get("/api/v1/debug/lifecycle")
     def debug_lifecycle() -> dict[str, Any]:
         """Architectural #8 — current lifecycle state + history."""
