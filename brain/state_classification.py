@@ -66,6 +66,7 @@ PERSISTENT: dict[str, str] = {
     "curiosity_research_queue.jsonl": "Topics Ava wants to research — queue + status (D15)",
     "identity_stability_log.jsonl": "Periodic bedrock-vs-narrative audit reports (D18)",
     "discretion_tags.jsonl": "Per-person privacy graph — what's confidential (C12)",
+    "play_signals.jsonl": "Audit log of when play register fired and why (D19)",
     "consolidation_log.jsonl": "Sleep-cycle consolidation history",
     "learning_log.jsonl": "Things Ava has learned (provenance source for skills + concept_graph)",
     "metabolism_log.jsonl": "Memory-as-metabolism trace log",
