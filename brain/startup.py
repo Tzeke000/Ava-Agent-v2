@@ -622,6 +622,24 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as _eve:
         print(f"[emotional_vocabulary] configure failed: {_eve!r}")
 
+    print("[startup] step: creative initiative (idea queue + works)")
+    try:
+        from brain.creative_initiative import configure as configure_ci
+        from pathlib import Path as _P_ci
+        _base_for_ci = _P_ci(g.get("BASE_DIR") or ".")
+        configure_ci(_base_for_ci)
+    except Exception as _cie:
+        print(f"[creative_initiative] configure failed: {_cie!r}")
+
+    print("[startup] step: async letters (Ava as correspondent)")
+    try:
+        from brain.async_letters import configure as configure_al
+        from pathlib import Path as _P_al
+        _base_for_al = _P_al(g.get("BASE_DIR") or ".")
+        configure_al(_base_for_al)
+    except Exception as _ale:
+        print(f"[async_letters] configure failed: {_ale!r}")
+
     print("[startup] step: counterfactual archive (decision history)")
     try:
         from brain.counterfactual_archive import configure as configure_cf
