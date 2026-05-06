@@ -673,6 +673,98 @@ def test_external_service() -> None:
           s["total_successes"] >= 2)
 
 
+def test_plugin_manifest() -> None:
+    section("plugin_manifest")
+    from brain.plugin_manifest import (
+        PluginManifest, register_plugin, get_plugin, list_plugins,
+        depends_on, dependents_of, validate_all, summary,
+        configure as configure_pm,
+    )
+    configure_pm()  # self-bootstrap
+    plugins = list_plugins()
+    check("at least 20 architecture plugins registered",
+          len(plugins) >= 20, f"got {len(plugins)}")
+
+    p = get_plugin("post_action_verifier")
+    check("post_action_verifier registered",
+          p is not None and p.name == "post_action_verifier")
+
+    # Register a test plugin with a dependency
+    register_plugin(PluginManifest(
+        name="test_plugin",
+        version="1.0.0",
+        description="test",
+        depends_on=["post_action_verifier"],
+    ))
+    deps = depends_on("test_plugin")
+    check("depends_on returns the declared dep",
+          "post_action_verifier" in deps)
+
+    dependents = dependents_of("post_action_verifier")
+    check("dependents_of finds the test plugin",
+          "test_plugin" in dependents)
+
+    # Validate — should be clean (we depend on a registered plugin)
+    issues = validate_all()
+    test_dep_issues = [i for i in issues["missing_deps"] if "test_plugin" in i]
+    check("test_plugin has no missing-dep issues",
+          len(test_dep_issues) == 0)
+
+    # Register one with a missing dep — should surface
+    register_plugin(PluginManifest(
+        name="broken_plugin",
+        version="1.0.0",
+        depends_on=["nonexistent_thing"],
+    ))
+    issues2 = validate_all()
+    broken_issues = [i for i in issues2["missing_deps"] if "broken_plugin" in i]
+    check("broken_plugin missing-dep surfaces",
+          len(broken_issues) >= 1)
+
+
+def test_resource_budget() -> None:
+    section("resource_budget")
+    from brain.resource_budget import (
+        BudgetTracker, reserve, release, status, is_over_soft, is_over_hard,
+    )
+
+    tracker = BudgetTracker()
+    tracker.configure("test_kind", soft=10.0, hard=20.0)
+
+    h1 = tracker.reserve("test_feature", "test_kind", 5.0)
+    check("reserve returns a handle",
+          isinstance(h1, str) and len(h1) > 0)
+    check("reservation tracked in status",
+          tracker.status()["states"]["test_kind"]["committed"] == 5.0)
+
+    h2 = tracker.reserve("another_feature", "test_kind", 8.0)
+    check("over-soft commitment allowed (advisory only)",
+          h2 is not None)
+    check("status reports over_soft",
+          tracker.status()["states"]["test_kind"]["over_soft"])
+
+    # Try with enforce=True and we're over hard
+    h3 = tracker.reserve("greedy", "test_kind", 100.0, enforce=True)
+    check("enforce mode rejects over-hard reservation",
+          h3 is None)
+    check("denial counted",
+          tracker.status()["states"]["test_kind"]["total_denials"] == 1)
+
+    # Release
+    ok = tracker.release(h1)
+    check("release returns True for valid handle",
+          ok)
+    ok2 = tracker.release("nonexistent_handle")
+    check("release returns False for invalid handle",
+          not ok2)
+
+    # Active reservations
+    s = tracker.status()
+    active = s["active_reservations"]
+    check("active reservations only includes h2 now",
+          len(active) == 1 and active[0]["handle"] == h2)
+
+
 def main() -> int:
     safe_run("state_classification", test_state_classification)
     safe_run("safety_layer", test_safety_layer)
@@ -688,6 +780,8 @@ def main() -> int:
     safe_run("hooks", test_hooks)
     safe_run("feature_flags", test_feature_flags)
     safe_run("external_service", test_external_service)
+    safe_run("plugin_manifest", test_plugin_manifest)
+    safe_run("resource_budget", test_resource_budget)
 
     print()
     print(f"=== Results: PASS={PASS}  FAIL={FAIL} ===")
