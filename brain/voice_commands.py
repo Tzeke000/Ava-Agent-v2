@@ -97,6 +97,20 @@ def _route_open_app(name: str, g: dict[str, Any]) -> tuple[bool, str]:
         existing = []
     if existing:
         return True, f"{name.capitalize()} is already open."
+    # A9: try the unified user_apps_catalog FIRST (Steam library + Epic
+    # library + future GoG / Battle.net). This catches "open Cyberpunk"
+    # style queries that wouldn't match the built-in APP_MAP.
+    try:
+        from pathlib import Path as _P_cat
+        from brain import app_catalog as _cat
+        base = _P_cat(g.get("BASE_DIR") or ".")
+        entry = _cat.find_app(base, name)
+        if entry is not None:
+            ok, msg = _cat.launch_app(entry)
+            if ok:
+                return True, msg
+    except Exception as e:
+        print(f"[voice_commands] app_catalog lookup error: {e!r}")
     disc = g.get("_app_discoverer")
     if disc is not None:
         try:

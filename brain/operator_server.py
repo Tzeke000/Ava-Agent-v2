@@ -2172,6 +2172,21 @@ def create_app():
         except Exception as e:
             return {"ok": False, "error": repr(e)[:200]}
 
+    @app.get("/api/v1/debug/app_catalog")
+    def debug_app_catalog() -> dict[str, Any]:
+        """A9 — installed apps + games catalog summary."""
+        try:
+            from brain.app_catalog import summary, list_all
+            from pathlib import Path as _P_dac
+            base = _P_dac(_g().get("BASE_DIR") or ".")
+            return {
+                "ok": True,
+                "summary": summary(base),
+                "entries": list_all(base),
+            }
+        except Exception as e:
+            return {"ok": False, "error": repr(e)[:200]}
+
     @app.get("/api/v1/debug/plugins")
     def debug_plugins() -> dict[str, Any]:
         """Plugin manifest registry (architecture #19) — what's loaded

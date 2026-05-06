@@ -131,6 +131,7 @@ DERIVED: dict[str, tuple[str, str]] = {
     "fts_memory.db-wal": ("chat_history.jsonl", "FTS5 SQLite write-ahead log"),
     "discovered_apps.json": ("filesystem scan", "Rebuildable by app_discoverer scan"),
     "learning": ("learning_log.jsonl", "Aggregated learning summaries"),
+    "user_apps_catalog.json": ("Steam + Epic library scan", "App + game catalog — rebuilt from libraryfolders.vdf + Epic manifests"),
 }
 
 
