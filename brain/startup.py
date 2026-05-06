@@ -604,6 +604,15 @@ def run_startup(g: dict[str, Any]) -> None:
         print(f"[llava] check failed: {e}")
         g["_llava_model_name"] = None
 
+    print("[startup] step: feature flags (catalog + overrides)")
+    try:
+        from brain.feature_flags import configure as configure_flags
+        from pathlib import Path as _P_ff
+        _base_for_ff = _P_ff(g.get("BASE_DIR") or ".")
+        configure_flags(_base_for_ff)
+    except Exception as _ffe:
+        print(f"[feature_flags] configure failed: {_ffe!r}")
+
     print("[startup] step: provenance graph (claim sourcing)")
     try:
         from brain.provenance import configure_provenance

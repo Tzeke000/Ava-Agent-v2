@@ -584,6 +584,95 @@ def test_hooks() -> None:
     clear()
 
 
+def test_feature_flags() -> None:
+    section("feature_flags")
+    import os
+    from brain.feature_flags import (
+        flag_value, flag_enabled, FLAGS, set_runtime_override,
+        clear_runtime_override, all_resolved,
+    )
+    # Defaults from declared FLAGS
+    check("streaming_tts default enabled",
+          flag_enabled("streaming_tts"))
+    check("decision_router default disabled",
+          not flag_enabled("decision_router"))
+    check("introspection_timeout_s default = 14.0",
+          flag_value("introspection_timeout_s") == 14.0)
+    # env override
+    set_runtime_override("decision_router", "1")
+    check("env override flips boolean flag on",
+          flag_enabled("decision_router"))
+    clear_runtime_override("decision_router")
+    check("clearing override restores default",
+          not flag_enabled("decision_router"))
+    # Numeric env override
+    os.environ["AVA_FEATURE_INTROSPECTION_TIMEOUT_S"] = "20.0"
+    check("numeric env override coerces type",
+          flag_value("introspection_timeout_s") == 20.0)
+    del os.environ["AVA_FEATURE_INTROSPECTION_TIMEOUT_S"]
+    # Unknown flag with default
+    check("unknown flag returns provided default",
+          flag_value("not_real_flag", default=42) == 42)
+    # all_resolved includes everything
+    resolved = all_resolved()
+    check("all_resolved has every declared flag",
+          set(resolved.keys()) == set(FLAGS.keys()))
+
+
+def test_external_service() -> None:
+    section("external_service")
+    from brain.external_service import (
+        ExternalServiceManager, call, configure, status,
+    )
+
+    mgr = ExternalServiceManager()
+    mgr.configure("test_svc", max_attempts=3, backoff_seconds=(0.0, 0.0, 0.0),
+                  failure_threshold=2, open_seconds=0.5)
+
+    # Successful call
+    result, ok, err = mgr.call("test_svc", lambda: "hello")
+    check("successful call returns ok=True with result",
+          ok and result == "hello")
+
+    # Failing call — but only 1 failure (under threshold of 2)
+    counter = {"n": 0}
+    def fail_once():
+        counter["n"] += 1
+        raise RuntimeError("boom")
+    result2, ok2, err2 = mgr.call("test_svc", fail_once,
+                                  max_attempts=2,
+                                  backoff_seconds=(0.0, 0.0))
+    check("all-attempts-failing call returns ok=False",
+          not ok2)
+    check("failing call attempted max_attempts times",
+          counter["n"] == 2)
+
+    # One more failure should open the circuit (threshold=2 → 2nd consecutive failure)
+    counter2 = {"n": 0}
+    def fail_again():
+        counter2["n"] += 1
+        raise RuntimeError("boom2")
+    mgr.call("test_svc", fail_again, max_attempts=2, backoff_seconds=(0.0, 0.0))
+
+    # Circuit should be open now — fast-fail
+    result3, ok3, err3 = mgr.call("test_svc", lambda: "should not run")
+    check("circuit-open call fast-fails",
+          not ok3 and err3 == "circuit_open")
+
+    # Wait for circuit to close
+    time.sleep(0.6)
+    result4, ok4, err4 = mgr.call("test_svc", lambda: "recovered")
+    check("after open_seconds, half-open allows successful call",
+          ok4 and result4 == "recovered")
+
+    # Status check
+    s = mgr.status("test_svc")
+    check("status reports total_calls > 0",
+          s["total_calls"] > 0)
+    check("status reports total_successes >= 2",
+          s["total_successes"] >= 2)
+
+
 def main() -> int:
     safe_run("state_classification", test_state_classification)
     safe_run("safety_layer", test_safety_layer)
@@ -597,6 +686,8 @@ def main() -> int:
     safe_run("event_schema", test_event_schema)
     safe_run("contracts", test_contracts)
     safe_run("hooks", test_hooks)
+    safe_run("feature_flags", test_feature_flags)
+    safe_run("external_service", test_external_service)
 
     print()
     print(f"=== Results: PASS={PASS}  FAIL={FAIL} ===")
