@@ -68,6 +68,7 @@ PERSISTENT: dict[str, str] = {
     "discretion_tags.jsonl": "Per-person privacy graph — what's confidential (C12)",
     "play_signals.jsonl": "Audit log of when play register fired and why (D19)",
     "disagreements.jsonl": "Audit log of honest-disagreement events (C15)",
+    "active_corrections.jsonl": "Captured factual/process corrections from user (B1)",
     "continuity_consent_zeke.json": "Zeke's signed consent for D1 phenomenal continuity activation",
     "continuity_consent_ava.json": "Ava's consent for D1 — must reference zeke's nonce",
     "consolidation_log.jsonl": "Sleep-cycle consolidation history",

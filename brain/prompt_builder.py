@@ -532,6 +532,13 @@ Respond as Ava.
                         pass
             except Exception:
                 pass
+            try:
+                from brain.active_learning import correction_hint
+                _corr_hint = correction_hint(user_input, person_id=str(active_person_id or "zeke"))
+                if _corr_hint:
+                    personhood_extras.append(_corr_hint)
+            except Exception:
+                pass
             if personhood_extras:
                 injected += "\n\n" + "\n".join(personhood_extras)
         except Exception:
