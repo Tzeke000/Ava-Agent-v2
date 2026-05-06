@@ -511,6 +511,27 @@ Respond as Ava.
                         pass
             except Exception:
                 pass
+            try:
+                from brain.honest_disagreement import (
+                    check_for_disagreement,
+                    build_disagreement_hint,
+                    record_disagreement,
+                )
+                _hd_has, _hd_kind, _hd_basis = check_for_disagreement(_g, user_input)
+                if _hd_has:
+                    personhood_extras.append(build_disagreement_hint(_hd_kind, _hd_basis))
+                    try:
+                        record_disagreement(
+                            str(active_person_id or "zeke"),
+                            user_input,
+                            _hd_kind,
+                            _hd_basis,
+                            surfaced=True,
+                        )
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             if personhood_extras:
                 injected += "\n\n" + "\n".join(personhood_extras)
         except Exception:
