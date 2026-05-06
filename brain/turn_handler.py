@@ -286,4 +286,29 @@ def finalize_ava_turn(
     except Exception as _re:
         print(f"[memory_reflection] hook failed (non-fatal): {_re!r}")
 
+    # B5: theory-of-mind topic tracking.
+    try:
+        from brain.theory_of_mind import post_turn_record
+        post_turn_record(str(person_id or "zeke"), str(ai_reply or ""))
+    except Exception:
+        pass
+
+    # D14: snapshot mood for comparative memory.
+    try:
+        from brain.comparative_memory import snapshot_mood
+        snapshot_mood(_g, person_id=str(person_id or "zeke"))
+    except Exception:
+        pass
+
+    # D16: auto-detect anchor moments in this turn.
+    try:
+        from brain.anchor_moments import auto_detect_anchor_in_turn
+        auto_detect_anchor_in_turn(
+            str(person_id or "zeke"),
+            str(user_input or ""),
+            str(ai_reply or ""),
+        )
+    except Exception:
+        pass
+
     return ai_reply, visual_out, active_profile, actions, reflection

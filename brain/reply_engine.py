@@ -295,6 +295,22 @@ def run_ava(
                     post_turn_record(str(active_person_id or "zeke"), _response)
                 except Exception:
                     pass
+                # D14: snapshot mood for comparative memory.
+                try:
+                    from brain.comparative_memory import snapshot_mood
+                    snapshot_mood(_g, person_id=str(active_person_id or "zeke"))
+                except Exception:
+                    pass
+                # D16: auto-detect anchor moments.
+                try:
+                    from brain.anchor_moments import auto_detect_anchor_in_turn
+                    auto_detect_anchor_in_turn(
+                        str(active_person_id or "zeke"),
+                        user_input or "",
+                        _response,
+                    )
+                except Exception:
+                    pass
                 return _response, _vis_vc, _profile_vc, [], {"voice_command": True}
     except Exception as _vce:
         print(f"[run_ava] voice_command router error (non-fatal): {_vce!r}")
@@ -362,6 +378,22 @@ def run_ava(
             try:
                 from brain.theory_of_mind import post_turn_record
                 post_turn_record(str(active_person_id or "zeke"), _at_response)
+            except Exception:
+                pass
+            # D14: snapshot mood for comparative memory.
+            try:
+                from brain.comparative_memory import snapshot_mood
+                snapshot_mood(_g, person_id=str(active_person_id or "zeke"))
+            except Exception:
+                pass
+            # D16: auto-detect anchor moments.
+            try:
+                from brain.anchor_moments import auto_detect_anchor_in_turn
+                auto_detect_anchor_in_turn(
+                    str(active_person_id or "zeke"),
+                    user_input or "",
+                    _at_response,
+                )
             except Exception:
                 pass
             return _at_response, _vis_at, _profile_at, [], {"action_tag": True}
@@ -764,6 +796,28 @@ def run_ava(
                         reply_chars=len(_reply_text or ""),
                         route="fast_path",
                         ok=True,
+                    )
+                except Exception:
+                    pass
+                # B5: theory-of-mind topic tracking.
+                try:
+                    from brain.theory_of_mind import post_turn_record
+                    post_turn_record(str(active_person_id or "zeke"), _reply_text)
+                except Exception:
+                    pass
+                # D14: snapshot mood for comparative memory.
+                try:
+                    from brain.comparative_memory import snapshot_mood
+                    snapshot_mood(_g, person_id=str(active_person_id or "zeke"))
+                except Exception:
+                    pass
+                # D16: auto-detect anchor moments.
+                try:
+                    from brain.anchor_moments import auto_detect_anchor_in_turn
+                    auto_detect_anchor_in_turn(
+                        str(active_person_id or "zeke"),
+                        user_input or "",
+                        _reply_text,
                     )
                 except Exception:
                     pass

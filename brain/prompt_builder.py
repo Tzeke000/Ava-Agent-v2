@@ -442,6 +442,62 @@ Respond as Ava.
                 injected += "\n\n" + "\n".join(extras)
         except Exception:
             pass
+        # ── Personhood hint block ────────────────────────────────────────
+        # Additive context: physical/temporal frame, learned per-person
+        # preferences, working memory, shared lexicon, comparative
+        # observation. Each module returns "" when it has nothing.
+        try:
+            personhood_extras: list[str] = []
+            try:
+                from brain.physical_context import hint_for_introspection as _phc
+                _ph = _phc()
+                if _ph:
+                    personhood_extras.append(f"PHYSICAL CONTEXT: {_ph}")
+            except Exception:
+                pass
+            try:
+                from brain.preference_learning import apply_preferences_hint as _pph
+                _ph2 = _pph(str(active_person_id or "zeke"))
+                if _ph2:
+                    personhood_extras.append(f"USER PREFERENCES: {_ph2}")
+            except Exception:
+                pass
+            try:
+                from brain.working_memory import working_memory_hint as _wmh
+                _wm = _wmh(_g)
+                if _wm:
+                    personhood_extras.append(f"WORKING MEMORY: {_wm}")
+            except Exception:
+                pass
+            try:
+                from brain.shared_lexicon import shared_lexicon_hint as _slx
+                _lx = _slx(str(active_person_id or "zeke"))
+                if _lx:
+                    personhood_extras.append(f"SHARED LEXICON: {_lx}")
+            except Exception:
+                pass
+            try:
+                from brain.comparative_memory import observation_for_user as _cmo
+                _cm = _cmo(_g)
+                if _cm:
+                    personhood_extras.append(f"COMPARATIVE: {_cm}")
+            except Exception:
+                pass
+            try:
+                from brain.claude_code_recognition import (
+                    is_claude_code_session as _ccs,
+                    claude_code_register_hint as _cch,
+                )
+                if _ccs(_g):
+                    _cc = _cch()
+                    if _cc:
+                        personhood_extras.append(f"INTERLOCUTOR REGISTER: {_cc}")
+            except Exception:
+                pass
+            if personhood_extras:
+                injected += "\n\n" + "\n".join(personhood_extras)
+        except Exception:
+            pass
         # FTS5 fast-path — Hermes/Jarvis-pattern. Tries SQLite full-text
         # search over chat_history.jsonl FIRST. Returns in microseconds.
         # Skip the slow mem0 vector path if FTS5 has hits.
