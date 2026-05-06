@@ -2493,6 +2493,18 @@ def create_app():
         except Exception as _dse:
             print(f"[inject_transcript] doctor_session hook failed: {_dse!r}")
 
+        # Claude Code greeting — when as_user="claude_code" and it's the
+        # first interaction this session OR after a >= 30 min gap, prepend
+        # a greeting so Ava signals she sees who's talking. Per Zeke's ask
+        # 2026-05-06: "Ava should have a way to recognize Claude Code so
+        # she can greet you." brain/claude_code_recognition.py.
+        try:
+            if as_user == "claude_code" and reply and not run_ava_timed_out:
+                from brain.claude_code_recognition import maybe_prefix_with_greeting
+                reply = maybe_prefix_with_greeting(reply, host)
+        except Exception as _cce:
+            print(f"[inject_transcript] claude_code greeting hook failed: {_cce!r}")
+
         # Optional TTS — call the worker directly, blocking until playback
         # done if wait_for_audio is True.
         tts_ms = 0

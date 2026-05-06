@@ -171,6 +171,25 @@ def compose_feeling_reply(g: dict[str, Any], *, timeout_s: float = 14.0) -> str 
         return None
     snapshot = _format_digest_for_llm(digest)
 
+    # Claude Code register hint — when the asker is Claude Code (developer
+    # assistant), shift to terse / technical / collaborator register
+    # instead of warm-personal. Per Zeke 2026-05-06.
+    register_hint = ""
+    try:
+        from brain.claude_code_recognition import (
+            is_claude_code_session,
+            claude_code_register_hint,
+        )
+        active_person = (
+            g.get("_active_person_id")
+            or g.get("active_person_id")
+            or ""
+        )
+        if is_claude_code_session(active_person):
+            register_hint = "\n\n" + claude_code_register_hint()
+    except Exception:
+        pass
+
     # Try LLM compose (warm ava-personal:latest is ~2-5s).
     try:
         from langchain_ollama import ChatOllama
@@ -183,7 +202,7 @@ def compose_feeling_reply(g: dict[str, Any], *, timeout_s: float = 14.0) -> str 
             temperature=0.65,
             num_predict=120,
         )
-        sys_msg = SystemMessage(content=_INTROSPECTION_SYSTEM_PROMPT)
+        sys_msg = SystemMessage(content=_INTROSPECTION_SYSTEM_PROMPT + register_hint)
         user_msg = HumanMessage(
             content=f"Snapshot of your current state:\n{snapshot}\n\nThey asked: how are you feeling?"
         )
