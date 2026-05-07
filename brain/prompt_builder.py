@@ -50,7 +50,16 @@ def build_prompt(
         recognized_person_id=recognized_person_id,
         visual_truth_trusted=perception.visual_truth_trusted,
     )
-    if recognized_person_id is not None and recognized_person_id != active_person_id:
+    # Source-label drift fix (Followup 2, 2026-05-06):
+    # Don't let face perception override an explicit developer/test
+    # identity. inject_transcript with as_user=claude_code propagates
+    # active_person_id="claude_code" through here; without this guard,
+    # any face the camera sees (even a false positive) flips identity
+    # back to zeke and the chat_history loses the claude_code attribution.
+    _is_dev_context = str(active_person_id or "").lower() == "claude_code"
+    if (recognized_person_id is not None
+            and recognized_person_id != active_person_id
+            and not _is_dev_context):
         inferred_person_id = recognized_person_id
         infer_source = "facial_recognition"
 
@@ -667,7 +676,13 @@ def build_prompt_fast(
         recognized_person_id=recognized_person_id,
         visual_truth_trusted=perception.visual_truth_trusted,
     )
-    if recognized_person_id is not None and recognized_person_id != active_person_id:
+    # Source-label drift fix (Followup 2, 2026-05-06): same guard as
+    # build_prompt — don't let face perception override claude_code dev
+    # identity. See longer comment in build_prompt above line 53-ish.
+    _is_dev_context = str(active_person_id or "").lower() == "claude_code"
+    if (recognized_person_id is not None
+            and recognized_person_id != active_person_id
+            and not _is_dev_context):
         inferred_person_id = recognized_person_id
         infer_source = "facial_recognition"
 

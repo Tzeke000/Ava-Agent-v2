@@ -117,6 +117,7 @@ PERSISTENT: dict[str, str] = {
     "model_eval_p44.json": "Phase 44 model evaluation accumulator",
     # User profiles (persisted via avaagent.load_profile_by_id)
     "profiles": "Per-person profile JSONs (relationship state)",
+    "person_registry": "Person Registry per-person view JSONs (architecture #6)",
     # Backup
     "backup": "Backup directory for the above",
 }
