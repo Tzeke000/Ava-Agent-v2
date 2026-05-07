@@ -667,6 +667,34 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as _dse:
         print(f"[discretion] configure failed: {_dse!r}")
 
+    print("[startup] step: physical_context (warm weather cache off hot path)")
+    try:
+        from brain.physical_context import refresh_weather_cache_background
+        refresh_weather_cache_background()
+
+        # Periodic refresher — keeps cache warm so deep-path turns never
+        # have to wait on wttr.in synchronously. 8min interval beats the
+        # 10min TTL with margin.
+        import threading as _th_pc
+        import time as _t_pc
+
+        def _periodic_weather_refresh() -> None:
+            while True:
+                try:
+                    _t_pc.sleep(8 * 60)
+                    refresh_weather_cache_background()
+                except Exception:
+                    pass
+
+        _wt = _th_pc.Thread(
+            target=_periodic_weather_refresh,
+            daemon=True,
+            name="weather-refresh-loop",
+        )
+        _wt.start()
+    except Exception as _pce:
+        print(f"[physical_context] weather warm failed: {_pce!r}")
+
     print("[startup] step: play (capacity for play, lifecycle-gated)")
     try:
         from brain.play import configure as configure_play

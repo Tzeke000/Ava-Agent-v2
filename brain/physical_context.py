@@ -69,15 +69,47 @@ def day_of_week(now: dt.datetime | None = None) -> str:
 
 
 def _try_weather() -> str:
-    """Best-effort weather fetch via the existing weather tool."""
+    """Best-effort weather — CACHE-ONLY from the prompt-build hot path.
+
+    Latency fix (2026-05-06): the underlying _fetch_weather_text uses
+    requests.get with an 8-second timeout. Calling it from inside
+    build_prompt (which fires every deep-path turn) means a cold cache
+    burns up to 8s of synchronous wait BEFORE the LLM call even starts.
+
+    This wrapper only returns a value when the cache is already warm.
+    A separate background refresh (scheduled by startup) keeps the
+    cache fresh without blocking turn-time.
+    """
     try:
-        from tools.web.weather import _fetch_weather_text
-        ok, text = _fetch_weather_text()
-        if ok:
-            return text.strip()
+        # Read the cache directly without triggering a network fetch.
+        from tools.web import weather as _w
+        import time as _t
+        cached = _w._CACHE.get("value")
+        cached_ts = float(_w._CACHE.get("ts") or 0.0)
+        if cached and cached_ts > 0 and (_t.time() - cached_ts) < _w._CACHE_TTL_SEC:
+            return str(cached).strip()
     except Exception:
         pass
     return ""
+
+
+def refresh_weather_cache_background() -> None:
+    """Trigger a fresh weather fetch in a background thread.
+
+    Called by startup + scheduler periodically. Safe to call repeatedly;
+    the underlying fetcher has its own cache TTL gate.
+    """
+    import threading
+
+    def _refresh() -> None:
+        try:
+            from tools.web.weather import _fetch_weather_text
+            _fetch_weather_text()
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_refresh, daemon=True, name="weather-refresh")
+    t.start()
 
 
 def _try_camera_light_level() -> float | None:
