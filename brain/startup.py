@@ -740,6 +740,15 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as _wse:
         print(f"[web_search] configure failed: {_wse!r}")
 
+    print("[startup] step: skill sandbox (#20 — fail-closed allowlist for auto-skills)")
+    try:
+        from brain.skill_sandbox import configure as configure_sb
+        from pathlib import Path as _P_sb
+        _base_for_sb = _P_sb(g.get("BASE_DIR") or ".")
+        configure_sb(_base_for_sb)
+    except Exception as _sbe:
+        print(f"[skill_sandbox] configure failed: {_sbe!r}")
+
     print("[startup] step: D1 continuity gate (ritual protection — D1 itself NOT shipped)")
     try:
         from brain.continuity_gate import configure as configure_cg, gate_status, is_continuity_allowed
