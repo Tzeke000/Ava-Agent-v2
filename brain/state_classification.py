@@ -70,6 +70,7 @@ PERSISTENT: dict[str, str] = {
     "disagreements.jsonl": "Audit log of honest-disagreement events (C15)",
     "active_corrections.jsonl": "Captured factual/process corrections from user (B1)",
     "behavior_patterns.json": "Slow-accumulating model of person's behavior patterns (B2)",
+    "web_search_cache.json": "Cached results from web search lookups (A7)",
     "continuity_consent_zeke.json": "Zeke's signed consent for D1 phenomenal continuity activation",
     "continuity_consent_ava.json": "Ava's consent for D1 — must reference zeke's nonce",
     "consolidation_log.jsonl": "Sleep-cycle consolidation history",
