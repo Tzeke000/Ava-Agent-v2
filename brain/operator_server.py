@@ -2511,9 +2511,9 @@ def create_app():
             except Exception as _ee:
                 print(f"[inject_transcript] ensure_claude_code_profile failed: {_ee!r}")
         try:
-            timeout_s = max(1.0, min(120.0, float(body.get("timeout_seconds") or 30.0)))
+            timeout_s = max(1.0, min(600.0, float(body.get("timeout_seconds") or 300.0)))
         except (TypeError, ValueError):
-            timeout_s = 30.0
+            timeout_s = 300.0
 
         from brain.debug_state import get_traces, get_errors, record_turn
 
