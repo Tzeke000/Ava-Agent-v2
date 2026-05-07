@@ -174,7 +174,14 @@ def auto_create_or_update(
     fast path. Skills are for COMPOUND sequences (≥2 actions) or
     long-tail phrasings the regex misses.
 
-    Returns the slug if a skill was created/updated, None if skipped.
+    Sandboxed (architecture #20, 2026-05-07): every action is checked
+    against the skill_sandbox allowlist before persisting. Skills with
+    forbidden actions (CLOSE_APP, DELETE_FILE, SEND_EMAIL, etc.) are
+    rejected entirely — Ava cannot auto-learn destructive sequences.
+    Per Zeke's spec: "no destructive permissions for auto-learned skills."
+
+    Returns the slug if a skill was created/updated, None if skipped or
+    rejected.
     """
     if not actions:
         return None
@@ -185,6 +192,19 @@ def auto_create_or_update(
     # Skip [CONVERSATION]-only sequences.
     real = [(t, a) for (t, a) in actions if t != "CONVERSATION"]
     if not real:
+        return None
+
+    # Sandbox: refuse to persist skills containing forbidden actions.
+    try:
+        from brain.skill_sandbox import validate_skill_actions
+        ok, reason = validate_skill_actions(real)
+        if not ok:
+            print(f"[skills] REJECTED auto-skill (sandbox): {reason} | input={user_input!r}")
+            return None
+    except Exception as _se:
+        # Fail-closed: if validator can't run, reject the skill rather
+        # than persisting unvalidated.
+        print(f"[skills] sandbox validator error — rejecting auto-skill (fail-closed): {_se!r}")
         return None
 
     # Slug from the first non-conversation action (e.g., "open-obs-steam").
