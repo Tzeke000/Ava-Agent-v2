@@ -6429,13 +6429,57 @@ No markdown, no other keys."""
 # CORE
 # =========================================================
 def is_camera_identity_intent(user_input: str) -> bool:
+    """Heuristic for "is the user asking about who's at the camera?".
+
+    Tightened 2026-05-06 (Followup 3 from conversational test pass):
+    the previous identity_terms list included broad words like "tell",
+    "know", "who" that matched ANY message containing both a camera-
+    related word and a common verb. Example false positive caught
+    during the test:
+
+        "the camera might not be seeing anyone right now since Zeke is
+        at work. But I want to tell you what we built today..."
+
+    contained "camera" + "tell" → matched even though the message was
+    a substantive question about today's work, not a camera-identity
+    query. The deep-path response never landed; the camera_identity
+    handler intercepted.
+
+    New rule: identity terms must be SPECIFIC phrases that signal an
+    actual identity question. The profile-update terms remain (those
+    are unambiguous direct commands). For ambiguous cases the action_
+    tag_router LLM classifier catches what this heuristic misses.
+    """
     text = (user_input or "").strip().lower()
     if not text:
         return False
-    camera_terms = ["camera", "frame", "face", "webcam", "screen"]
-    identity_terms = ["who", "recognize", "recognise", "know", "tell", "understand", "see me", "that is me", "it's me", "its me", "my face"]
-    profile_terms = ["update your profile", "update my profile", "update your file", "that is my face", "the person in the frame", "person in frame"]
-    return (any(t in text for t in camera_terms) and any(t in text for t in identity_terms)) or any(t in text for t in profile_terms)
+    camera_terms = ["camera", "frame", "webcam"]
+    # Specific identity-question phrases — must be present as a phrase,
+    # not as individual sub-words. Some require a camera term in the
+    # input; some are unambiguous on their own.
+    identity_phrases_with_camera = [
+        "who is", "who's", "whos",
+        "see me", "that is me", "that's me", "thats me", "that me",
+        "it's me", "its me",
+        "my face", "do you know who",
+        "who do you see",
+    ]
+    # Phrases that imply camera identity even without the word camera.
+    identity_phrases_standalone = [
+        "do you recognize me", "do you recognise me",
+        "recognize me", "recognise me",
+        "do you see me",
+        "is that me on", "is this me on",
+    ]
+    profile_terms = [
+        "update your profile", "update my profile", "update your file",
+        "that is my face", "the person in the frame", "person in frame",
+    ]
+    has_camera = any(t in text for t in camera_terms)
+    has_camera_phrase = any(p in text for p in identity_phrases_with_camera)
+    has_standalone = any(p in text for p in identity_phrases_standalone)
+    has_profile = any(t in text for t in profile_terms)
+    return (has_camera and has_camera_phrase) or has_standalone or has_profile
 
 
 def infer_explicit_identity_from_text(user_input: str) -> tuple[str | None, str | None]:
