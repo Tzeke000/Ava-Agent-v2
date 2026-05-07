@@ -731,6 +731,15 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as _bpe:
         print(f"[behavior_patterns] configure failed: {_bpe!r}")
 
+    print("[startup] step: web search (A7 — connectivity-gated knowledge lookup)")
+    try:
+        from brain.web_search import configure as configure_ws
+        from pathlib import Path as _P_ws
+        _base_for_ws = _P_ws(g.get("BASE_DIR") or ".")
+        configure_ws(_base_for_ws)
+    except Exception as _wse:
+        print(f"[web_search] configure failed: {_wse!r}")
+
     print("[startup] step: D1 continuity gate (ritual protection — D1 itself NOT shipped)")
     try:
         from brain.continuity_gate import configure as configure_cg, gate_status, is_continuity_allowed

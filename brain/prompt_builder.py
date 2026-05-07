@@ -555,6 +555,13 @@ Respond as Ava.
                     personhood_extras.append(_pat_hint)
             except Exception:
                 pass
+            try:
+                from brain.web_search import knows_or_can_look_up_hint
+                _ws_hint = knows_or_can_look_up_hint(_g)
+                if _ws_hint:
+                    personhood_extras.append(_ws_hint)
+            except Exception:
+                pass
             if personhood_extras:
                 injected += "\n\n" + "\n".join(personhood_extras)
         except Exception:
