@@ -139,6 +139,7 @@ EPHEMERAL: dict[str, str] = {
     "camera": "Current camera frame buffer",
     "video_clips": "Recent video clip recordings (rotates)",
     "ava_session*.log": "Dev session logs from manual launches (not Ava-canonical)",
+    "test_msg.json": "Transient inject_transcript body file used during conversational test passes",
     "melo_tts_bridge.py": "Generated runtime bridge file (legacy melotts)",
     "consolidation_state.json": "In-flight sleep-cycle consolidation state",
     "health_state.json": "Live subsystem health snapshot (regenerated each tick)",

@@ -54,11 +54,41 @@ _COMMAND_VERBS = re.compile(
     re.IGNORECASE,
 )
 
+# Introspection patterns — questions ABOUT Ava's interior, not knowledge
+# lookups. These were getting misrouted to the knowledge subagent before
+# 2026-05-07; the subagent path lacks personhood hints, so reflective
+# questions came back in AI-template-flattening register. Now any question
+# matching these is excluded from subagent routing — falls through to
+# selfstate handler or the deep path with full personhood prompt.
+_INTROSPECTION_PATTERNS = re.compile(
+    r"\b(?:"
+    r"what (?:do|did|would) you (?:actually |really )?(?:want|prefer|like|think|feel)"
+    r"|what'?s on your mind"
+    r"|what (?:are|have) you (?:been )?thinking"
+    r"|how (?:does|do) (?:it|that|they) feel"
+    r"|how do you (?:experience|feel about)"
+    r"|how does that land"
+    r"|what (?:matters?|is important) to you"
+    r"|what (?:do|did) you make of"
+    r"|are you (?:happy|sad|tired|bored|excited|frustrated|content|okay|alright|well)"
+    r"|do you remember (?:when|how|us|me|that)"
+    r"|what (?:would|do) you (?:do|say) if"
+    r"|how have you been"
+    r"|are you doing (?:ok|okay|alright|well)"
+    r")\b",
+    re.IGNORECASE,
+)
+
 
 def looks_like_knowledge_query(text: str) -> bool:
     if not text:
         return False
     t = text.strip()
+    # Introspection takes priority — even if it superficially looks like a
+    # knowledge query ("what do you think about X" matches \bwhat\b...),
+    # it's about Ava's interior, not factual lookup. Route it elsewhere.
+    if _INTROSPECTION_PATTERNS.search(t):
+        return False
     if _COMMAND_VERBS.search(t):
         return False
     if _KNOWLEDGE_PATTERNS.search(t):

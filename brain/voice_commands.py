@@ -62,6 +62,40 @@ def _set_requested_tab(g: dict[str, Any], tab: str) -> None:
     g["_requested_tab_ts"] = time.time()
 
 
+# Polite suffixes that humans naturally append to commands but that the
+# greedy regex captures as part of the target name. Strip them BEFORE
+# resolving the app/target, so "open notepad for me please" → "notepad".
+# Applied at end-of-string only (not mid-string), so legitimate names
+# containing these words don't get clipped.
+_POLITE_SUFFIX_PATTERNS = [
+    re.compile(r"\s+for\s+me(\s+please)?[.!?]*$", re.IGNORECASE),
+    re.compile(r"\s+please[.!?]*$", re.IGNORECASE),
+    re.compile(r"\s+if\s+you\s+(?:can|could|would)\s*[.!?]*$", re.IGNORECASE),
+    re.compile(r"\s+would\s+you[.!?]*$", re.IGNORECASE),
+    re.compile(r"\s+thanks?[.!?]*$", re.IGNORECASE),
+    re.compile(r"\s+thank\s+you[.!?]*$", re.IGNORECASE),
+    re.compile(r"[.!?]+$"),  # final punctuation
+]
+
+
+def _strip_polite_suffixes(text: str) -> str:
+    """Strip trailing politeness phrases from a captured command target.
+
+    Applied repeatedly until nothing changes — handles stacks like
+    "open notepad for me please thanks." → "notepad".
+    """
+    if not text:
+        return text
+    prev = None
+    cur = text.strip()
+    while prev != cur:
+        prev = cur
+        for pat in _POLITE_SUFFIX_PATTERNS:
+            cur = pat.sub("", cur)
+        cur = cur.strip()
+    return cur
+
+
 def _route_open_app(name: str, g: dict[str, Any]) -> tuple[bool, str]:
     """Look up via discoverer first, then known map. Returns (ok, message)."""
     name = (name or "").strip()
@@ -676,6 +710,12 @@ def _cmd_help(text, m, g):
 @_builtin(r"\bopen (.+?)$")
 def _cmd_open(text, m, g):
     target = m.group(1).strip()
+    # 2026-05-07: strip trailing politeness phrases that the regex's greedy
+    # capture would otherwise treat as part of the app name. Surfaced in
+    # conversational test pass: "open notepad for me please" hung for 60s
+    # because _route_open_app tried to find an app named
+    # "Notepad for me please". Now it cleanly resolves to "notepad".
+    target = _strip_polite_suffixes(target)
     # Avoid stealing "open journal" etc — if a more-specific tab handler
     # would have matched, this regex still wins (longer specific patterns are
     # registered earlier). Filter out obvious non-app targets here.

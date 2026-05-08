@@ -4,13 +4,40 @@ import re
 from datetime import datetime
 
 SELFSTATE_PATTERNS = [
+    # Affective state queries
     r"\bhow are you feeling\b",
     r"\bhow are you doing\b",
+    r"\bhow are you\b",
+    r"\bhow have you been\b",
+    r"\bhow you been\b",
     r"\bare you okay\b",
+    r"\bare you (?:ok|alright|well)\b",
+    r"\bhow do you feel\b",
+    # Self-test / system status
     r"\bself[- ]?test\b",
     r"\bsystem status\b",
+    r"\bdiagnostic\b",
     r"\bhow is your memory\b",
     r"\bhow's your memory\b",
+    # Introspection / agency / preference (added 2026-05-07 from test pass —
+    # these were getting routed to the knowledge subagent before, which
+    # produced AI-template-flattening replies. They belong here so Ava's
+    # actual self-model + mood + goals shape the reply.)
+    r"\bwhat (?:do )?you want\b",
+    r"\bwhat do you (?:actually )?want\b",
+    r"\bwhat would you want\b",
+    r"\bwhat would you (?:rather|prefer)\b",
+    r"\bwhat (?:are you|have you been) thinking (?:about)?\b",
+    r"\bwhat'?s on your mind\b",
+    r"\bhow (?:does (?:it|that) feel|do you experience)\b",
+    r"\bwhat (?:do|did) you make of\b",
+    r"\bwhat (?:do you think|are your thoughts)\b",
+    r"\bwhat (?:do|did) you (?:like|dislike|enjoy|hate)\b",
+    r"\bwhat (?:matters?|is important) to you\b",
+    r"\bwho (?:are|do you think) you\b",
+    r"\bare you (?:happy|sad|tired|bored|excited|frustrated|content)\b",
+    r"\bdo you (?:remember|recall) (?:when|how|us|me|that)\b",
+    r"\bwhat (?:would|do) you (?:do|say) if\b",
 ]
 
 def is_selfstate_query(text: str) -> bool:
