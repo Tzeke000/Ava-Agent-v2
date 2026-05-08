@@ -2747,24 +2747,63 @@ def maybe_store_reflection_memory(record: dict, person_id: str):
     return maybe_promote_reflection_to_memory(record, person_id)
 
 def reflect_on_last_reply(user_input: str, ai_reply: str, person_id: str, actions: list[str] | None = None) -> dict:
+    """Build + persist a reflection record, return it for the caller.
+
+    2026-05-08 latency fix: split into fast (synchronous, returns record)
+    and slow (background thread, vector store write + reflections log
+    rewrite). Was the residual HTTP-stall culprit — even with
+    autoremember + concept_graph backgrounded, the vector embedding write
+    inside maybe_promote_reflection_to_memory was synchronous and could
+    take 30-90s on local hardware.
+
+    The fast part returns the record needed by the caller. The slow part
+    (memory promotion + reflections log rewrite + threads update) runs
+    in a daemon thread.
+    """
     record = build_reflection_record(user_input, ai_reply, person_id, actions=actions)
     save_reflection_record(record)
-    promoted_memory_id = maybe_promote_reflection_to_memory(record, person_id)
-    if promoted_memory_id:
-        record['promoted_to_memory'] = True
-        rows = load_recent_reflections(limit=250, person_id=person_id)
-        if rows:
-            rows[-1] = record
-            rewrite_reflections_log(rows, person_id=person_id)
     update_self_model_from_reflection(record)
-    try:
-        from brain.relationship_threads import update_threads_from_reflection
 
-        prof = dict(load_profile_by_id(person_id))
-        prof = update_threads_from_reflection(record, prof)
-        save_profile(prof)
-    except Exception as e:
-        print(f"[threads] update failed: {e}")
+    # Background: heavy stuff that doesn't need to block the reply path.
+    def _bg_promote_and_threads():
+        try:
+            promoted_memory_id = maybe_promote_reflection_to_memory(record, person_id)
+            if promoted_memory_id:
+                record['promoted_to_memory'] = True
+                rows = load_recent_reflections(limit=250, person_id=person_id)
+                if rows:
+                    rows[-1] = record
+                    rewrite_reflections_log(rows, person_id=person_id)
+        except Exception as _e:
+            print(f"[reflect_bg] promote error: {_e!r}")
+        try:
+            from brain.relationship_threads import update_threads_from_reflection
+            prof = dict(load_profile_by_id(person_id))
+            prof = update_threads_from_reflection(record, prof)
+            save_profile(prof)
+        except Exception as e:
+            print(f"[threads] update failed: {e}")
+
+    try:
+        import threading as _th_reflect
+        _th_reflect.Thread(
+            target=_bg_promote_and_threads,
+            daemon=True,
+            name="reflect-promote-bg",
+        ).start()
+    except Exception as _te:
+        # Fall back to synchronous if thread spawn fails (very unlikely).
+        print(f"[reflect_on_last_reply] thread spawn failed, running sync: {_te!r}")
+        try:
+            promoted_memory_id = maybe_promote_reflection_to_memory(record, person_id)
+            if promoted_memory_id:
+                record['promoted_to_memory'] = True
+                rows = load_recent_reflections(limit=250, person_id=person_id)
+                if rows:
+                    rows[-1] = record
+                    rewrite_reflections_log(rows, person_id=person_id)
+        except Exception:
+            pass
     return record
 
 def load_recent_reflections(limit: int = 20, person_id: str | None = None) -> list[dict]:
