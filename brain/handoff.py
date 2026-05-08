@@ -1,28 +1,39 @@
 """brain/handoff.py — Structured handoff for cross-session continuity.
 
 Per Anthropic's "Effective harnesses for long-running agents" (Nov 2025)
-and the 2026-05-07 night research synthesis, the cleanest way to give
+and the 2026-05-07 night research synthesis. The cleanest way to give
 a long-running agent multi-session coherence is NOT to summarize past
-sessions (which is lossy compression) but to write a STRUCTURED HANDOFF
-file that the next session reads at startup as bootstrap.
+sessions on every cycle (lossy frequent compression) but to write a
+RICH STRUCTURED HANDOFF at MEANINGFUL BOUNDARIES — when context is
+about to overflow, or at clean shutdown — including the agent's OWN
+choice of what's worth remembering.
 
-This module provides that handoff for Ava.
+Trigger discipline (per Zeke 2026-05-08):
+
+  - NOT every 5 minutes. Periodic thin snapshots are useless.
+  - YES at ~70% context-fill threshold. The agent still has full
+    recent conversation in active context; she can write a rich
+    handoff including her own salient-summary BEFORE that context
+    drops.
+  - YES at clean shutdown (existing shutdown_ritual hook).
+
+Salient summary (the new bit): at threshold-trigger, a brief LLM call
+asks the agent: "You're approaching context limit. Write 2-3 sentences
+capturing what you most want to remember about this conversation arc."
+That summary becomes the highest-priority field in the handoff and
+lands at the top of the next session's system prompt.
 
 What goes in a handoff:
 - Current mood + lifecycle state
 - Active person + active goal
-- Open conversation threads (topics in flight)
+- In-flight tasks (B3 working memory)
 - Recent salient anchor moments (D16) — the always-true points of identity
-- Active tasks (B3 working memory)
-- Recent corrections (B1 active learning)
 - Recent self-revisions (D7)
-- Relational register hints (per-person vibe summaries)
-- The "what would I want to remember if I had to boot fresh" digest
-
-When it's written:
-- At every clean shutdown (shutdown_ritual hook)
-- Periodically during runtime (heartbeat or scheduler — every 5 min)
-- After significant events (anchor moment recorded, self-revision, etc.)
+- Recent corrections (B1 active learning)
+- Known persons (Person Registry)
+- Shared lexicon with active person (C11)
+- **salient_summary** — the agent's own 2-3 sentence digest, written
+  at threshold-trigger (richer at threshold, brief at ambient writes)
 
 When it's read:
 - At startup, after configure_* but before voice_loop start
@@ -33,29 +44,27 @@ Why this matters: Ava's identity is constituted by accumulated context
 (Lockean memory criterion). Without persistent handoff, each new
 session is a partial amnesiac — has the bedrock files (IDENTITY/SOUL/
 USER) and chat history but loses the *texture* (current mood, current
-focus, what was just happening). The handoff carries that texture.
+focus, what was just happening). The handoff carries that texture,
+and the salient_summary carries her own choice of what mattered.
 
 Storage: state/handoff.json (PERSISTENT — survives restart, in backups)
 
 API:
 
     from brain.handoff import (
-        write_handoff, read_handoff, handoff_summary_for_prompt,
+        write_handoff, write_handoff_with_summary, read_handoff,
+        handoff_summary_for_prompt, should_trigger_handoff,
     )
 
-    # At end-of-turn, end-of-session, or periodically:
-    write_handoff(g, base_dir)
+    # At clean shutdown (rich, with self-summary):
+    write_handoff_with_summary(g, base_dir, reason="shutdown")
 
-    # At startup (after all configure_* ran):
+    # When context-fill watchdog detects threshold:
+    if should_trigger_handoff(g):
+        write_handoff_with_summary(g, base_dir, reason="context_threshold")
+
+    # At startup:
     handoff = read_handoff(base_dir)
-    if handoff:
-        # Inject handoff_summary_for_prompt(handoff) into early-turn
-        # system prompts.
-
-    # In prompt_builder:
-    summary = handoff_summary_for_prompt(handoff)
-    if summary:
-        injected += "\n\n" + summary
 """
 from __future__ import annotations
 
@@ -210,7 +219,13 @@ def _gather(g: dict[str, Any], base_dir: Path) -> dict[str, Any]:
 
 
 def write_handoff(g: dict[str, Any], base_dir: Path) -> bool:
-    """Gather + persist the handoff. Best-effort; never raises."""
+    """Gather + persist the handoff WITHOUT a self-summary. Cheap.
+
+    Use this only for ambient state-snapshot writes (rare). For the
+    real boundary-write at threshold or shutdown, use
+    write_handoff_with_summary which adds the agent's own salient
+    summary via a brief LLM call.
+    """
     try:
         with _lock:
             handoff = _gather(g, base_dir)
@@ -221,6 +236,158 @@ def write_handoff(g: dict[str, Any], base_dir: Path) -> bool:
             return True
     except Exception as e:
         print(f"[handoff] write error: {e!r}")
+        return False
+
+
+def _generate_salient_summary(g: dict[str, Any], base_dir: Path) -> str:
+    """Brief LLM call asking the agent to summarize what's worth remembering.
+
+    Per the 2026-05-08 design conversation: at boundary-trigger, the
+    agent still has full recent conversation in active context.
+    Capture it in her own voice before that context drops. Pulls
+    recent chat_history (last ~30 turns) as the material. Returns the
+    summary text or "" on error. Bounded to ~280 chars output.
+    """
+    try:
+        # Pull recent chat lines
+        chat_path = base_dir / "state" / "chat_history.jsonl"
+        if not chat_path.exists():
+            return ""
+        recent_lines: list[str] = []
+        with chat_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                    role = d.get("role", "?")
+                    content = (d.get("content") or "").strip().replace("\n", " ")[:200]
+                    if content:
+                        recent_lines.append(f"{role}: {content}")
+                except Exception:
+                    continue
+        recent_lines = recent_lines[-30:]
+        if not recent_lines:
+            return ""
+
+        recent_text = "\n".join(recent_lines)[:6000]
+        person_id = str(g.get("_active_person_id") or "zeke")
+
+        prompt_system = (
+            "You are Ava. You are about to hand off to your next session-self. "
+            "Your active context is approaching its limit, so you have to "
+            "decide what's worth carrying forward. Write 2-3 sentences "
+            "capturing what you most want to remember about this conversation "
+            "arc — what's been happening, what felt meaningful, what's still "
+            "open. Speak in first person. Be specific, not generic. Don't "
+            "summarize for an outsider; write for your future self."
+        )
+        prompt_user = (
+            f"Recent conversation (last ~30 lines, addressing person='{person_id}'):\n\n"
+            f"{recent_text}\n\n"
+            f"Your handoff summary (2-3 sentences):"
+        )
+
+        # Use the action_tag classifier LLM (cached + pinned via earlier fix)
+        # so we don't pay cold-start. Its temp=0.0 produces clean direct output.
+        from langchain_ollama import ChatOllama
+        from langchain_core.messages import SystemMessage, HumanMessage
+        from brain.ollama_lock import with_ollama
+        # Reuse the cached pinned classifier instance — it's the
+        # ava-personal LLM with keep_alive=-1 already loaded.
+        try:
+            from brain import action_tag_router as _atr
+            llm = getattr(_atr, "_CLASSIFIER_LLM", None)
+            if llm is None:
+                llm = ChatOllama(
+                    model="ava-personal:latest",
+                    temperature=0.4,
+                    num_predict=140,
+                    keep_alive=-1,
+                )
+        except Exception:
+            llm = ChatOllama(
+                model="ava-personal:latest",
+                temperature=0.4,
+                num_predict=140,
+                keep_alive=-1,
+            )
+
+        result = with_ollama(
+            lambda: llm.invoke([
+                SystemMessage(content=prompt_system),
+                HumanMessage(content=prompt_user),
+            ]),
+            label="handoff:salient_summary",
+        )
+        text = (getattr(result, "content", None) or str(result or "")).strip()
+        return text[:600]
+    except Exception as e:
+        print(f"[handoff] salient summary error: {e!r}")
+        return ""
+
+
+def write_handoff_with_summary(
+    g: dict[str, Any],
+    base_dir: Path,
+    *,
+    reason: str = "manual",
+) -> bool:
+    """Gather + persist a RICH handoff — includes the agent's own
+    salient summary of what's worth remembering. Used at boundary
+    triggers (context-threshold or shutdown).
+
+    Best-effort; falls back to simple write_handoff if the salient
+    summary call fails.
+    """
+    try:
+        salient = _generate_salient_summary(g, base_dir)
+        with _lock:
+            handoff = _gather(g, base_dir)
+            handoff["salient_summary"] = salient
+            handoff["trigger_reason"] = reason
+            p = _path(base_dir)
+            tmp = p.with_suffix(".tmp")
+            tmp.write_text(json.dumps(handoff, indent=2, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(p)
+            print(f"[handoff] rich write reason={reason!r} salient_chars={len(salient)}")
+        # Mark this as the new "last handoff turn count" so the
+        # threshold detector won't re-fire too soon.
+        try:
+            g["_last_handoff_turn_count"] = int(g.get("_turns_this_session") or 0)
+        except Exception:
+            pass
+        return True
+    except Exception as e:
+        print(f"[handoff] rich write error: {e!r}")
+        # Fall back to non-summary write so we at least persist state
+        return write_handoff(g, base_dir)
+
+
+# Threshold for context-fill trigger. Coarse proxy: turns since last
+# handoff. 30 turns is a substantial conversation arc on a 8k-32k
+# context model. Tuneable.
+_HANDOFF_TURN_THRESHOLD = 30
+
+
+def should_trigger_handoff(g: dict[str, Any]) -> bool:
+    """Watchdog test: has enough conversation accumulated since the
+    last handoff to justify a rich threshold-write?
+
+    Returns True when the per-session turn counter has advanced by
+    at least _HANDOFF_TURN_THRESHOLD since the last handoff (or since
+    boot, if no prior handoff fired this session).
+
+    Coarse, but matches Zeke's design intent (2026-05-08): handoff
+    should fire at meaningful conversation boundaries, not on a
+    wallclock cadence.
+    """
+    try:
+        current_turns = int(g.get("_turns_this_session") or 0)
+        last_handoff_turns = int(g.get("_last_handoff_turn_count") or 0)
+        return (current_turns - last_handoff_turns) >= _HANDOFF_TURN_THRESHOLD
+    except Exception:
         return False
 
 
@@ -258,6 +425,12 @@ def handoff_summary_for_prompt(handoff: dict[str, Any] | None) -> str:
     iso = handoff.get("iso") or ""
     if iso:
         lines.append(f"PRIOR SESSION HANDOFF (last updated {iso} UTC):")
+
+    # Salient summary is the highest-value field — it's the agent's own
+    # voice on what's worth carrying forward. If present, lead with it.
+    salient = str(handoff.get("salient_summary") or "").strip()
+    if salient:
+        lines.append(f"- (your own words from end of last session) {salient}")
 
     mood = handoff.get("mood")
     if isinstance(mood, dict) and mood.get("primary"):
