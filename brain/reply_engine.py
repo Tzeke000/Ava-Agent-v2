@@ -1172,6 +1172,63 @@ def run_ava(
                 _deep_sentences: list[str] = []
                 _deep_first_chunk_ts: float | None = None
 
+                # 2026-05-08 filler-while-thinking pattern (per Zeke's
+                # request and the conversation pacing research). When
+                # there's a gap between sentences (LLM hasn't produced
+                # the next sentence yet), emit a small filler so the
+                # user doesn't experience dead air. Caps at 3 per turn
+                # to avoid sounding nervous.
+                import random as _filler_rand
+                import threading as _filler_th
+                _FILLER_GAP_THRESHOLD_S = 1.2
+                _FILLER_CAP = 3
+                _FILLER_BANK = [
+                    "hmm",
+                    "uhh",
+                    "let me think",
+                    "okay",
+                    "right",
+                    "so",
+                ]
+                _filler_state = {
+                    "last_sentence_ts": time.time(),
+                    "fillers_emitted": 0,
+                    "stop": False,
+                    "first_sentence_emitted": False,
+                }
+
+                def _filler_watchdog():
+                    while not _filler_state["stop"]:
+                        time.sleep(0.3)
+                        if _filler_state["stop"]:
+                            break
+                        if not _filler_state["first_sentence_emitted"]:
+                            continue
+                        if _filler_state["fillers_emitted"] >= _FILLER_CAP:
+                            continue
+                        gap = time.time() - _filler_state["last_sentence_ts"]
+                        if gap >= _FILLER_GAP_THRESHOLD_S:
+                            try:
+                                _filler = _filler_rand.choice(_FILLER_BANK)
+                                _deep_tts_worker.speak(
+                                    _filler,
+                                    emotion=_deep_stream_emotion,
+                                    intensity=max(0.3, _deep_stream_intensity * 0.7),
+                                    blocking=False,
+                                )
+                                _filler_state["fillers_emitted"] += 1
+                                _filler_state["last_sentence_ts"] = time.time()
+                                _trace(f"re.deep_stream.filler emitted={_filler!r} count={_filler_state['fillers_emitted']}")
+                            except Exception as _fe:
+                                print(f"[deep_stream] filler emit error: {_fe!r}")
+
+                _filler_thread = _filler_th.Thread(
+                    target=_filler_watchdog,
+                    daemon=True,
+                    name="deep-stream-filler",
+                )
+                _filler_thread.start()
+
                 def _deep_stream_loop():
                     nonlocal raw_reply, _deep_first_chunk_ts
                     for _chunk_event in _invoke_llm.stream(messages):
@@ -1186,6 +1243,12 @@ def run_ava(
                                     f"re.deep_stream.first_chunk ms={int((_deep_first_chunk_ts - _deep_invoke_t0) * 1000)} "
                                     f"chars={len(_sentence)}"
                                 )
+                            # Update filler state — reset gap timer + reset
+                            # filler count so subsequent gaps can be filled
+                            # (cap is per-turn but post-real-content resets
+                            # the fresh-emission window).
+                            _filler_state["last_sentence_ts"] = time.time()
+                            _filler_state["first_sentence_emitted"] = True
                             _deep_tts_worker.speak(
                                 _sentence,
                                 emotion=_deep_stream_emotion,
@@ -1196,12 +1259,16 @@ def run_ava(
                         _deep_sentences.append(_sentence)
                         if _deep_first_chunk_ts is None:
                             _deep_first_chunk_ts = time.time()
+                        _filler_state["last_sentence_ts"] = time.time()
+                        _filler_state["first_sentence_emitted"] = True
                         _deep_tts_worker.speak(
                             _sentence,
                             emotion=_deep_stream_emotion,
                             intensity=_deep_stream_intensity,
                             blocking=False,
                         )
+                    # Stop the filler watchdog once stream is done.
+                    _filler_state["stop"] = True
 
                 try:
                     with_ollama(
@@ -1213,6 +1280,11 @@ def run_ava(
                     raw_reply = ""
                 else:
                     raw_reply = " ".join(_deep_sentences).strip()
+                finally:
+                    # Always stop the filler watchdog so it doesn't keep
+                    # firing past stream completion (and so the daemon
+                    # thread exits cleanly).
+                    _filler_state["stop"] = True
                     _trace(
                         f"re.ollama_invoke_done deep_stream ms={int((time.time() - _deep_invoke_t0) * 1000)} "
                         f"sentences={len(_deep_sentences)}"
