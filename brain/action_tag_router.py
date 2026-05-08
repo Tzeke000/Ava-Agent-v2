@@ -37,6 +37,8 @@ import re
 import time
 from typing import Any
 
+_CLASSIFIER_LLM = None  # cached + pinned classifier instance (set lazily)
+
 _ACTION_TAG_SYSTEM_PROMPT = """You are an action classifier for an AI assistant. Output ONLY action tags, no other text, no explanation.
 
 Available tags (use ONLY these):
@@ -184,12 +186,19 @@ def classify_actions(text: str, *, g: dict[str, Any] | None = None, timeout_s: f
 
     context_block = _build_context_block(g) if g else ""
 
+    # 2026-05-07 latency fix: cache + pin the classifier LLM. Was being
+    # re-instantiated every call without keep_alive, costing 5-30s per turn
+    # on idle-evicted model. Same pattern as fast/deep paths in reply_engine.
     try:
-        llm = ChatOllama(
-            model="ava-personal:latest",
-            temperature=0.0,
-            num_predict=80,
-        )
+        global _CLASSIFIER_LLM
+        if "_CLASSIFIER_LLM" not in globals() or _CLASSIFIER_LLM is None:
+            _CLASSIFIER_LLM = ChatOllama(
+                model="ava-personal:latest",
+                temperature=0.0,
+                num_predict=80,
+                keep_alive=-1,
+            )
+        llm = _CLASSIFIER_LLM
         sys_msg = SystemMessage(content=_ACTION_TAG_SYSTEM_PROMPT + context_block)
         user_msg = HumanMessage(content=f'User: "{text.strip()}"\nOutput:')
         t0 = time.time()
