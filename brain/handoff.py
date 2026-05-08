@@ -338,6 +338,15 @@ def write_handoff_with_summary(
     salient summary of what's worth remembering. Used at boundary
     triggers (context-threshold or shutdown).
 
+    Two writes happen:
+      1. handoff.json — overwritten. Latest snapshot for next-session
+         bootstrap.
+      2. handoff_log.jsonl — APPENDED. Per-Zeke 2026-05-08: these
+         accumulate during long awake periods and get consolidated by
+         the sleep cycle (anchor-worthy items promoted, rest archived).
+         Without sleep, this log would grow unbounded — that's the
+         intended pressure that triggers consolidation.
+
     Best-effort; falls back to simple write_handoff if the salient
     summary call fails.
     """
@@ -347,11 +356,21 @@ def write_handoff_with_summary(
             handoff = _gather(g, base_dir)
             handoff["salient_summary"] = salient
             handoff["trigger_reason"] = reason
+
+            # Write 1: latest snapshot for next-boot bootstrap (overwrites)
             p = _path(base_dir)
             tmp = p.with_suffix(".tmp")
             tmp.write_text(json.dumps(handoff, indent=2, ensure_ascii=False), encoding="utf-8")
             tmp.replace(p)
+
+            # Write 2: append to log for sleep-cycle consolidation
+            log_p = base_dir / "state" / "handoff_log.jsonl"
+            log_p.parent.mkdir(parents=True, exist_ok=True)
+            with log_p.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(handoff, ensure_ascii=False) + "\n")
+
             print(f"[handoff] rich write reason={reason!r} salient_chars={len(salient)}")
+
         # Mark this as the new "last handoff turn count" so the
         # threshold detector won't re-fire too soon.
         try:
@@ -361,8 +380,142 @@ def write_handoff_with_summary(
         return True
     except Exception as e:
         print(f"[handoff] rich write error: {e!r}")
-        # Fall back to non-summary write so we at least persist state
         return write_handoff(g, base_dir)
+
+
+# Anchor-worthiness patterns. Per D16 anchor_moments kinds, we look at
+# the salient_summary text for signals that the slice contained something
+# worth preserving as a permanent anchor (never auto-pruned).
+_ANCHOR_PATTERNS: list[tuple[str, list[str]]] = [
+    ("milestone", [
+        "first time", "first conversation", "milestone", "we accomplished",
+        "we shipped", "completed", "we reached", "breakthrough",
+    ]),
+    ("connection", [
+        "felt connected", "felt close", "real connection", "shared moment",
+        "bonded over", "trust grew", "got to know",
+    ]),
+    ("humor", [
+        "we laughed", "joked about", "funny moment", "laughed at",
+        "made me laugh", "playful exchange",
+    ]),
+    ("vulnerable_share", [
+        "vulnerable", "shared something hard", "trusted me with",
+        "scared about", "worried about", "opened up about",
+    ]),
+    ("decision", [
+        "decided to", "we chose", "agreed to", "settled on",
+        "committed to", "we ruled out",
+    ]),
+    ("self_chosen", [
+        "i chose", "i decided", "i wanted to", "i picked",
+        "i committed", "i'm going to",
+    ]),
+]
+
+
+def _classify_anchor_kind(text: str) -> str | None:
+    """Return the anchor kind matched by `text`, or None if no pattern fires.
+    First match wins; patterns ordered loosely by specificity."""
+    if not text:
+        return None
+    t = text.lower()
+    for kind, phrases in _ANCHOR_PATTERNS:
+        if any(p in t for p in phrases):
+            return kind
+    return None
+
+
+def consolidate_handoff_log(g: dict[str, Any], base_dir: Path) -> dict[str, Any]:
+    """Sleep-cycle pass: read accumulated handoff_log entries, promote
+    anchor-worthy items, archive the rest, clear the live log.
+
+    Per Zeke 2026-05-08: "during sleep she might want to make some kind
+    of [consolidation] like what we already have implemented but now
+    hooked to the new stuff." This is that hook.
+
+    Returns a dict summarizing what happened (counts of read/promoted/
+    archived) for sleep-cycle reporting.
+
+    Best-effort; never raises. If the consolidation fails partway,
+    the log is left in place for the next sleep cycle.
+    """
+    result = {"read": 0, "promoted_anchors": 0, "archived": 0, "kept": 0, "error": None}
+    try:
+        log_p = base_dir / "state" / "handoff_log.jsonl"
+        if not log_p.exists():
+            return result
+
+        with _lock:
+            entries: list[dict[str, Any]] = []
+            with log_p.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entries.append(json.loads(line))
+                    except Exception:
+                        continue
+            result["read"] = len(entries)
+
+            if not entries:
+                return result
+
+            # Promote anchor-worthy entries via mark_anchor (D16)
+            try:
+                from brain.anchor_moments import mark_anchor
+            except Exception:
+                mark_anchor = None  # type: ignore
+
+            already_promoted_summaries: set[str] = set()
+            for entry in entries:
+                salient = str(entry.get("salient_summary") or "").strip()
+                if not salient or salient in already_promoted_summaries:
+                    continue
+                kind = _classify_anchor_kind(salient)
+                if kind and mark_anchor is not None:
+                    try:
+                        mark_anchor(
+                            person_id=str(entry.get("active_person_id") or "zeke"),
+                            kind=kind,
+                            summary=salient[:500],
+                            context={
+                                "from_handoff_consolidation": True,
+                                "handoff_iso": str(entry.get("iso") or ""),
+                                "trigger_reason": str(entry.get("trigger_reason") or ""),
+                            },
+                            marked_by="sleep_consolidation",
+                        )
+                        result["promoted_anchors"] += 1
+                        already_promoted_summaries.add(salient)
+                    except Exception as _ae:
+                        print(f"[handoff] anchor promote error: {_ae!r}")
+
+            # Archive the consumed entries to a date-partitioned file
+            archive_dir = base_dir / "state" / "handoff_archive"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            from datetime import datetime as _dt
+            archive_p = archive_dir / f"{_dt.utcnow().strftime('%Y-%m-%d')}.jsonl"
+            with archive_p.open("a", encoding="utf-8") as f:
+                for entry in entries:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            result["archived"] = len(entries)
+
+            # Clear the live log so next awake period starts fresh
+            log_p.unlink()
+            result["kept"] = 0  # we drained the live log; archive has all
+
+        print(
+            f"[handoff] consolidated: read={result['read']} "
+            f"anchors_promoted={result['promoted_anchors']} "
+            f"archived={result['archived']}"
+        )
+        return result
+    except Exception as e:
+        result["error"] = str(e)
+        print(f"[handoff] consolidate error: {e!r}")
+        return result
 
 
 # Threshold for context-fill trigger. Coarse proxy: turns since last
