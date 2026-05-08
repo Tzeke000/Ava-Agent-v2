@@ -46,7 +46,27 @@ def finalize_ava_turn(
 
     _av.log_chat("user", user_input, {"person_id": person_id, "person_name": active_profile["name"]})
     _av.log_chat("assistant", ai_reply, {"person_id": person_id, "person_name": active_profile["name"], "actions": actions})
-    _av.maybe_autoremember(user_input, ai_reply, person_id)
+
+    # 2026-05-07: maybe_autoremember calls enrich_memory_metadata_llm
+    # synchronously, which spawns a 30-60s local LLM call for any
+    # enrich-worthy turn. This blocks finalize_ava_turn's return and
+    # therefore blocks the HTTP caller (inject_transcript). Move to
+    # a background thread so the reply path returns ASAP. The memory
+    # write still happens; it just doesn't block conversation latency.
+    try:
+        import threading as _th_mar
+        _th_mar.Thread(
+            target=_av.maybe_autoremember,
+            args=(user_input, ai_reply, person_id),
+            daemon=True,
+            name="maybe-autoremember",
+        ).start()
+    except Exception as _mar_e:
+        # Fall back to synchronous if thread spawn fails (very unlikely).
+        try:
+            _av.maybe_autoremember(user_input, ai_reply, person_id)
+        except Exception as _mar_e2:
+            print(f"[turn_handler] maybe_autoremember failed: {_mar_e2!r}")
 
     # Reflect Ava's verbalized emotion back into her tracked mood. Closes the
     # dialogue→emotion gap surfaced 2026-05-02 (Ava could say "frustrated"
