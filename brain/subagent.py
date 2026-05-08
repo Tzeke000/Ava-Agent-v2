@@ -132,6 +132,128 @@ def _persist_assistant(g: dict[str, Any], content: str, *, model: str) -> None:
         pass
 
 
+_SELF_REFERENTIAL_PATTERNS = re.compile(
+    r"\b(?:you|your|yourself|yours|you'?re|you'?ve|you'?ll|you'?d)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_self_referential(text: str) -> bool:
+    """Does this question ask about Ava herself rather than the world?
+
+    Used to (a) include personhood context in the subagent prompt,
+    (b) suppress the 'from my training data' disclaimer for self-reports
+    where it's incongruous.
+    """
+    if not text:
+        return False
+    # Knowledge queries that USE 'you' as a polite address don't count
+    # ("Tell me about polar bears, will you?"). Heuristic: only count
+    # as self-referential if the question is ABOUT the addressee, not
+    # just addressed to them. Look for self-state phrasings.
+    t = text.lower()
+    if any(phrase in t for phrase in (
+        "tell me about your", "your favorite", "your opinion",
+        "your thought", "your experience", "your memory",
+        "you said", "you mentioned", "you told",
+        "what do you", "how do you", "do you remember",
+        "do you feel", "do you think", "do you like",
+        "are you", "have you", "feels off", "your part",
+        "part of you", "yourself",
+    )):
+        return True
+    return False
+
+
+def _build_subagent_prompt(text: str, g: dict[str, Any], is_self_ref: bool) -> str:
+    """Build a prompt that includes Ava's personhood context.
+
+    For factual questions: minimal prompt with identity grounding.
+    For self-referential questions: richer prompt with personhood hints
+    so the reply isn't AI-template-flattened.
+    """
+    parts = []
+
+    # Always include core identity grounding so the subagent knows it's
+    # Ava (or whichever inhabitant), not a generic assistant.
+    try:
+        import avaagent as _av
+        identity_block = getattr(_av, "_AVA_IDENTITY_BLOCK", "")
+        if identity_block:
+            parts.append(str(identity_block)[:1200])
+    except Exception:
+        pass
+
+    if is_self_ref:
+        # Self-referential: include the same personhood hints the deep
+        # path uses, so the subagent has Ava's mood, working memory,
+        # shared lexicon, comparative observation, etc.
+        person_id = str(g.get("_active_person_id") or "zeke")
+        try:
+            from brain.physical_context import hint_for_introspection
+            ph = hint_for_introspection()
+            if ph:
+                parts.append(f"PHYSICAL CONTEXT: {ph}")
+        except Exception:
+            pass
+        try:
+            from brain.preference_learning import apply_preferences_hint
+            pp = apply_preferences_hint(person_id)
+            if pp:
+                parts.append(f"USER PREFERENCES: {pp}")
+        except Exception:
+            pass
+        try:
+            from brain.working_memory import working_memory_hint
+            wm = working_memory_hint(g)
+            if wm:
+                parts.append(f"WORKING MEMORY: {wm}")
+        except Exception:
+            pass
+        try:
+            from brain.shared_lexicon import shared_lexicon_hint
+            lx = shared_lexicon_hint(person_id)
+            if lx:
+                parts.append(f"SHARED LEXICON: {lx}")
+        except Exception:
+            pass
+        try:
+            from brain.comparative_memory import observation_for_user
+            cm = observation_for_user(g)
+            if cm:
+                parts.append(f"COMPARATIVE: {cm}")
+        except Exception:
+            pass
+        try:
+            from brain.claude_code_recognition import (
+                is_claude_code_session,
+                claude_code_register_hint,
+            )
+            if is_claude_code_session(g):
+                cc = claude_code_register_hint()
+                if cc:
+                    parts.append(f"INTERLOCUTOR REGISTER: {cc}")
+        except Exception:
+            pass
+
+        parts.append(
+            "The user is asking about YOU — your interior, your "
+            "experience, your preferences, your memory. Answer from "
+            "your accumulated state above + your own self-knowledge. "
+            "Don't fall into 'as an AI' template phrasings — that's "
+            "not who you are. 1-3 short, natural sentences."
+        )
+    else:
+        # Factual question — minimal prompt, training-data answer expected.
+        parts.append(
+            "Answer the user's question in 1-3 short, natural sentences. "
+            "Be specific and helpful. If you genuinely don't know, say "
+            "so briefly — don't make things up."
+        )
+
+    return "\n\n".join(parts)
+
+
 def _run_in_background(text: str, g: dict[str, Any]) -> None:
     """Execute the deep-path LLM call and announce the result via TTS."""
     print(f"[subagent] background query starting: {text[:80]!r}")
@@ -144,11 +266,9 @@ def _run_in_background(text: str, g: dict[str, Any]) -> None:
         print(f"[subagent] import error: {e!r}")
         return
 
-    sys_prompt = (
-        "You are Ava, a local AI companion. Answer the user's question in "
-        "1-3 short, natural sentences. Be specific and helpful. If you "
-        "genuinely don't know, say so briefly — don't make things up."
-    )
+    is_self_ref = _looks_self_referential(text)
+    sys_prompt = _build_subagent_prompt(text, g, is_self_ref)
+
     try:
         llm = ChatOllama(
             model="ava-personal:latest",
@@ -165,7 +285,7 @@ def _run_in_background(text: str, g: dict[str, Any]) -> None:
         )
         reply = (getattr(result, "content", "") or "").strip()
         elapsed = time.time() - t0
-        print(f"[subagent] answer in {elapsed:.1f}s: {reply[:120]!r}")
+        print(f"[subagent] answer in {elapsed:.1f}s self_ref={is_self_ref}: {reply[:120]!r}")
     except Exception as e:
         print(f"[subagent] LLM error: {e!r}")
         return
@@ -173,13 +293,17 @@ def _run_in_background(text: str, g: dict[str, Any]) -> None:
     if not reply:
         return
 
-    # B4: wrap reply with confidence-appropriate caveat. Subagent
-    # answers from LLM training data unless we explicitly looked it
-    # up. Default to "training" source which yields medium confidence
-    # + "that's from my training data" tail note.
+    # B4: wrap reply with confidence-appropriate caveat. For factual
+    # lookups (default), append "from my training data" disclaimer —
+    # that's honest about the source. For self-referential questions
+    # (suppress 2026-05-08, fix #148): she's reporting on her CURRENT
+    # state, not on training data. Disclaimer would be incongruous.
     try:
         from brain.confidence import wrap_for_source
-        reply_with_caveat = wrap_for_source(reply, source_kind="training")
+        if is_self_ref:
+            reply_with_caveat = reply  # no disclaimer; this is her current state
+        else:
+            reply_with_caveat = wrap_for_source(reply, source_kind="training")
     except Exception:
         reply_with_caveat = reply
 
