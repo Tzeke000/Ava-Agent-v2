@@ -410,9 +410,17 @@ def _tts(g: dict[str, Any], text: str, *, emotion: str = "calmness", intensity: 
 
 
 def _run_phase1_awake_handoff(g: dict[str, Any]) -> dict[str, Any]:
-    """Write awake-session handoff. One LLM call, ~60–120s typical."""
+    """Write awake-session handoff. One LLM call, ~60–120s typical.
+
+    Updated 2026-05-08: also consolidate the per-threshold handoff log
+    (state/handoff_log.jsonl). Per Zeke's design: during long uninterrupted
+    awake periods, threshold-trigger handoffs accumulate in a log file.
+    Sleep is when those summaries get reviewed — anchor-worthy items
+    promoted to anchor_moments.jsonl, the rest archived.
+    """
     started = time.time()
-    out_dir = Path(g.get("BASE_DIR") or ".") / "state" / "sleep_handoffs"
+    base_dir = Path(g.get("BASE_DIR") or ".")
+    out_dir = base_dir / "state" / "sleep_handoffs"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"awake_session_{int(started)}.md"
 
@@ -430,8 +438,23 @@ def _run_phase1_awake_handoff(g: dict[str, Any]) -> dict[str, Any]:
         f"# Awake-session handoff\n\nWritten at {datetime.now().isoformat(timespec='seconds')}\n\n{summary}\n",
         encoding="utf-8",
     )
+
+    # Consolidate the threshold-handoff log (per Zeke 2026-05-08).
+    # Promotes anchor-worthy summaries to anchor_moments, archives the rest.
+    consolidation_result = {}
+    try:
+        from brain.handoff import consolidate_handoff_log
+        consolidation_result = consolidate_handoff_log(g, base_dir)
+    except Exception as _che:
+        print(f"[sleep_mode] handoff consolidation failed: {_che!r}")
+
     elapsed = time.time() - started
-    return {"path": str(out_path), "duration_s": round(elapsed, 2), "chars": len(summary)}
+    return {
+        "path": str(out_path),
+        "duration_s": round(elapsed, 2),
+        "chars": len(summary),
+        "handoff_consolidation": consolidation_result,
+    }
 
 
 def _run_phase2_learning(g: dict[str, Any], time_budget_seconds: float) -> dict[str, Any]:
