@@ -41,8 +41,38 @@ SELFSTATE_PATTERNS = [
 ]
 
 def is_selfstate_query(text: str) -> bool:
-    t = (text or "").lower()
-    return any(re.search(p, t) for p in SELFSTATE_PATTERNS)
+    """Should this turn be answered by the templated selfstate handler?
+
+    Updated 2026-05-08: only fires for SIMPLE state-check questions
+    (≤12 words, single clause, fits "how are you?" shape). Longer or
+    multi-clause introspective questions like "is there anything you
+    notice feels off and what do you need to feel sharper" should
+    fall through to the LLM path — which already has mood, goal,
+    and self-model context in its system prompt — so the LLM can
+    actually answer the specific question instead of returning a
+    state template.
+
+    The pattern match is necessary (the question is selfstate-flavored)
+    but not sufficient (the question must be simple to deserve the
+    template).
+    """
+    t = (text or "").lower().strip()
+    if not t:
+        return False
+    if not any(re.search(p, t) for p in SELFSTATE_PATTERNS):
+        return False
+    # Complexity gate — multi-clause / long questions get richer treatment.
+    word_count = len(t.split())
+    if word_count > 12:
+        return False
+    # Multiple sentences = open-ended introspection, not a state ping.
+    sentence_breaks = sum(t.count(c) for c in ".!?")
+    if sentence_breaks > 1:
+        return False
+    # Multi-question conjunctions
+    if " and " in t and "?" in t:
+        return False
+    return True
 
 def summarize_mood(mood: dict | None) -> str:
     mood = mood or {}
