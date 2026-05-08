@@ -562,6 +562,23 @@ Respond as Ava.
                     personhood_extras.append(_ws_hint)
             except Exception:
                 pass
+            # Anthropic-pattern handoff (2026-05-08): if a prior session
+            # left a handoff and we're still in the early turns of this
+            # one, inject the handoff summary so the running session
+            # inherits the texture (mood, focus, in-flight tasks, recent
+            # anchor moments) of its predecessor.
+            try:
+                from brain.handoff import (
+                    handoff_summary_for_prompt,
+                    is_session_fresh,
+                )
+                if is_session_fresh(_g):
+                    _prior_handoff = _g.get("_prior_handoff")
+                    _ho_summary = handoff_summary_for_prompt(_prior_handoff)
+                    if _ho_summary:
+                        personhood_extras.append(_ho_summary)
+            except Exception:
+                pass
             if personhood_extras:
                 injected += "\n\n" + "\n".join(personhood_extras)
         except Exception:

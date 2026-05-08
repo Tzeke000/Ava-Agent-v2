@@ -740,6 +740,43 @@ def run_startup(g: dict[str, Any]) -> None:
     except Exception as _wse:
         print(f"[web_search] configure failed: {_wse!r}")
 
+    print("[startup] step: handoff (cross-session texture read + periodic write)")
+    try:
+        from brain.handoff import read_handoff, write_handoff
+        from pathlib import Path as _P_ho
+        _base_for_ho = _P_ho(g.get("BASE_DIR") or ".")
+        # Read the prior session's handoff and stash on g for prompt_builder.
+        _prior_handoff = read_handoff(_base_for_ho)
+        if _prior_handoff:
+            g["_prior_handoff"] = _prior_handoff
+            print(f"[handoff] loaded prior handoff iso={_prior_handoff.get('iso','?')}")
+        else:
+            print("[handoff] no prior handoff — first run or never persisted")
+        # Initialize turn counter for is_session_fresh logic.
+        g["_turns_this_session"] = 0
+
+        # Periodic write thread — every 5 minutes, persist the current
+        # handoff state. Cheap (file write of small JSON).
+        import threading as _th_ho
+        import time as _t_ho
+
+        def _periodic_handoff_write():
+            while True:
+                try:
+                    _t_ho.sleep(5 * 60)
+                    write_handoff(g, _base_for_ho)
+                except Exception:
+                    pass
+
+        _ht = _th_ho.Thread(
+            target=_periodic_handoff_write,
+            daemon=True,
+            name="handoff-periodic-write",
+        )
+        _ht.start()
+    except Exception as _hoe:
+        print(f"[handoff] startup failed: {_hoe!r}")
+
     print("[startup] step: skill sandbox (#20 — fail-closed allowlist for auto-skills)")
     try:
         from brain.skill_sandbox import configure as configure_sb

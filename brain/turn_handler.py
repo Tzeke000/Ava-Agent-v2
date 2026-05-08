@@ -316,6 +316,15 @@ def finalize_ava_turn(
     except Exception as _re:
         print(f"[memory_reflection] hook failed (non-fatal): {_re!r}")
 
+    # 2026-05-08: bump per-session turn counter (used by handoff
+    # is_session_fresh — we stop injecting the prior-session handoff
+    # summary into the system prompt after a few real turns since the
+    # running conversation has its own context by then).
+    try:
+        _g["_turns_this_session"] = int(_g.get("_turns_this_session") or 0) + 1
+    except Exception:
+        pass
+
     # B5: theory-of-mind topic tracking.
     try:
         from brain.theory_of_mind import post_turn_record
