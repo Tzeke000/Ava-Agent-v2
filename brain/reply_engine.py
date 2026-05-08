@@ -1074,22 +1074,48 @@ def run_ava(
                 _route_model = ""
                 if _perc_r is not None:
                     _route_model = str(getattr(_perc_r, "routing_selected_model", "") or "").strip()
+                # 2026-05-07 latency fix: cache LLM instances per (model, temp)
+                # tuple AND pin them in VRAM with keep_alive=-1. Without this
+                # the deep path was re-instantiating ChatOllama every turn AND
+                # using Ollama's default 5-minute eviction, so any deep-path
+                # turn after a 5min idle gap paid a 30-150s cold reload. Same
+                # cache pattern as the fast path. Per conversation pacing
+                # research (Stivers 2009 + industry voice product benchmarks),
+                # this is among the highest-impact latency wins available
+                # without architectural changes.
+                _llm_deep_cache = _g.get("_deep_llm_cache")
+                if not isinstance(_llm_deep_cache, dict):
+                    _llm_deep_cache = {}
+                    _g["_deep_llm_cache"] = _llm_deep_cache
+
+                def _get_or_create_llm(model_name: str, temp: float):
+                    key = (str(model_name), float(temp))
+                    cached = _llm_deep_cache.get(key)
+                    if cached is None:
+                        cached = ChatOllama(
+                            model=model_name,
+                            temperature=temp,
+                            keep_alive=-1,
+                        )
+                        _llm_deep_cache[key] = cached
+                    return cached
+
                 if use_fast_path:
                     if _route_model and _route_model != LLM_MODEL:
-                        _invoke_llm = ChatOllama(model=_route_model, temperature=0.45)
+                        _invoke_llm = _get_or_create_llm(_route_model, 0.45)
                         print(f"[run_ava] fast_path_routed_model={_route_model}")
                     else:
                         _fast_model = _av._pick_fast_model_fallback()
                         if _fast_model:
-                            _invoke_llm = ChatOllama(model=_fast_model, temperature=0.45)
+                            _invoke_llm = _get_or_create_llm(_fast_model, 0.45)
                             print(f"[run_ava] fast_path_model={_fast_model}")
                 else:
                     _deep_model = _av._pick_deep_model_fallback()
                     if _deep_model:
-                        _invoke_llm = ChatOllama(model=_deep_model, temperature=0.55)
+                        _invoke_llm = _get_or_create_llm(_deep_model, 0.55)
                         print(f"[run_ava] deep_path_model={_deep_model}")
                     elif _route_model and _route_model != LLM_MODEL:
-                        _invoke_llm = ChatOllama(model=_route_model, temperature=0.6)
+                        _invoke_llm = _get_or_create_llm(_route_model, 0.6)
                         print(f"[run_ava] phase25_routing_model={_route_model}")
             except Exception:
                 pass
