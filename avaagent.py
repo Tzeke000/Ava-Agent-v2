@@ -1789,10 +1789,28 @@ def remember_memory(
     memory_id = str(uuid.uuid4())
     full_text = (text or "").strip()
     importance_score = normalize_importance_value(importance)
+
+    # 2026-05-08 MIRIX six-type tagging. Additive — gives every memory
+    # entry a structured type (CORE / EPISODIC / SEMANTIC / PROCEDURAL /
+    # RESOURCE / KNOWLEDGE_VAULT). Doesn't change current retrieval
+    # behavior; enables future routing/filtering by memory kind. Per
+    # the 2026-05-07 night research synthesis (MIRIX paper, Yang et al.
+    # arXiv:2507.07957). Best-effort — falls back to "semantic" default
+    # if classifier errors.
+    try:
+        from brain.mirix_taxonomy import classify_memory
+        memory_type = classify_memory(
+            category=category, content=full_text, tags=tags,
+        ).value
+    except Exception as _mte:
+        print(f"[remember_memory] mirix classify error (non-fatal): {_mte!r}")
+        memory_type = "semantic"
+
     metadata = {
         "memory_id": memory_id,
         "person_id": person_id,
         "category": category,
+        "memory_type": memory_type,
         "importance": format_importance_percent(importance_score),
         "importance_score": importance_score,
         "source": source,
