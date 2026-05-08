@@ -31,8 +31,12 @@ class STTEngine:
             print(f"[stt_engine] Silero VAD unavailable: {e!r} — falling back to RMS VAD")
 
     def _init_model(self) -> None:
-        # Whisper base: better accuracy than tiny especially for short phrases.
-        # Try GPU first (cuda + float16), fall back to CPU int8.
+        # 2026-05-08 STT upgrade: Whisper base → Whisper Large-v3 Turbo.
+        # Per the conversation pacing research (Stivers 2009 / industry voice
+        # benchmarks), STT latency directly drives perceived response time.
+        # large-v3-turbo: ~6× faster than large-v3, similar/better WER, fits
+        # in ~1.5 GB VRAM. Falls back through medium → base if VRAM is tight.
+        # All via faster-whisper (existing dep — no new install required).
         try:
             from faster_whisper import WhisperModel  # type: ignore
         except Exception as e:
@@ -40,15 +44,34 @@ class STTEngine:
             self._model = None
             self._available = False
             return
-        for device, compute in (("cuda", "float16"), ("cpu", "int8")):
-            try:
-                self._model = WhisperModel("base", device=device, compute_type=compute)
-                self._available = True
-                self._device = device
-                print(f"[stt_engine] Whisper base loaded device={device} compute={compute}")
-                return
-            except Exception as e:
-                print(f"[stt_engine] base on {device} failed ({e!r}) — trying next")
+
+        # Model fallback chain: prefer fastest+most-accurate that fits.
+        # turbo is 4-decoder-layer surgery on large-v3 — keeps quality, big speedup.
+        model_chain = [
+            ("large-v3-turbo", "Whisper Large-v3 Turbo"),
+            ("distil-large-v3", "Distil-Whisper Large-v3"),
+            ("medium", "Whisper Medium"),
+            ("base", "Whisper Base (fallback)"),
+        ]
+        device_chain = [("cuda", "float16"), ("cpu", "int8")]
+
+        for model_id, model_label in model_chain:
+            for device, compute in device_chain:
+                try:
+                    self._model = WhisperModel(model_id, device=device, compute_type=compute)
+                    self._available = True
+                    self._device = device
+                    self._backend = f"faster-whisper:{model_id}:{device}:{compute}"
+                    print(
+                        f"[stt_engine] {model_label} loaded "
+                        f"device={device} compute={compute}"
+                    )
+                    return
+                except Exception as e:
+                    print(
+                        f"[stt_engine] {model_id} on {device} failed "
+                        f"({type(e).__name__}: {str(e)[:120]}) — trying next"
+                    )
         self._model = None
         self._available = False
 
