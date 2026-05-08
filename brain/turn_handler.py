@@ -178,8 +178,18 @@ def finalize_ava_turn(
     except Exception:
         pass
 
+    # 2026-05-07 latency fix: _update_concept_graph_from_turn calls
+    # _extract_concepts_with_mistral (a 30-60s mistral:7b LLM call) for
+    # every turn. Same blocking pattern as maybe_autoremember. Move to
+    # background thread so the reply path returns ASAP.
     try:
-        _av._update_concept_graph_from_turn(user_input, ai_reply)
+        import threading as _th_cg
+        _th_cg.Thread(
+            target=_av._update_concept_graph_from_turn,
+            args=(user_input, ai_reply),
+            daemon=True,
+            name="concept-graph-update",
+        ).start()
     except Exception:
         pass
 
