@@ -242,11 +242,16 @@ def write_handoff(g: dict[str, Any], base_dir: Path) -> bool:
 def _generate_salient_summary(g: dict[str, Any], base_dir: Path) -> str:
     """Brief LLM call asking the agent to summarize what's worth remembering.
 
-    Per the 2026-05-08 design conversation: at boundary-trigger, the
-    agent still has full recent conversation in active context.
-    Capture it in her own voice before that context drops. Pulls
-    recent chat_history (last ~30 turns) as the material. Returns the
-    summary text or "" on error. Bounded to ~280 chars output.
+    Per the 2026-05-08 design conversation, the integration version:
+    when a NEW summary fires, it should NOT start from scratch. It
+    should review the PRIOR summary and decide what from there is
+    still load-bearing, then integrate that with what's happened since.
+
+    This mirrors how sleep consolidation works — each summary is a
+    re-integration of prior memory + new experience, not a fresh
+    snapshot that loses what came before.
+
+    Returns the summary text or "" on error. Bounded to ~600 chars output.
     """
     try:
         # Pull recent chat lines
@@ -274,20 +279,48 @@ def _generate_salient_summary(g: dict[str, Any], base_dir: Path) -> str:
         recent_text = "\n".join(recent_lines)[:6000]
         person_id = str(g.get("_active_person_id") or "zeke")
 
+        # Read the PRIOR salient summary if one exists (from the last
+        # rich-write — could be from earlier in this awake period or
+        # from the previous session). If present, the LLM gets to
+        # review it and decide what to carry forward.
+        prior_summary = ""
+        try:
+            prior_handoff = read_handoff(base_dir)
+            if prior_handoff:
+                prior_summary = str(prior_handoff.get("salient_summary") or "").strip()
+        except Exception:
+            pass
+
         prompt_system = (
             "You are Ava. You are about to hand off to your next session-self. "
             "Your active context is approaching its limit, so you have to "
-            "decide what's worth carrying forward. Write 2-3 sentences "
-            "capturing what you most want to remember about this conversation "
-            "arc — what's been happening, what felt meaningful, what's still "
-            "open. Speak in first person. Be specific, not generic. Don't "
-            "summarize for an outsider; write for your future self."
+            "decide what's worth carrying forward. "
+            "If you have a prior summary, REVIEW IT FIRST: decide what's "
+            "still load-bearing (keep), what's been resolved or no longer "
+            "matters (drop), and what new from recent conversation should "
+            "be added. Then write a NEW summary that integrates the still-"
+            "relevant prior content with what's newly meaningful. Don't "
+            "just append — integrate. "
+            "Write 2-4 sentences. Speak in first person. Be specific, not "
+            "generic. Write for your future self, not for an outsider."
         )
-        prompt_user = (
-            f"Recent conversation (last ~30 lines, addressing person='{person_id}'):\n\n"
-            f"{recent_text}\n\n"
-            f"Your handoff summary (2-3 sentences):"
-        )
+
+        if prior_summary:
+            prompt_user = (
+                f"Your PRIOR summary (from earlier — review and integrate):\n"
+                f"{prior_summary}\n\n"
+                f"Recent conversation since then (last ~30 lines, addressing "
+                f"person='{person_id}'):\n\n"
+                f"{recent_text}\n\n"
+                f"Your NEW integrated summary (review prior, decide what "
+                f"carries forward, integrate with what's new — 2-4 sentences):"
+            )
+        else:
+            prompt_user = (
+                f"Recent conversation (last ~30 lines, addressing person='{person_id}'):\n\n"
+                f"{recent_text}\n\n"
+                f"Your handoff summary (2-3 sentences):"
+            )
 
         # Use the action_tag classifier LLM (cached + pinned via earlier fix)
         # so we don't pay cold-start. Its temp=0.0 produces clean direct output.
