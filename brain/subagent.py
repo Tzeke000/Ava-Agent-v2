@@ -139,20 +139,23 @@ _SELF_REFERENTIAL_PATTERNS = re.compile(
 
 
 def _looks_self_referential(text: str) -> bool:
-    """Does this question ask about Ava herself rather than the world?
+    """Does this question ask about Ava herself or her prior context
+    rather than the world?
 
-    Used to (a) include personhood context in the subagent prompt,
-    (b) suppress the 'from my training data' disclaimer for self-reports
-    where it's incongruous.
+    Used to (a) include personhood context + handoff in the subagent
+    prompt, (b) suppress the 'from my training data' disclaimer for
+    self-reports where it's incongruous.
+
+    Extended 2026-05-08: includes questions about Ava's PRIOR ACTIVITY
+    or SHARED HISTORY ("what were you working on", "what were we doing",
+    "before this restart") — these are introspective even though they
+    don't use first-person pronouns like "feel" or "think."
     """
     if not text:
         return False
-    # Knowledge queries that USE 'you' as a polite address don't count
-    # ("Tell me about polar bears, will you?"). Heuristic: only count
-    # as self-referential if the question is ABOUT the addressee, not
-    # just addressed to them. Look for self-state phrasings.
     t = text.lower()
     if any(phrase in t for phrase in (
+        # Self-state / opinion / memory
         "tell me about your", "your favorite", "your opinion",
         "your thought", "your experience", "your memory",
         "you said", "you mentioned", "you told",
@@ -160,6 +163,12 @@ def _looks_self_referential(text: str) -> bool:
         "do you feel", "do you think", "do you like",
         "are you", "have you", "feels off", "your part",
         "part of you", "yourself",
+        # Prior activity / shared history (added 2026-05-08)
+        "what were you", "what were we", "what was i",
+        "what have we", "working on", "have we been",
+        "before this restart", "before you restarted",
+        "earlier today", "before this", "last session",
+        "last time we", "talked about", "conversation we",
     )):
         return True
     return False
@@ -222,6 +231,18 @@ def _build_subagent_prompt(text: str, g: dict[str, Any], is_self_ref: bool) -> s
             cm = observation_for_user(g)
             if cm:
                 parts.append(f"COMPARATIVE: {cm}")
+        except Exception:
+            pass
+        # Prior-session handoff (Anthropic harness pattern, 2026-05-08).
+        # Especially important for questions about prior activity / shared
+        # history — these questions are exactly what the handoff exists
+        # to answer, so the subagent must see it.
+        try:
+            from brain.handoff import handoff_summary_for_prompt
+            prior = g.get("_prior_handoff")
+            ho = handoff_summary_for_prompt(prior)
+            if ho:
+                parts.append(ho)
         except Exception:
             pass
         try:
