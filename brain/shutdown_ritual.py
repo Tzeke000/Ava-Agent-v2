@@ -139,15 +139,17 @@ def run_shutdown_ritual(g: dict[str, Any]) -> str:
     _save_pickup_note(base_dir, note)
     _append_shutdown_entry(base_dir, note)
 
-    # 2026-05-08: also write the structured handoff at clean shutdown.
-    # This is the cross-session texture file (Anthropic harness pattern,
-    # Nov 2025) that the next session reads at startup. The pickup note
-    # and shutdown entry already capture Ava's first-person reflection;
-    # the handoff captures the *operational* state (mood, lifecycle,
-    # in-flight tasks, recent anchors) so the next session boots warm.
+    # 2026-05-08: also write the rich structured handoff at clean
+    # shutdown. Updated to write_handoff_with_summary so the agent's
+    # own salient-summary is captured here too (since we have full
+    # active context at shutdown — same boundary-write principle as
+    # the threshold-trigger watchdog). The pickup note and shutdown
+    # entry already capture Ava's first-person reflection in pickup-
+    # note style; the handoff captures operational state + her
+    # in-her-own-words digest of what's worth carrying forward.
     try:
-        from brain.handoff import write_handoff
-        write_handoff(g, base_dir)
+        from brain.handoff import write_handoff_with_summary
+        write_handoff_with_summary(g, base_dir, reason="shutdown")
     except Exception as _hoe:
         print(f"[shutdown_ritual] handoff write failed: {_hoe!r}")
 
