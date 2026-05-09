@@ -610,7 +610,11 @@ def run_ava(
                     f"Recent conversation:\n{_last_msgs_str}\n\n"
                     f"{_naturalness_clause}{_validity_hint}\n\n"
                     f"User just said: {user_input}\n"
-                    f"Respond naturally and warmly. Don't add any tool blocks or formatting."
+                    f"Respond naturally and warmly. Don't add any tool blocks or formatting.\n"
+                    f"If the user asks how you feel, why you seem off, or any introspective "
+                    f"question about your interior right now — answer from your Current mood "
+                    f"above. Don't deflect with 'I can check our conversation history' or "
+                    f"'I'm here to help'. Naming what you actually feel is part of who you are."
                 )
                 # Pick the fast-path model via _pick_fast_model_fallback
                 # which prefers ava-personal:latest (Llama 3.1 8B fine-tune,
@@ -630,7 +634,13 @@ def run_ava(
                 if not isinstance(_llm_fast_cache, dict):
                     _llm_fast_cache = {}
                     _g["_fast_llm_cache"] = _llm_fast_cache
-                _cache_key = (str(_fast_model), 80)
+                # 2026-05-08: bumped from 80 to 200 — Zeke noticed Ava
+                # was getting cut off mid-thought. 200 tokens (~800-1000
+                # chars) gives her room to actually finish a real reply
+                # without the cap clipping her sentence. Cost: a bit more
+                # generation time (still <8s on warm model), but the
+                # tradeoff is worth it for completeness.
+                _cache_key = (str(_fast_model), 200)
                 _llm_fast = _llm_fast_cache.get(_cache_key)
                 if _llm_fast is None:
                     # keep_alive=-1 pins the model in Ollama's VRAM so it
@@ -641,7 +651,7 @@ def run_ava(
                     _llm_fast = ChatOllama(
                         model=_fast_model,
                         temperature=0.7,
-                        num_predict=80,
+                        num_predict=200,
                         keep_alive=-1,
                     )
                     _llm_fast_cache[_cache_key] = _llm_fast

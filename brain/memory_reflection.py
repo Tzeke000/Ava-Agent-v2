@@ -152,7 +152,13 @@ def score_retrieved_memories(
         return {"skipped": "no retrieval and short reply", "n_retrieved": 0}
 
     # 2. Build scoring prompt and invoke through ollama_lock.
-    scorer = scorer_model or "ava-personal:latest"
+    # Default to mistral:7b for reflection scoring — it's small, fast (~3-5s
+    # vs 30-120s for ava-personal:latest), and adequate for relevance scoring.
+    # The bigger model is reserved for user-facing replies. Reflection runs on
+    # every turn in the background, so it would otherwise pile up behind the
+    # user's next reply (the global ollama_lock serializes all calls). Per
+    # CLAUDE.md model setup: "mistral:7b for maintenance / evaluation".
+    scorer = scorer_model or "mistral:7b"
     scores: dict[int, float] = {}
     scorer_error: str | None = None
     scorer_ms: int = 0

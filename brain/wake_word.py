@@ -271,6 +271,23 @@ class WakeWordDetector:
 
     def _whisper_poll_loop(self) -> None:
         self._backend = "whisper_poll"
+        # ── AVA_TEST_MODE bypass (Option D from bugs/synthesized-voice-wake-detection.md) ──
+        # When AVA_TEST_MODE=1 is set in the environment, the wake-keyword
+        # check is skipped. Any audio that passes RMS + VAD gates triggers
+        # wake with the full transcribed text used as the command. This
+        # exists for synthesized-voice testing (Piper TTS over CABLE) where
+        # the compressed timing of synthetic speech doesn't reliably land
+        # the wake keyword inside the 1.5s rolling capture window.
+        # Production (real human voice + GAIA HD) keeps the keyword check.
+        # Also: in test mode, we widen the recording window (1.5s→3.0s)
+        # and shorten the sleep cycle (3.0s→0.5s) so a synthesized
+        # utterance is far more likely to be captured cleanly.
+        _test_mode = os.environ.get("AVA_TEST_MODE", "0").strip() == "1"
+        _record_seconds = 3.0 if _test_mode else 1.5
+        _sleep_seconds = 0.5 if _test_mode else 3.0
+        if _test_mode:
+            print("[wake_word] AVA_TEST_MODE=1 — keyword check bypassed, "
+                  f"record={_record_seconds}s sleep={_sleep_seconds}s")
         # Lazy import — load once, reuse forever.
         _vad_model = None
         try:
@@ -299,7 +316,7 @@ class WakeWordDetector:
                     continue
                 import numpy as np
                 import sounddevice as sd  # type: ignore
-                audio = sd.rec(int(1.5 * 16000), samplerate=16000, channels=1, dtype="float32")
+                audio = sd.rec(int(_record_seconds * 16000), samplerate=16000, channels=1, dtype="float32")
                 sd.wait()
                 audio = np.squeeze(audio).astype(np.float32, copy=False)
 
@@ -340,8 +357,16 @@ class WakeWordDetector:
                     continue
                 # Reuse the production STT — no separate tiny model.
                 result = stt_engine._transcribe_array(audio, sample_rate=16000)
-                text = str((result or {}).get("text") or "").lower()
-                if any(kw in text for kw in self._keywords):
+                text = str((result or {}).get("text") or "").lower().strip()
+                # AVA_TEST_MODE: any non-empty transcript counts as wake.
+                # Real text content varies by what the harness said, so
+                # we still require >2 chars to avoid blank "you" / "."
+                # hallucinations.
+                _passes_keyword = (
+                    (_test_mode and len(text) > 2)
+                    or any(kw in text for kw in self._keywords)
+                )
+                if _passes_keyword:
                     # Use the transcript_wake prefix so voice_loop.py treats
                     # this as an explicit direct-address signal — the next
                     # listening transcript is the command and does NOT need
@@ -362,10 +387,15 @@ class WakeWordDetector:
                     # work order Phase B Session A retry diagnosis.
                     self._g["_wake_transcript"] = text
                     self._g["_wake_transcript_ts"] = time.time()
-                    self._trigger_wake(source="transcript_wake:whisper_poll")
+                    _wake_source = (
+                        "transcript_wake:test_mode"
+                        if _test_mode and not any(kw in text for kw in self._keywords)
+                        else "transcript_wake:whisper_poll"
+                    )
+                    self._trigger_wake(source=_wake_source)
             except Exception:
                 pass
-            time.sleep(3.0)
+            time.sleep(_sleep_seconds)
 
     # ── lifecycle ──────────────────────────────────────────────────────────────
 

@@ -270,6 +270,14 @@ def parse_onboarding_command(text: str) -> dict[str, Any]:
             score = _TRUST_LEVEL_TO_SCORE.get(lvl)
         except Exception:
             pass
+    # Reject the intent if the regex matched but produced nothing meaningful.
+    # Without this, common phrases like "meet his expectations" or "this is
+    # great" trigger onboarding because `meet|this is\s+\w+` is too greedy.
+    # Real onboarding requires either a known relationship word, a trust
+    # level, or an explicit "introduce yourself" / "say hi" phrase.
+    has_signal = bool(rel) or (score is not None) or bool(introduce)
+    if not has_signal:
+        return {"onboarding_intent": False}
     return {
         "onboarding_intent": True,
         "relationship": rel,
