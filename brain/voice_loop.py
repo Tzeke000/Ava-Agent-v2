@@ -368,9 +368,27 @@ class VoiceLoop:
                 text = initial_text
                 result = {"text": text, "speech_detected": True, "duration_seconds": 1.0}
             else:
-                print("[voice_loop] no speech detected")
-                self._set_state("passive")
-                return
+                # Try wake-transcript fallback BEFORE giving up — covers the
+                # synthesized-voice case (Piper played to CABLE Input, finished
+                # before listen started, leaving listen to capture silence).
+                # The fallback below at the existing location handles
+                # "speech_detected but text empty" — this here handles
+                # "no speech detected at all".
+                import os as _os_vl_early
+                _vl_test_mode_early = _os_vl_early.environ.get("AVA_TEST_MODE", "0").strip() == "1"
+                _wake_tx_window_early = 30.0 if _vl_test_mode_early else 5.0
+                _wake_tx_early = str(self._g.get("_wake_transcript") or "").strip()
+                _wake_tx_ts_early = float(self._g.get("_wake_transcript_ts") or 0.0)
+                if _wake_tx_early and (time.time() - _wake_tx_ts_early) <= _wake_tx_window_early:
+                    print(f"[voice_loop] no speech in listen — falling back to wake-phase transcript: {_wake_tx_early[:120]!r}")
+                    text = _wake_tx_early
+                    result = {"text": text, "speech_detected": True, "duration_seconds": 1.0}
+                    self._g.pop("_wake_transcript", None)
+                    self._g.pop("_wake_transcript_ts", None)
+                else:
+                    print("[voice_loop] no speech detected")
+                    self._set_state("passive")
+                    return
         text = str((result or {}).get("text") or "").strip()
         if initial_text and not text.lower().startswith(initial_text.lower()[:20]):
             text = (initial_text + " " + text).strip()
@@ -391,16 +409,22 @@ class VoiceLoop:
 
         # ── WAKE-TRANSCRIPT FALLBACK ──────────────────────────────────────────
         # If listening captured nothing but Whisper-poll's wake-phase chunk
-        # has a fresh transcript (≤ 5s old), use that instead. Handles the
-        # case where user says "Hey Ava, X" in one breath: Whisper-poll's
-        # 1.5s window catches the whole phrase but listening's NEW recording
-        # starts post-wake and only captures end-of-utterance silence.
-        # See brain/wake_word.py:_whisper_poll_loop where _wake_transcript
-        # is stashed. Vault: 2026-05 work order Phase B retry.
+        # has a fresh transcript, use that instead. Handles the case where
+        # user says "Hey Ava, X" in one breath: Whisper-poll's capture window
+        # catches the whole phrase but listening's NEW recording starts
+        # post-wake and only captures end-of-utterance silence. See
+        # brain/wake_word.py:_whisper_poll_loop where _wake_transcript is
+        # stashed. Vault: 2026-05 work order Phase B retry.
+        # In AVA_TEST_MODE the window is widened to 30s because synthesized
+        # voice via the audio loopback harness can have larger wake→listen
+        # gaps than human speech.
+        import os as _os_vl
+        _vl_test_mode = _os_vl.environ.get("AVA_TEST_MODE", "0").strip() == "1"
+        _wake_tx_window_s = 30.0 if _vl_test_mode else 5.0
         if not text:
             wake_tx = str(self._g.get("_wake_transcript") or "").strip()
             wake_tx_ts = float(self._g.get("_wake_transcript_ts") or 0.0)
-            if wake_tx and (time.time() - wake_tx_ts) <= 5.0:
+            if wake_tx and (time.time() - wake_tx_ts) <= _wake_tx_window_s:
                 print(f"[voice_loop] empty listen — falling back to wake-phase transcript: {wake_tx[:120]!r}")
                 text = wake_tx
                 # Consume so it doesn't fire on a subsequent passive→listening cycle

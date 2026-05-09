@@ -44,8 +44,13 @@ def finalize_ava_turn(
     except Exception:
         pass
 
-    _av.log_chat("user", user_input, {"person_id": person_id, "person_name": active_profile["name"]})
-    _av.log_chat("assistant", ai_reply, {"person_id": person_id, "person_name": active_profile["name"], "actions": actions})
+    print(f"[turn_handler] DIAG entered finalize_ava_turn person={person_id} reply_chars={len(ai_reply or '')}", flush=True)
+    try:
+        _av.log_chat("user", user_input, {"person_id": person_id, "person_name": active_profile.get("name", person_id)})
+        _av.log_chat("assistant", ai_reply, {"person_id": person_id, "person_name": active_profile.get("name", person_id), "actions": actions})
+        print(f"[turn_handler] DIAG log_chat OK", flush=True)
+    except Exception as _lc_e:
+        print(f"[turn_handler] DIAG log_chat FAILED: {_lc_e!r}", flush=True)
 
     # 2026-05-07: maybe_autoremember calls enrich_memory_metadata_llm
     # synchronously, which spawns a 30-60s local LLM call for any
@@ -117,8 +122,10 @@ def finalize_ava_turn(
                 "model": _used_model, "emotion": _emo,
                 "turn_route": str(turn_route or ""),
             }, ensure_ascii=False) + "\n")
+        print(f"[turn_handler] DIAG chat_history.jsonl wrote OK path={_hist_path}", flush=True)
     except Exception as _e:
-        print(f"[chat_history] persist failed: {_e}")
+        print(f"[chat_history] persist failed: {_e}", flush=True)
+        import traceback as _tb_ch; print(_tb_ch.format_exc(), flush=True)
 
     # mem0 fact extraction. Runs in a background thread because mem0 calls
     # the LLM to decide what's worth remembering — we don't want to block

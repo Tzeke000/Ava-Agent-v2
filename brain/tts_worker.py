@@ -81,20 +81,22 @@ _VOLUME_BY_EMOTION: dict[str, float] = {
 }
 
 # Kokoro speed: 1.0 = normal, range ~0.7..1.3
+_KOKORO_BASE_SPEED = 1.18  # Conversational human pace per Zeke 2026-05-08;
+                            # was 1.0 (slow). Range 0.7-1.3, natural is 1.15-1.25.
 _KOKORO_SPEED_BY_EMOTION: dict[str, float] = {
-    "excitement": 1.15, "excited": 1.15,
-    "joy": 1.10, "happy": 1.10, "happiness": 1.10,
-    "calm": 0.92, "calmness": 0.92,
-    "sadness": 0.88, "sad": 0.88, "melancholy": 0.90,
-    "curiosity": 1.05, "interest": 1.03,
-    "boredom": 0.90, "bored": 0.90,
-    "anxiety": 1.10, "anxious": 1.10,
-    "anger": 1.08, "frustration": 1.06,
-    "fear": 1.10, "surprise": 1.12,
-    "love": 0.96, "tenderness": 0.94,
-    "pride": 1.02, "shame": 0.92,
-    "awe": 0.95, "hope": 1.04, "gratitude": 1.00,
-    "neutral": 1.0,
+    "excitement": 1.28, "excited": 1.28,
+    "joy": 1.24, "happy": 1.24, "happiness": 1.24, "amusement": 1.22,
+    "calm": 1.10, "calmness": 1.10,
+    "sadness": 1.05, "sad": 1.05, "melancholy": 1.06,
+    "curiosity": 1.22, "interest": 1.20,
+    "boredom": 1.08, "bored": 1.08,
+    "anxiety": 1.24, "anxious": 1.24,
+    "anger": 1.25, "frustration": 1.22, "annoyance": 1.20, "distress": 1.15,
+    "fear": 1.22, "surprise": 1.26,
+    "love": 1.14, "tenderness": 1.12,
+    "pride": 1.18, "shame": 1.08,
+    "awe": 1.12, "hope": 1.20, "gratitude": 1.18,
+    "neutral": _KOKORO_BASE_SPEED,
 }
 
 # Kokoro voice profiles (all 28 work). We pick a small set for emotion mapping
@@ -277,7 +279,23 @@ class TTSWorker:
         # playback should never get starved by other foreground work.
         self._raise_thread_priority()
         try:
-            if not self._try_init_kokoro():
+            # Engine selection per AVA_TTS_ENGINE env var (default piper).
+            # 2026-05-08: Piper made primary because Kokoro on CPU torch
+            # takes ~30s per first chunk synth, killing TTFA. Piper is
+            # ~1-2s/sentence on CPU — ugly mid-quality, conversational
+            # responsiveness. Once CUDA torch + Kokoro work cleanly we
+            # can flip back via AVA_TTS_ENGINE=kokoro.
+            engine_pref = (os.environ.get("AVA_TTS_ENGINE") or "piper").strip().lower()
+            inited = False
+            if engine_pref == "kokoro":
+                inited = self._try_init_kokoro() or self._try_init_piper()
+            elif engine_pref == "piper":
+                inited = self._try_init_piper() or self._try_init_kokoro()
+            elif engine_pref == "pyttsx3":
+                inited = self._try_init_pyttsx3()
+            else:
+                inited = self._try_init_piper() or self._try_init_kokoro()
+            if not inited:
                 self._try_init_pyttsx3()
 
             self._init_done.set()
@@ -311,6 +329,8 @@ class TTSWorker:
                             pass
                     if self._engine_type == "kokoro":
                         self._speak_kokoro(text, emotion, intensity)
+                    elif self._engine_type == "piper":
+                        self._speak_piper(text, emotion, intensity)
                     else:
                         self._speak_pyttsx3(text, emotion, intensity)
                 except Exception as e:
@@ -342,8 +362,46 @@ class TTSWorker:
             import sounddevice as sd      # type: ignore
             import numpy as np            # type: ignore
             print("[tts_worker] loading Kokoro pipeline (this takes ~5s on first run)...")
-            pipeline = KPipeline(lang_code="a", repo_id="hexgrad/Kokoro-82M")
+            # Force CUDA if available — Kokoro defaults to CPU which makes
+            # first-chunk synth ~25-50s on this hardware. CUDA brings it
+            # under 5s. Per Zeke 2026-05-08: "the problem is how long it
+            # takes her to finally say her first words."
+            _kokoro_device = "cpu"
+            try:
+                import torch  # type: ignore
+                if torch.cuda.is_available():
+                    _kokoro_device = "cuda"
+            except Exception:
+                pass
+            print(f"[tts_worker] Kokoro device={_kokoro_device}")
+            pipeline = KPipeline(
+                lang_code="a", repo_id="hexgrad/Kokoro-82M",
+                device=_kokoro_device,
+            )
             self._kokoro_pipeline = pipeline
+            # Warmup synth: run dummy generations covering the typical
+            # range of reply lengths. Kokoro on CUDA does cudnn algorithm
+            # tuning per input shape (~30s the first time it sees a new
+            # length), so warming with one short phrase only helps for that
+            # shape. Diverse warmup → most real replies hit pre-tuned
+            # algorithms and synth in <2s. Per Zeke 2026-05-08 TTFA
+            # diagnosis: warm benchmark showed 0.5-2s per chunk after
+            # multi-shape warmup, vs 27-40s on first call.
+            try:
+                import time as _wt
+                _warmup_texts = [
+                    "Hi.",
+                    "How are you doing?",
+                    "I am here and I am listening to you, take your time.",
+                    "Let me think about that for a moment before I respond.",
+                ]
+                _t0 = _wt.time()
+                for _wtext in _warmup_texts:
+                    for _ in pipeline(_wtext, voice=_KOKORO_VOICE_DEFAULT, speed=_KOKORO_BASE_SPEED):
+                        pass
+                print(f"[tts_worker] Kokoro multi-shape warmup done in {_wt.time()-_t0:.2f}s ({len(_warmup_texts)} shapes)")
+            except Exception as _we:
+                print(f"[tts_worker] Kokoro warmup failed (non-fatal): {_we!r}")
             self._sd = sd
             self._np = np
             self._engine_type = "kokoro"
@@ -363,6 +421,96 @@ class TTSWorker:
             self._init_error = f"kokoro: {e!r}"
             print(f"[tts_worker] Kokoro init failed: {e!r}")
             return False
+
+    def _try_init_piper(self) -> bool:
+        """Initialize Piper TTS as Ava's voice. Faster than Kokoro on CPU
+        (~1-2s/sentence vs ~30s for Kokoro first chunk). Voice locked to
+        en_US-lessac-high — different from Wren (en_US-amy-medium) so the
+        listener can tell them apart in voice. Per Zeke 2026-05-08."""
+        try:
+            from piper import PiperVoice  # type: ignore
+            import sounddevice as sd      # type: ignore
+            import numpy as np            # type: ignore
+            import time as _t
+            from pathlib import Path as _P
+            print("[tts_worker] loading Piper TTS (Ava voice = lessac-high)...")
+            # Voice models are at <repo>/models/piper/. Lessac is reserved
+            # for Ava; amy is reserved for Wren. Don't swap without checking.
+            _models_dir = _P("models/piper")
+            _ava_voice_path = _models_dir / "en_US-lessac-high.onnx"
+            if not _ava_voice_path.is_file():
+                # Fall back to whatever .onnx is there if lessac missing.
+                _candidates = list(_models_dir.glob("*.onnx")) if _models_dir.exists() else []
+                if not _candidates:
+                    print("[tts_worker] Piper init failed: no voice model in models/piper/")
+                    return False
+                _ava_voice_path = _candidates[0]
+                print(f"[tts_worker] Piper using fallback voice: {_ava_voice_path.name}")
+            _t0 = _t.time()
+            self._piper_voice = PiperVoice.load(str(_ava_voice_path))
+            self._piper_voice_name = _ava_voice_path.stem
+            self._piper_sample_rate = int(getattr(self._piper_voice.config, "sample_rate", 22050))
+            self._sd = sd
+            self._np = np
+            self._engine_type = "piper"
+            self._available = True
+            self._voice_name = self._piper_voice_name
+            print(f"[tts_worker] Piper ready (voice={self._piper_voice_name} "
+                  f"sr={self._piper_sample_rate}Hz init_ms={int((_t.time()-_t0)*1000)})")
+            # Publish health flag for snapshot consumers.
+            if self._g is not None:
+                try:
+                    self._g["_piper_ready"] = True
+                except Exception:
+                    pass
+            return True
+        except Exception as e:
+            self._init_error = f"piper: {e!r}"
+            print(f"[tts_worker] Piper init failed: {e!r}")
+            return False
+
+    def _speak_piper(self, text: str, emotion: str, intensity: float) -> None:
+        """Synthesize via Piper and stream chunks straight to playback."""
+        _synth_t0 = time.time()
+        _trace(f"tts.synth_start chars={len(text)}")
+        sample_rate = self._piper_sample_rate
+        _speech_set(full=text, spoken="", current="")
+        _first_chunk_played = False
+        _total_samples = 0
+        _chunks_played = 0
+        _playback_t0 = None
+        try:
+            for chunk in self._piper_voice.synthesize(text):
+                # Piper yields AudioChunk per sentence. audio_int16_bytes is
+                # the canonical PCM payload; convert to float32 [-1, 1] for
+                # _play_with_amplitude (matches Kokoro path).
+                pcm_bytes = getattr(chunk, "audio_int16_bytes", None)
+                if pcm_bytes is None or len(pcm_bytes) == 0:
+                    continue
+                audio_int16 = self._np.frombuffer(pcm_bytes, dtype=self._np.int16)
+                audio_np = (audio_int16.astype(self._np.float32) / 32768.0)
+                if audio_np.size == 0:
+                    continue
+                _chunks_played += 1
+                _total_samples += int(audio_np.shape[0])
+                if not _first_chunk_played:
+                    _first_chunk_played = True
+                    _trace(f"tts.first_chunk_ready ms={int((time.time()-_synth_t0)*1000)} samples={int(audio_np.shape[0])}")
+                    _playback_t0 = time.time()
+                self._play_with_amplitude(audio_np, sample_rate, words=text.split())
+        except Exception as _pe:
+            print(f"[tts_worker] Piper synth/playback error: {_pe!r}")
+
+        if _chunks_played == 0:
+            print("[tts_worker] Piper produced no audio")
+            return
+
+        _trace(f"tts.synth_done ms={int((time.time()-_synth_t0)*1000)} samples={_total_samples}")
+        if _playback_t0 is not None:
+            _trace(f"tts.playback_done ms={int((time.time()-_playback_t0)*1000)}")
+        _speech_set(full=text, spoken=text, current="")
+        preview = text[:60].replace("\n", " ")
+        print(f"[tts_worker] piper spoke voice={self._piper_voice_name} chars={len(text)} chunks={_chunks_played}: {preview!r}")
 
     def _try_init_pyttsx3(self) -> bool:
         com_initialized = False
@@ -411,48 +559,82 @@ class TTSWorker:
     # ── speak implementations ──────────────────────────────────────────────────
 
     def _speak_kokoro(self, text: str, emotion: str, intensity: float) -> None:
-        """Generate audio via Kokoro and stream live amplitude while it plays."""
+        """Generate audio via Kokoro and stream chunks to playback as they arrive.
+
+        Streaming refactor (2026-05-08): instead of collecting ALL Kokoro
+        chunks then concatenating then playing, play each chunk immediately
+        as the generator yields it. On CPU torch this drops TTFA from
+        ~all-chunks-synth-time (~120s for a 4-chunk reply) to single-chunk-
+        synth-time (~30s), so Ava starts speaking far sooner. Total wall-
+        clock is the same; the listener-perceived latency is what changes.
+        """
         _synth_t0 = time.time()  # TRACE-PHASE1
         _trace(f"tts.synth_start chars={len(text)}")  # TRACE-PHASE1
         voice, speed = _emotion_to_kokoro(emotion, intensity)
         try:
-            generator = self._kokoro_pipeline(text, voice=voice, speed=speed)
+            # Force split on punctuation in addition to newlines so long
+            # replies become many small chunks. Reasons: (1) Kokoro on CUDA
+            # does cudnn algorithm tuning per input shape — a 228-char
+            # one-chunk synth pays ~42s tuning cost the first time. Smaller
+            # chunks fit pre-tuned shapes from the multi-shape warmup at
+            # startup. (2) Smaller chunks = first-audio sooner via the
+            # streaming playback path. Per Zeke 2026-05-08 latency work.
+            _split = r'(?<=[.!?])\s+|\n+'
+            generator = self._kokoro_pipeline(text, voice=voice, speed=speed, split_pattern=_split)
         except Exception as e:
             print(f"[tts_worker] Kokoro generator failed for voice={voice}: {e!r}")
             # Try default voice once
-            generator = self._kokoro_pipeline(text, voice=_KOKORO_VOICE_DEFAULT, speed=speed)
+            generator = self._kokoro_pipeline(text, voice=_KOKORO_VOICE_DEFAULT, speed=speed, split_pattern=_split)
             voice = _KOKORO_VOICE_DEFAULT
 
-        chunks = []
-        for _gs, _ps, audio in generator:
-            # `audio` may be a torch tensor or numpy array — normalize to numpy.
-            try:
-                audio_np = audio.detach().cpu().numpy() if hasattr(audio, "detach") else self._np.asarray(audio)
-            except Exception:
-                audio_np = self._np.asarray(audio)
-            if audio_np is not None and audio_np.size > 0:
-                chunks.append(audio_np)
+        sample_rate = 24000
+        words = text.split()
+        _speech_set(full=text, spoken="", current="")
+        _first_chunk_played = False
+        _total_samples = 0
+        _chunks_played = 0
+        _playback_t0 = None
+        _spoken_so_far = ""
 
-        if not chunks:
+        try:
+            for _gs, _ps, audio in generator:
+                try:
+                    audio_np = audio.detach().cpu().numpy() if hasattr(audio, "detach") else self._np.asarray(audio)
+                except Exception:
+                    audio_np = self._np.asarray(audio)
+                if audio_np is None or audio_np.size == 0:
+                    continue
+                audio_np = audio_np.astype(self._np.float32, copy=False)
+                _chunks_played += 1
+                _total_samples += int(audio_np.shape[0])
+                if not _first_chunk_played:
+                    _first_chunk_played = True
+                    _trace(f"tts.first_chunk_ready ms={int((time.time()-_synth_t0)*1000)} samples={int(audio_np.shape[0])}")
+                    _playback_t0 = time.time()
+                # Estimate which words this chunk represents — proportional to
+                # samples vs total expected length. For chunked playback we use
+                # the chunk text fragment if available (`_gs` is the grapheme
+                # source for this chunk).
+                _chunk_text = (_gs or "").strip()
+                _chunk_words = _chunk_text.split() if _chunk_text else []
+                self._play_with_amplitude(audio_np, sample_rate, words=_chunk_words)
+                if _chunk_text:
+                    _spoken_so_far = (_spoken_so_far + " " + _chunk_text).strip()
+                    _speech_set(full=text, spoken=_spoken_so_far, current="")
+        except Exception as _ge:
+            print(f"[tts_worker] Kokoro stream error mid-playback: {_ge!r}")
+
+        if _chunks_played == 0:
             print("[tts_worker] Kokoro produced no audio")
             return
 
-        full = self._np.concatenate(chunks, axis=0) if len(chunks) > 1 else chunks[0]
-        full = full.astype(self._np.float32, copy=False)
-
-        sample_rate = 24000
-        _trace(f"tts.synth_done ms={int((time.time()-_synth_t0)*1000)} samples={int(full.shape[0])}")  # TRACE-PHASE1
-        _trace(f"tts.playback_start samples={int(full.shape[0])}")  # TRACE-PHASE1
-        _playback_t0 = time.time()  # TRACE-PHASE1
-        # Seed speech state for the UI so spoken_so_far stays empty until
-        # playback begins advancing words.
-        _speech_set(full=text, spoken="", current="")
-        self._play_with_amplitude(full, sample_rate, words=text.split())
-        _trace(f"tts.playback_done ms={int((time.time()-_playback_t0)*1000)}")  # TRACE-PHASE1
+        _trace(f"tts.synth_done ms={int((time.time()-_synth_t0)*1000)} samples={_total_samples}")  # TRACE-PHASE1
+        if _playback_t0 is not None:
+            _trace(f"tts.playback_done ms={int((time.time()-_playback_t0)*1000)}")  # TRACE-PHASE1
         # Final state: full reply marked as spoken, no current word.
         _speech_set(full=text, spoken=text, current="")
         preview = text[:60].replace("\n", " ")
-        print(f"[tts_worker] kokoro spoke voice={voice} speed={speed:.2f} chars={len(text)}: {preview!r}")
+        print(f"[tts_worker] kokoro spoke voice={voice} speed={speed:.2f} chars={len(text)} chunks={_chunks_played}: {preview!r}")
 
     def _resolve_tts_devices(self, sample_rate: int) -> list[dict[str, Any]]:
         """Return one descriptor per output device TTS should play to.

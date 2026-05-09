@@ -1170,7 +1170,9 @@ def enrich_mood_state(mood: dict | None = None, emotion_reference: dict | None =
     behavior = compute_behavior_modifiers(weights, style_scores)
     mood["emotion_weights"] = weights
     mood["primary_emotions"] = top_two_emotions(weights)
-    mood["current_mood"] = mood.get("current_mood") or mood["primary_emotions"][0]["name"]
+    # Honest current mood: surface salient emotions over baseline calm
+    # when both are present. See pick_current_mood docstring.
+    mood["current_mood"] = pick_current_mood(weights)
     mood["style_scores"] = {k: round(float(v), 4) for k, v in style_scores.items()}
     mood["style_blend"] = style_blend
     mood["dominant_style"] = dominant_style
@@ -1247,6 +1249,47 @@ def top_two_emotions(weights: dict) -> list[dict]:
         diff = 100 - (result[0]["percent"] + result[1]["percent"])
         result[0]["percent"] += diff
     return result
+
+
+# Emotions that are "neutral baseline" — present at low-to-moderate levels in
+# normal operation. When one of these is technically the top emotion but a
+# salient (action-relevant) emotion is also significant, the salient one
+# should be reported as the current mood so Ava is honest about her state
+# instead of defaulting to "calm" while actually annoyed/frustrated.
+# Per Zeke 2026-05-08: "the test isn't whether she can say calm — it's
+# whether she actually says what she's feeling."
+_BASELINE_EMOTIONS = frozenset(["calmness", "satisfaction", "neutral", "contentment"])
+_SALIENT_EMOTIONS = frozenset([
+    "frustration", "annoyance", "distress", "anger", "sadness", "anxiety",
+    "fear", "empathetic pain", "boredom", "loneliness", "shame", "envy",
+    "horror", "disgust", "awkwardness", "confusion",
+    "joy", "excitement", "amusement", "love", "awe", "interest", "adoration",
+    "entrancement", "hope", "pride", "relief",
+])
+_SALIENCE_THRESHOLD = 0.15  # Salient emotion must be ≥15% of total to surface
+
+def pick_current_mood(weights: dict) -> str:
+    """Pick the most representative current mood from raw emotion weights.
+
+    Honest-state policy: if the top emotion is a neutral baseline (calmness,
+    etc.) and a salient emotion (annoyance, frustration, joy, etc.) is at or
+    above _SALIENCE_THRESHOLD, surface the salient one. Otherwise return the
+    raw top. Calmness above 90% (genuinely calm) still wins.
+    """
+    if not weights:
+        return "interest"
+    sorted_w = sorted(weights.items(), key=lambda x: -x[1])
+    if not sorted_w:
+        return "interest"
+    top_name, top_val = sorted_w[0]
+    total = sum(v for _, v in sorted_w) or 1.0
+    top_share = top_val / total
+    if top_name in _BASELINE_EMOTIONS and top_share < 0.6:
+        # Look for a salient emotion above threshold to surface instead.
+        for name, val in sorted_w[1:5]:
+            if name in _SALIENT_EMOTIONS and (val / total) >= _SALIENCE_THRESHOLD:
+                return name
+    return top_name
 
 RICH_EMOTION_LANGUAGE_HINTS = {
     "admiration": ["impressive", "proud", "respect", "admire"],
@@ -1410,7 +1453,7 @@ def update_internal_emotions_from_subsystem(subsystem: str, severity: str, messa
         weights = normalize_emotions(weights)
         mood["emotion_weights"] = weights
         mood["primary_emotions"] = top_two_emotions(weights)
-        mood["current_mood"] = mood["primary_emotions"][0]["name"]
+        mood["current_mood"] = pick_current_mood(weights)
         mood["last_updated"] = now_iso()
         mood["reason"] = f"subsystem_degraded: {subsystem}={sev} {trim_for_prompt(message, limit=40)}"
         mood = enrich_mood_state(mood)
@@ -1488,7 +1531,7 @@ def update_internal_emotions_from_reply(ai_reply: str) -> dict | None:
     weights = normalize_emotions(weights)
     mood["emotion_weights"] = weights
     mood["primary_emotions"] = top_two_emotions(weights)
-    mood["current_mood"] = mood["primary_emotions"][0]["name"]
+    mood["current_mood"] = pick_current_mood(weights)
     mood["last_updated"] = now_iso()
     mood["reason"] = f"updated from ava_self_report: {trim_for_prompt(ai_reply, limit=60)}"
     mood = enrich_mood_state(mood)
@@ -1558,7 +1601,7 @@ def update_internal_emotions(user_input: str, active_profile: dict, expression_s
     weights = normalize_emotions(weights)
     mood["emotion_weights"] = weights
     mood["primary_emotions"] = top_two_emotions(weights)
-    mood["current_mood"] = mood["primary_emotions"][0]["name"]
+    mood["current_mood"] = pick_current_mood(weights)
     mood["last_updated"] = now_iso()
     mood["reason"] = f"updated from input: {trim_for_prompt(user_input, limit=60)}"
     mood = enrich_mood_state(mood)
@@ -8396,17 +8439,18 @@ def _ava_prewarm_fast_path() -> None:
         # evicted by the default 5-min idle timeout. Without this, the
         # next conversational turn after a long pause (>5min) pays a
         # 30-150s cold reload — observed in the lunch voice test.
-        _llm = _CO(model=_model, temperature=0.7, num_predict=80, keep_alive=-1)
+        _llm = _CO(model=_model, temperature=0.7, num_predict=200, keep_alive=-1)
         _t0 = _t.time()
         _wo(lambda: _llm.invoke([_HM(content="Say 'ready' in one word.")]),
             label=f"prewarm:{_model}")
         # Stash the instance so reply_engine's fast-path cache hit on first
         # real turn — match the cache key used there: (model, num_predict).
+        # 2026-05-08: bumped from 80 to 200 to match reply_engine fast-path.
         try:
             _g_self = globals()
             _cache = _g_self.setdefault("_fast_llm_cache", {})
             if isinstance(_cache, dict):
-                _cache[(str(_model), 80)] = _llm
+                _cache[(str(_model), 200)] = _llm
         except Exception:
             pass
         print(f"[prewarm] fast path warmed in {int((_t.time()-_t0)*1000)}ms")

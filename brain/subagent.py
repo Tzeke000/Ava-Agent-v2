@@ -71,10 +71,18 @@ _INTROSPECTION_PATTERNS = re.compile(
     r"|what (?:matters?|is important) to you"
     r"|what (?:do|did) you make of"
     r"|are you (?:happy|sad|tired|bored|excited|frustrated|content|okay|alright|well)"
+    r"|are you feeling (?:happy|sad|tired|bored|excited|frustrated|content|okay|alright|well|stressed|annoyed|distressed|overwhelmed|down)"
+    r"|why (?:are|do) you (?:feeling|feel|seem|look|sound)"
+    r"|why are you (?:happy|sad|tired|bored|excited|frustrated|content|annoyed|stressed|overwhelmed|down|off)"
+    r"|why do you (?:think|feel|believe)"
+    r"|how (?:are|do) you feel(?:ing)?"
     r"|do you remember (?:when|how|us|me|that)"
     r"|what (?:would|do) you (?:do|say) if"
     r"|how have you been"
     r"|are you doing (?:ok|okay|alright|well)"
+    r"|tell me (?:about )?(?:how|what|why) you('?re| are| feel)"
+    r"|what'?s (?:wrong|going on|the matter|bothering you|frustrating you)"
+    r"|what is (?:wrong|going on|the matter|bothering you|frustrating you)"
     r")\b",
     re.IGNORECASE,
 )

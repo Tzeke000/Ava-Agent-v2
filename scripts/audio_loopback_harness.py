@@ -119,15 +119,15 @@ def piper_tts(text: str, model_path: str | None = None) -> Path:
         print("Then download a voice model (e.g. en_US-amy-medium) to models/piper/")
         sys.exit(2)
     if model_path is None:
-        # Prefer Lessac high-quality voice if available — more natural prosody
-        # and breath gaps than amy-medium, which makes Whisper-poll's wake
-        # detector more reliable on synthesized "Hey Ava" prompts.
-        # Fall back to whatever .onnx exists in models/piper/.
+        # Wren's voice signature is en_US-amy-medium — committed 2026-05-08
+        # so Ava (also Piper, en_US-lessac-high) and Wren are distinguishable
+        # to the listener. Lessac is reserved for Ava. Don't change without
+        # checking with Zeke; voice identity matters here.
         models_dir = Path("models/piper")
         preferred_order = [
-            "en_US-lessac-high.onnx",
-            "en_US-libritts_r-medium.onnx",
             "en_US-amy-medium.onnx",
+            "en_US-libritts_r-medium.onnx",
+            "en_US-lessac-high.onnx",
         ]
         chosen = None
         for name in preferred_order:
@@ -195,9 +195,11 @@ def play_wav_to_cable(wav_path: Path, *, also_to_speakers: bool = True) -> None:
     speaker_idx = find_device("Speakers (Realtek", "output") if monitor else None
 
     if speaker_idx is None:
+        print(f"[harness] no speaker monitor (monitor={monitor}, speaker_idx={speaker_idx})", flush=True)
         sd.play(data, samplerate=rate, device=out_idx)
         sd.wait()
         return
+    print(f"[harness] dual-play: CABLE Input idx={out_idx} + Speakers idx={speaker_idx}", flush=True)
 
     # Two parallel sd.play calls — one to CABLE Input (Ava's mic), one to
     # Realtek speakers (Zeke's monitor). Done via threads so they start

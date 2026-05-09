@@ -35,6 +35,31 @@ def run_startup(g: dict[str, Any]) -> None:
         print("[startup] already complete — skipping duplicate run")
         return
 
+    # AVA_TEST_MODE: route audio input to CABLE Output so the audio loopback
+    # harness (Piper TTS played to CABLE Input) is heard by Ava's wake/STT
+    # path. Production listens to GAIA HD Mic; test mode swaps to the virtual
+    # cable so synthesized voice can drive the conversation. Option D from
+    # bugs/synthesized-voice-wake-detection.md.
+    import os as _os_test
+    if _os_test.environ.get("AVA_TEST_MODE", "0").strip() == "1":
+        try:
+            import sounddevice as _sd_test
+            _devs = _sd_test.query_devices()
+            _cable_out_idx = None
+            for _i, _d in enumerate(_devs):
+                if "cable output" in _d.get("name", "").lower() and _d.get("max_input_channels", 0) > 0:
+                    _cable_out_idx = _i
+                    break
+            if _cable_out_idx is not None:
+                _orig_default = _sd_test.default.device
+                _new_default = (_cable_out_idx, _orig_default[1] if isinstance(_orig_default, (tuple, list)) else None)
+                _sd_test.default.device = _new_default
+                print(f"[startup] AVA_TEST_MODE=1 — input routed to CABLE Output (idx={_cable_out_idx})")
+            else:
+                print("[startup] AVA_TEST_MODE=1 but CABLE Output not found — input still on default mic")
+        except Exception as _td_e:
+            print(f"[startup] AVA_TEST_MODE audio routing failed: {_td_e!r}")
+
     BASE_DIR: Path = g["BASE_DIR"]
     STATE_DIR: Path = g["STATE_DIR"]
 
