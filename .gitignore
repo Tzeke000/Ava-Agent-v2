@@ -58,3 +58,22 @@ logs/
 # into D:\ClaudeCodeMemory\graphify\ava-agent-v2\ for Claude Code's query path.
 # Cache subdir is reused for incremental updates — keep local, don't commit.
 graphify-out/
+
+# PRIVACY (2026-10-07: this repo is PUBLIC) — personal details stay local, never in git.
+# Install the guard on any machine that commits here:  python scripts/privacy_guard.py install
+# (it needs a git-ignored config/privacy_guard.local.txt list of private patterns; fails closed without it)
+notes/
+backup/
+*.local.md
+*.local.json
+*.local.txt
+*.bak
+*.bak_*
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.webp
+*.bmp
+*.heic
+!apps/ava-control/src-tauri/icons/**
